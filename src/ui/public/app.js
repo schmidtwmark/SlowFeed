@@ -1123,75 +1123,94 @@ document.addEventListener('DOMContentLoaded', () => {
     loadFeedItems();
   });
 
-  // Bluesky test connection
-  document.getElementById('bluesky-test-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('bluesky-test-btn');
-    const resultEl = document.getElementById('bluesky-test-result');
+  // Bluesky test connection (only if button exists)
+  const blueskyTestBtn = document.getElementById('bluesky-test-btn');
+  if (blueskyTestBtn) {
+    blueskyTestBtn.addEventListener('click', async () => {
+      const btn = blueskyTestBtn;
+      const resultEl = document.getElementById('bluesky-test-result');
 
-    btn.disabled = true;
-    btn.textContent = 'Testing...';
-    resultEl.textContent = 'Connecting to Bluesky...';
-    resultEl.className = '';
-
-    try {
-      const result = await api('/api/bluesky/test', { method: 'POST' });
-      if (result.success) {
-        resultEl.textContent = 'Connection successful!';
-        resultEl.className = 'success';
-      } else {
-        resultEl.textContent = 'Failed: ' + (result.error || 'Unknown error');
-        resultEl.className = 'error';
+      btn.disabled = true;
+      btn.textContent = 'Testing...';
+      if (resultEl) {
+        resultEl.textContent = 'Connecting to Bluesky...';
+        resultEl.className = '';
       }
-    } catch (err) {
-      resultEl.textContent = 'Error: ' + err.message;
-      resultEl.className = 'error';
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Test Connection';
-    }
-  });
+
+      try {
+        const result = await api('/api/bluesky/test', { method: 'POST' });
+        if (resultEl) {
+          if (result.success) {
+            resultEl.textContent = 'Connection successful!';
+            resultEl.className = 'success';
+          } else {
+            resultEl.textContent = 'Failed: ' + (result.error || 'Unknown error');
+            resultEl.className = 'error';
+          }
+        }
+      } catch (err) {
+        if (resultEl) {
+          resultEl.textContent = 'Error: ' + err.message;
+          resultEl.className = 'error';
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Test Connection';
+      }
+    });
+  }
 
   // Discord test connection
-  document.getElementById('discord-test-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('discord-test-btn');
-    const resultEl = document.getElementById('discord-test-result');
+  const discordTestBtn = document.getElementById('discord-test-btn');
+  if (discordTestBtn) {
+    discordTestBtn.addEventListener('click', async () => {
+      const resultEl = document.getElementById('discord-test-result');
 
-    btn.disabled = true;
-    btn.textContent = 'Testing...';
-    resultEl.textContent = 'Connecting to Discord...';
-    resultEl.className = '';
-
-    try {
-      const result = await api('/api/discord/test', { method: 'POST' });
-      if (result.success) {
-        resultEl.textContent = `Connected as ${result.username}!`;
-        resultEl.className = 'success';
-      } else {
-        resultEl.textContent = 'Failed: ' + (result.error || 'Unknown error');
-        resultEl.className = 'error';
+      discordTestBtn.disabled = true;
+      discordTestBtn.textContent = 'Testing...';
+      if (resultEl) {
+        resultEl.textContent = 'Connecting to Discord...';
+        resultEl.className = '';
       }
-    } catch (err) {
-      resultEl.textContent = 'Error: ' + err.message;
-      resultEl.className = 'error';
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Test Connection';
-    }
-  });
+
+      try {
+        const result = await api('/api/discord/test', { method: 'POST' });
+        if (resultEl) {
+          if (result.success) {
+            resultEl.textContent = `Connected as ${result.username}!`;
+            resultEl.className = 'success';
+          } else {
+            resultEl.textContent = 'Failed: ' + (result.error || 'Unknown error');
+            resultEl.className = 'error';
+          }
+        }
+      } catch (err) {
+        if (resultEl) {
+          resultEl.textContent = 'Error: ' + err.message;
+          resultEl.className = 'error';
+        }
+      } finally {
+        discordTestBtn.disabled = false;
+        discordTestBtn.textContent = 'Test Connection';
+      }
+    });
+  }
 
   // Discord fetch servers
-  document.getElementById('discord-fetch-servers-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('discord-fetch-servers-btn');
-    btn.disabled = true;
-    btn.textContent = 'Fetching...';
+  const discordFetchBtn = document.getElementById('discord-fetch-servers-btn');
+  if (discordFetchBtn) {
+    discordFetchBtn.addEventListener('click', async () => {
+      discordFetchBtn.disabled = true;
+      discordFetchBtn.textContent = 'Fetching...';
 
-    try {
-      await fetchDiscordServers();
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Fetch Servers';
-    }
-  });
+      try {
+        await fetchDiscordServers();
+      } finally {
+        discordFetchBtn.disabled = false;
+        discordFetchBtn.textContent = 'Fetch Servers';
+      }
+    });
+  }
 
   // Logs page
   document.getElementById('refresh-logs-btn').addEventListener('click', loadLogs);
