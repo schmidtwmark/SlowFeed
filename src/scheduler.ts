@@ -203,7 +203,8 @@ export async function startScheduler(): Promise<void> {
   logger.info('Prune job scheduled: daily at 3 AM');
 
   // Run initial poll for all sources if there are schedules
-  if (schedules.length > 0) {
+  // Skip if SKIP_INITIAL_POLL is set (useful for development)
+  if (schedules.length > 0 && !process.env.SKIP_INITIAL_POLL) {
     logger.info('Running initial poll on startup...');
     // Collect all unique sources from all schedules
     const allSources = new Set<SourceType>();
@@ -225,6 +226,8 @@ export async function startScheduler(): Promise<void> {
       updated_at: new Date(),
     };
     await runScheduledPoll(dummySchedule);
+  } else if (process.env.SKIP_INITIAL_POLL) {
+    logger.info('Skipping initial poll (SKIP_INITIAL_POLL is set)');
   }
 }
 
