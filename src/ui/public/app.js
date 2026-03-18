@@ -683,13 +683,17 @@ function renderServers() {
 
 async function fetchDiscordServers() {
   const container = document.getElementById('discord-servers-container');
+  console.log('fetchDiscordServers called');
   container.innerHTML = '<p>Loading servers...</p>';
 
   try {
+    console.log('Calling /api/discord/guilds...');
     const guilds = await api('/api/discord/guilds');
+    console.log('Got guilds:', guilds);
     discordGuilds = guilds.map(g => ({ ...g, expanded: false, channels: null }));
     renderServers();
   } catch (err) {
+    console.error('fetchDiscordServers error:', err);
     container.innerHTML = `<p class="error">Failed to fetch servers: ${escapeHtml(err.message)}</p>`;
   }
 }

@@ -11,11 +11,24 @@ import { logger } from './logger.js';
 
 const PORT = process.env.PORT || 3000;
 
+async function waitForDb(maxRetries = 10, delayMs = 3000): Promise<void> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      await initDb();
+      return;
+    } catch (err) {
+      if (i === maxRetries - 1) throw err;
+      logger.info(`Database not ready, retrying in ${delayMs / 1000}s... (${i + 1}/${maxRetries})`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 async function main() {
   logger.info('Starting Slowfeed...');
 
-  // Initialize database
-  await initDb();
+  // Initialize database with retry logic (for cloud deployments where DB may start slowly)
+  await waitForDb();
   logger.info('Database initialized');
 
   // Load configuration
