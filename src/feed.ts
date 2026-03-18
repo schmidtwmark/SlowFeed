@@ -33,7 +33,52 @@ async function getDigestItems(source?: string): Promise<DigestItemRow[]> {
   return rows;
 }
 
-function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: string): string {
+/**
+ * Strip HTML to plain text for description field
+ */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Simplify HTML for better RSS reader compatibility
+ * - Removes inline styles
+ * - Converts iframes to links
+ * - Keeps only basic HTML tags
+ */
+function simplifyHtml(html: string): string {
+  return html
+    // Convert YouTube iframes to links
+    .replace(/<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi,
+      '<p><a href="https://www.youtube.com/watch?v=$1">▶ Watch on YouTube</a></p>')
+    // Convert video tags to links
+    .replace(/<video[^>]*>[\s\S]*?<source[^>]*src="([^"]+)"[^>]*>[\s\S]*?<\/video>/gi,
+      '<p><a href="$1">▶ View Video</a></p>')
+    // Remove inline styles
+    .replace(/\s*style="[^"]*"/gi, '')
+    // Remove class attributes
+    .replace(/\s*class="[^"]*"/gi, '')
+    // Simplify divs to paragraphs
+    .replace(/<div[^>]*>/gi, '<p>')
+    .replace(/<\/div>/gi, '</p>')
+    // Remove empty paragraphs
+    .replace(/<p>\s*<\/p>/gi, '')
+    // Clean up multiple newlines
+    .replace(/(<\/p>\s*)+/g, '</p>\n');
+}
+
+function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: string, simple = false): string {
   const config = getConfig();
 
   const feed = new Feed({
@@ -49,12 +94,16 @@ function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: stri
 
   for (const item of items) {
     const sourceBadge = `[${item.source}]`;
+    const content = item.content ?? '';
+    const processedContent = simple ? simplifyHtml(content) : content;
+    const description = stripHtml(content).substring(0, 300) + (content.length > 300 ? '...' : '');
 
     feed.addItem({
       title: `${sourceBadge} ${item.title}`,
       id: item.id,
       link: `${baseUrl}/digest/${item.id}`,
-      content: item.content ?? undefined,
+      description: description,
+      content: processedContent || undefined,
       date: new Date(item.published_at),
     });
   }
@@ -73,12 +122,14 @@ export function createFeedRouter(): Router {
   };
 
   // RSS feed - support both .rss and .xml extensions
+  // Use ?simple=true for simplified HTML (better compatibility with some readers)
   const handleRssFeed = async (req: import('express').Request, res: import('express').Response) => {
     try {
       const source = typeof req.query.source === 'string' ? req.query.source : undefined;
+      const simple = req.query.simple === 'true';
       const items = await getDigestItems(source);
       const baseUrl = getBaseUrl(req);
-      const xml = buildFeed(items, 'rss', baseUrl);
+      const xml = buildFeed(items, 'rss', baseUrl, simple);
 
       res.set('Content-Type', 'application/rss+xml; charset=utf-8');
       res.send(xml);
@@ -95,9 +146,10 @@ export function createFeedRouter(): Router {
   router.get('/feed.atom', async (req, res) => {
     try {
       const source = typeof req.query.source === 'string' ? req.query.source : undefined;
+      const simple = req.query.simple === 'true';
       const items = await getDigestItems(source);
       const baseUrl = getBaseUrl(req);
-      const xml = buildFeed(items, 'atom', baseUrl);
+      const xml = buildFeed(items, 'atom', baseUrl, simple);
 
       res.set('Content-Type', 'application/atom+xml; charset=utf-8');
       res.send(xml);
