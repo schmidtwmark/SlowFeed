@@ -722,6 +722,8 @@ async function toggleFeedItem(header) {
 // Simple HTML transformation (client-side version)
 function simplifyHtml(html) {
   return html
+    // Add separator before each post div (they have border and padding styles)
+    .replace(/<div style="border:[^"]*padding:[^"]*>/gi, '<hr class="post-separator"><div>')
     // Convert YouTube iframes to links
     .replace(/<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi,
       '<p><a href="https://www.youtube.com/watch?v=$1">▶ Watch on YouTube</a></p>')
@@ -730,13 +732,15 @@ function simplifyHtml(html) {
       '<p><a href="$1">▶ View Video</a></p>')
     // Remove inline styles
     .replace(/\s*style="[^"]*"/gi, '')
-    // Remove class attributes
-    .replace(/\s*class="[^"]*"/gi, '')
+    // Remove class attributes (but keep our separator class)
+    .replace(/\s*class="(?!post-separator)[^"]*"/gi, '')
     // Simplify divs to paragraphs
     .replace(/<div[^>]*>/gi, '<p>')
     .replace(/<\/div>/gi, '</p>')
     // Remove empty paragraphs
-    .replace(/<p>\s*<\/p>/gi, '');
+    .replace(/<p>\s*<\/p>/gi, '')
+    // Remove leading separator (first post doesn't need one)
+    .replace(/^(\s*<[^>]*>\s*)*<hr class="post-separator">/i, '');
 }
 
 async function toggleRecentItem(header) {
@@ -1248,6 +1252,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // Logout button
   document.getElementById('logout-btn').addEventListener('click', logout);
 
+  // Mobile nav toggle
+  const navToggle = document.getElementById('nav-toggle');
+  const nav = document.querySelector('nav');
+  if (navToggle && nav) {
+    navToggle.addEventListener('click', () => {
+      nav.classList.toggle('nav-open');
+      navToggle.textContent = nav.classList.contains('nav-open') ? '✕' : '☰';
+    });
+
+    // Close nav when a link is clicked on mobile
+    nav.querySelectorAll('a[href]').forEach(link => {
+      link.addEventListener('click', () => {
+        nav.classList.remove('nav-open');
+        navToggle.textContent = '☰';
+      });
+    });
+  }
+
   // Navigation - intercept link clicks for client-side routing
   document.querySelectorAll('nav a[href]').forEach(link => {
     link.addEventListener('click', (e) => {
@@ -1383,10 +1405,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const previewSimpleModeCheckbox = document.getElementById('preview-simple-mode');
   if (previewSimpleModeCheckbox) {
-    previewSimpleModeCheckbox.addEventListener('change', (e) => {
+    previewSimpleModeCheckbox.addEventListener('change', async (e) => {
       previewSimpleMode = e.target.checked;
-      // Clear loaded state so content reloads with new mode
-      document.querySelectorAll('.feed-item[data-loaded]').forEach(item => {
+      // Re-render all expanded items with new mode
+      const expandedItems = document.querySelectorAll('.feed-item.expanded');
+      for (const item of expandedItems) {
+        const digestId = item.dataset.digestId;
+        const contentEl = item.querySelector('.feed-item-content');
+        if (digestId && contentEl) {
+          try {
+            const data = await api(`/api/digest/${digestId}`);
+            let content = data.content || '<em>No content</em>';
+            if (previewSimpleMode) {
+              content = simplifyHtml(content);
+            }
+            contentEl.innerHTML = content;
+          } catch (err) {
+            // Keep existing content on error
+          }
+        }
+      }
+      // Also clear loaded state so collapsed items reload correctly when expanded
+      document.querySelectorAll('.feed-item:not(.expanded)[data-loaded]').forEach(item => {
         delete item.dataset.loaded;
       });
     });

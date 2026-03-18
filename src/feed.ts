@@ -55,18 +55,22 @@ function stripHtml(html: string): string {
  * Simplify HTML for better RSS reader compatibility
  * - Removes inline styles
  * - Converts iframes to links
+ * - Adds visual separators between posts
  * - Keeps only basic HTML tags
  */
 function simplifyHtml(html: string): string {
   return html
+    // Add separator before each post div (they have border and padding styles)
+    // This preserves visual separation when styles are stripped
+    .replace(/<div style="border:[^"]*padding:[^"]*>/gi, '<hr style="border:none;border-top:2px solid #ccc;margin:24px 0;"><div>')
     // Convert YouTube iframes to links
     .replace(/<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi,
       '<p><a href="https://www.youtube.com/watch?v=$1">▶ Watch on YouTube</a></p>')
     // Convert video tags to links
     .replace(/<video[^>]*>[\s\S]*?<source[^>]*src="([^"]+)"[^>]*>[\s\S]*?<\/video>/gi,
       '<p><a href="$1">▶ View Video</a></p>')
-    // Remove inline styles
-    .replace(/\s*style="[^"]*"/gi, '')
+    // Remove inline styles (except on hr which we just added)
+    .replace(/<(?!hr)([a-z]+)[^>]*\s+style="[^"]*"([^>]*)>/gi, '<$1$2>')
     // Remove class attributes
     .replace(/\s*class="[^"]*"/gi, '')
     // Simplify divs to paragraphs
@@ -74,6 +78,8 @@ function simplifyHtml(html: string): string {
     .replace(/<\/div>/gi, '</p>')
     // Remove empty paragraphs
     .replace(/<p>\s*<\/p>/gi, '')
+    // Remove leading hr (first post doesn't need separator before it)
+    .replace(/^(\s*<[^>]*>\s*)*<hr[^>]*>/i, '')
     // Clean up multiple newlines
     .replace(/(<\/p>\s*)+/g, '</p>\n');
 }
