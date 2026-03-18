@@ -144,6 +144,7 @@ async function loadDashboard() {
     for (const item of stats.recentItems) {
       const li = document.createElement('li');
       li.className = 'recent-item';
+      li.dataset.digestId = item.id;
       li.innerHTML = `
         <div class="recent-item-header" onclick="toggleRecentItem(this)">
           <span class="source-badge ${item.source}">${item.source}</span>
@@ -155,7 +156,7 @@ async function loadDashboard() {
           <div class="recent-item-meta">
             <span>${new Date(item.published_at).toLocaleString()}</span>
           </div>
-          <div class="recent-item-body">${item.content || '<em>No content</em>'}</div>
+          <div class="recent-item-body"><em>Loading...</em></div>
         </div>
       `;
       list.appendChild(li);
@@ -568,9 +569,24 @@ function toggleContent(button) {
   button.textContent = item.classList.contains('expanded') ? 'Show less' : 'Show more';
 }
 
-function toggleRecentItem(header) {
+async function toggleRecentItem(header) {
   const item = header.closest('.recent-item');
+  const isExpanding = !item.classList.contains('expanded');
   item.classList.toggle('expanded');
+
+  // Lazy load content when expanding
+  if (isExpanding && !item.dataset.loaded) {
+    const digestId = item.dataset.digestId;
+    const bodyEl = item.querySelector('.recent-item-body');
+
+    try {
+      const data = await api(`/api/digest/${digestId}`);
+      bodyEl.innerHTML = data.content || '<em>No content</em>';
+      item.dataset.loaded = 'true';
+    } catch (err) {
+      bodyEl.innerHTML = `<em>Failed to load content: ${escapeHtml(err.message)}</em>`;
+    }
+  }
 }
 
 // Utilities

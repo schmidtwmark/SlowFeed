@@ -167,16 +167,15 @@ export function createUiRouter(): Router {
         }
       }
 
-      // Get recent digests
+      // Get recent digests (without full content for speed)
       const { rows: recentItems } = await query<{
         id: string;
         source: string;
         title: string;
-        content: string;
         post_count: number;
         published_at: Date;
       }>(
-        `SELECT id, source, title, content, post_count, published_at
+        `SELECT id, source, title, post_count, published_at
          FROM digest_items
          ORDER BY created_at DESC
          LIMIT 20`
@@ -190,6 +189,27 @@ export function createUiRouter(): Router {
     } catch (err) {
       logger.error('Error fetching stats:', err);
       res.status(500).json({ error: 'Failed to fetch stats' });
+    }
+  });
+
+  // Get single digest content by ID (for lazy loading)
+  router.get('/api/digest/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { rows } = await query<{ content: string }>(
+        `SELECT content FROM digest_items WHERE id = $1`,
+        [id]
+      );
+
+      if (rows.length === 0) {
+        res.status(404).json({ error: 'Digest not found' });
+        return;
+      }
+
+      res.json({ content: rows[0].content });
+    } catch (err) {
+      logger.error('Error fetching digest:', err);
+      res.status(500).json({ error: 'Failed to fetch digest' });
     }
   });
 

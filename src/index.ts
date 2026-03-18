@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import compression from 'compression';
 import path from 'path';
 import { initDb } from './db.js';
 import { loadConfig } from './config.js';
@@ -42,6 +43,7 @@ async function main() {
   const app = express();
 
   // Middleware
+  app.use(compression()); // Compress all responses
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
