@@ -121,8 +121,29 @@ export function createFeedRouter(): Router {
     return `${protocol}://${host}`;
   };
 
+  // Middleware to validate feed token
+  const validateToken = (req: import('express').Request, res: import('express').Response, next: import('express').NextFunction) => {
+    const config = getConfig();
+    const expectedToken = config.feed_token;
+
+    // If no token is configured, allow access (backwards compatibility)
+    if (!expectedToken) {
+      return next();
+    }
+
+    const providedToken = req.query.token;
+
+    if (providedToken !== expectedToken) {
+      res.status(401).send('Unauthorized - invalid or missing token');
+      return;
+    }
+
+    next();
+  };
+
   // RSS feed - support both .rss and .xml extensions
   // Use ?simple=true for simplified HTML (better compatibility with some readers)
+  // Use ?token=<secret> for authentication
   const handleRssFeed = async (req: import('express').Request, res: import('express').Response) => {
     try {
       const source = typeof req.query.source === 'string' ? req.query.source : undefined;
@@ -139,11 +160,11 @@ export function createFeedRouter(): Router {
     }
   };
 
-  router.get('/feed.rss', handleRssFeed);
-  router.get('/feed.xml', handleRssFeed);
-  router.get('/rss.xml', handleRssFeed);
+  router.get('/feed.rss', validateToken, handleRssFeed);
+  router.get('/feed.xml', validateToken, handleRssFeed);
+  router.get('/rss.xml', validateToken, handleRssFeed);
 
-  router.get('/feed.atom', async (req, res) => {
+  router.get('/feed.atom', validateToken, async (req, res) => {
     try {
       const source = typeof req.query.source === 'string' ? req.query.source : undefined;
       const simple = req.query.simple === 'true';

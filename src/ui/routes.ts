@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { loadConfig, getConfig, setConfigValues, Config } from '../config.js';
+import path from 'path';
+import { loadConfig, getConfig, setConfigValues, setConfigValue, generateFeedToken, Config } from '../config.js';
 import { query } from '../db.js';
 import { triggerMainPoll, triggerSourcePoll, triggerSchedulePoll, restartScheduler, getPollStatus, getScheduleStatus } from '../scheduler.js';
 import { getAllSchedules, createSchedule, updateSchedule, deleteSchedule, validateScheduleInput, getNextRunTime } from '../schedules.js';
@@ -90,17 +91,30 @@ export function createUiRouter(): Router {
   router.get('/api/config', async (_req, res) => {
     try {
       const config = await loadConfig();
-      // Don't send passwords to the client
+      // Don't send passwords to the client (but keep feed_token visible)
       const safeConfig = {
         ...config,
         bluesky_app_password: config.bluesky_app_password ? '••••••••' : '',
         discord_token: config.discord_token ? '••••••••' : '',
         ui_password: '••••••••',
+        // feed_token is intentionally NOT masked - users need to see it
       };
       res.json(safeConfig);
     } catch (err) {
       logger.error('Error fetching config:', err);
       res.status(500).json({ error: 'Failed to fetch config' });
+    }
+  });
+
+  // Regenerate feed token
+  router.post('/api/feed-token/regenerate', async (_req, res) => {
+    try {
+      const newToken = generateFeedToken();
+      await setConfigValue('feed_token', newToken);
+      res.json({ token: newToken });
+    } catch (err) {
+      logger.error('Error regenerating feed token:', err);
+      res.status(500).json({ error: 'Failed to regenerate token' });
     }
   });
 
@@ -625,6 +639,26 @@ export function createUiRouter(): Router {
       res.status(500).json({ error: errorMessage });
     }
   });
+
+  // Serve index.html for all UI routes (client-side routing)
+  const uiRoutes = [
+    '/dashboard',
+    '/schedules',
+    '/settings',
+    '/settings/general',
+    '/settings/bluesky',
+    '/settings/youtube',
+    '/settings/reddit',
+    '/settings/discord',
+    '/feed-preview',
+    '/logs',
+  ];
+
+  for (const route of uiRoutes) {
+    router.get(route, (_req, res) => {
+      res.sendFile(path.join(process.cwd(), 'src/ui/public/index.html'));
+    });
+  }
 
   return router;
 }

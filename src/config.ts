@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { query } from './db.js';
 
 export interface Config {
@@ -20,7 +21,13 @@ export interface Config {
   discord_top_n: number;
   feed_title: string;
   feed_ttl_days: number;
+  feed_token: string;
   ui_password: string;
+}
+
+// Generate a random token for feed access
+export function generateFeedToken(): string {
+  return crypto.randomBytes(24).toString('base64url');
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -42,6 +49,7 @@ const DEFAULT_CONFIG: Config = {
   discord_top_n: 20,
   feed_title: 'Slowfeed',
   feed_ttl_days: 14,
+  feed_token: generateFeedToken(),
   ui_password: 'changeme',
 };
 
@@ -60,12 +68,23 @@ export async function loadConfig(forceReload = false): Promise<Config> {
   );
 
   const config: Config = { ...DEFAULT_CONFIG };
+  const existingKeys = new Set<string>();
 
   for (const row of rows) {
+    existingKeys.add(row.key);
     if (row.key in config) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (config as any)[row.key] = row.value;
     }
+  }
+
+  // Persist feed_token if not already in DB (so it survives restarts)
+  if (!existingKeys.has('feed_token')) {
+    await query(
+      `INSERT INTO config (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO NOTHING`,
+      ['feed_token', JSON.stringify(config.feed_token)]
+    );
   }
 
   cachedConfig = config;

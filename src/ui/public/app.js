@@ -4,6 +4,8 @@ const API_BASE = '';
 let sessionId = localStorage.getItem('sessionId');
 let currentPage = 1;
 let currentSource = '';
+let feedToken = '';
+let previewSimpleMode = false;
 
 // API Helper
 async function api(endpoint, options = {}) {
@@ -46,30 +48,98 @@ function showLoginScreen() {
 function showMainScreen() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('main-screen').classList.remove('hidden');
-  loadDashboard();
+
+  // Route to the correct page based on URL
+  routeToCurrentPage();
 }
 
-function showPage(pageName) {
+// URL-based Routing
+function getPageFromPath(pathname) {
+  const path = pathname || window.location.pathname;
+
+  // Map URL paths to page IDs
+  const routes = {
+    '/': 'dashboard',
+    '/dashboard': 'dashboard',
+    '/schedules': 'schedules',
+    '/settings': 'settings',
+    '/settings/general': 'settings-general',
+    '/settings/bluesky': 'settings-bluesky',
+    '/settings/youtube': 'settings-youtube',
+    '/settings/reddit': 'settings-reddit',
+    '/settings/discord': 'settings-discord',
+    '/feed-preview': 'feed-preview',
+    '/logs': 'logs',
+  };
+
+  return routes[path] || 'dashboard';
+}
+
+function routeToCurrentPage() {
+  const pageName = getPageFromPath();
+  showPage(pageName, false); // Don't push state, we're already at this URL
+}
+
+function navigateTo(path) {
+  history.pushState({}, '', path);
+  const pageName = getPageFromPath(path);
+  showPage(pageName, false);
+}
+
+function showPage(pageName, pushState = true) {
+  // Hide all pages
   document.querySelectorAll('.page').forEach(page => {
     page.classList.add('hidden');
   });
-  document.getElementById(`page-${pageName}`).classList.remove('hidden');
 
-  document.querySelectorAll('nav a').forEach(link => {
+  // Show the requested page
+  const pageEl = document.getElementById(`page-${pageName}`);
+  if (pageEl) {
+    pageEl.classList.remove('hidden');
+  }
+
+  // Update active nav link
+  document.querySelectorAll('nav a[data-page]').forEach(link => {
     link.classList.remove('active');
   });
-  document.querySelector(`nav a[data-page="${pageName}"]`).classList.add('active');
+  const activeLink = document.querySelector(`nav a[data-page="${pageName}"]`);
+  if (activeLink) {
+    activeLink.classList.add('active');
+  }
 
-  if (pageName === 'dashboard') {
-    loadDashboard();
-  } else if (pageName === 'schedules') {
-    loadSchedules();
-  } else if (pageName === 'settings') {
-    loadSettings();
-  } else if (pageName === 'feed') {
-    loadFeedItems();
-  } else if (pageName === 'logs') {
-    loadLogs();
+  // Load page-specific data
+  loadPageData(pageName);
+}
+
+async function loadPageData(pageName) {
+  switch (pageName) {
+    case 'dashboard':
+      await loadDashboard();
+      break;
+    case 'schedules':
+      await loadSchedules();
+      break;
+    case 'settings-general':
+      await loadGeneralSettings();
+      break;
+    case 'settings-bluesky':
+      await loadBlueskySettings();
+      break;
+    case 'settings-youtube':
+      await loadYouTubeSettings();
+      break;
+    case 'settings-reddit':
+      await loadRedditSettings();
+      break;
+    case 'settings-discord':
+      await loadDiscordSettings();
+      break;
+    case 'feed-preview':
+      await loadFeedPreview();
+      break;
+    case 'logs':
+      await loadLogs();
+      break;
   }
 }
 
@@ -118,10 +188,15 @@ async function logout() {
 // Dashboard
 async function loadDashboard() {
   try {
-    const [stats, pollStatus] = await Promise.all([
+    const [stats, pollStatus, config] = await Promise.all([
       api('/api/stats'),
-      api('/api/poll/status')
+      api('/api/poll/status'),
+      api('/api/config')
     ]);
+
+    // Update feed token and URL display
+    feedToken = config.feed_token || '';
+    updateFeedUrl();
 
     document.getElementById('stat-total').textContent = stats.totalItems;
     document.getElementById('stat-reddit').textContent = stats.sourceCounts.reddit || 0;
@@ -209,7 +284,6 @@ async function triggerPoll(source) {
   const statusEl = source ? document.getElementById(`status-${source}`) : null;
 
   try {
-    // Show loading state
     if (btn) {
       btn.classList.add('loading');
       btn.disabled = true;
@@ -226,10 +300,8 @@ async function triggerPoll(source) {
       body: JSON.stringify(body),
     });
 
-    // Poll completed, reload dashboard to get updated stats
     await loadDashboard();
 
-    // Show success briefly
     if (statusEl) {
       const time = new Date().toLocaleTimeString();
       statusEl.textContent = `Completed at ${time}`;
@@ -244,7 +316,6 @@ async function triggerPoll(source) {
       alert('Failed to trigger poll: ' + err.message);
     }
   } finally {
-    // Reset button state
     if (btn) {
       btn.classList.remove('loading');
       btn.disabled = false;
@@ -255,7 +326,7 @@ async function triggerPoll(source) {
 
 // Clear data
 async function clearSourceData(source) {
-  if (!confirm(`Are you sure you want to clear all ${source} data? This will delete all saved posts and digests for ${source}, allowing fresh content to be fetched.`)) {
+  if (!confirm(`Are you sure you want to clear all ${source} data?`)) {
     return;
   }
 
@@ -280,7 +351,7 @@ async function clearSourceData(source) {
 }
 
 async function clearAllData() {
-  if (!confirm('Are you sure you want to clear ALL data? This will delete all saved posts and digests for all sources.')) {
+  if (!confirm('Are you sure you want to clear ALL data?')) {
     return;
   }
 
@@ -304,29 +375,62 @@ async function clearAllData() {
   }
 }
 
-// Settings
-async function loadSettings() {
+// Settings - Individual page loaders
+async function loadGeneralSettings() {
   try {
     const config = await api('/api/config');
+    feedToken = config.feed_token || '';
 
-    // Populate form fields
     document.getElementById('feed_title').value = config.feed_title || '';
     document.getElementById('feed_ttl_days').value = config.feed_ttl_days || 14;
+    document.getElementById('feed_token').value = config.feed_token || '';
     document.getElementById('ui_password').value = config.ui_password || '';
+  } catch (err) {
+    console.error('Failed to load general settings:', err);
+  }
+}
+
+async function loadBlueskySettings() {
+  try {
+    const config = await api('/api/config');
 
     document.getElementById('bluesky_enabled').checked = config.bluesky_enabled || false;
     document.getElementById('bluesky_handle').value = config.bluesky_handle || '';
     document.getElementById('bluesky_app_password').value = config.bluesky_app_password || '';
     document.getElementById('bluesky_top_n').value = config.bluesky_top_n || 20;
+  } catch (err) {
+    console.error('Failed to load Bluesky settings:', err);
+  }
+}
+
+async function loadYouTubeSettings() {
+  try {
+    const config = await api('/api/config');
 
     document.getElementById('youtube_enabled').checked = config.youtube_enabled || false;
     document.getElementById('youtube_cookies').value = config.youtube_cookies || '';
+  } catch (err) {
+    console.error('Failed to load YouTube settings:', err);
+  }
+}
+
+async function loadRedditSettings() {
+  try {
+    const config = await api('/api/config');
 
     document.getElementById('reddit_enabled').checked = config.reddit_enabled || false;
     document.getElementById('reddit_cookies').value = config.reddit_cookies || '';
     document.getElementById('reddit_top_n').value = config.reddit_top_n || 30;
     document.getElementById('reddit_include_comments').checked = config.reddit_include_comments !== false;
     document.getElementById('reddit_comment_depth').value = config.reddit_comment_depth || 3;
+  } catch (err) {
+    console.error('Failed to load Reddit settings:', err);
+  }
+}
+
+async function loadDiscordSettings() {
+  try {
+    const config = await api('/api/config');
 
     document.getElementById('discord_enabled').checked = config.discord_enabled || false;
     document.getElementById('discord_token').value = config.discord_token || '';
@@ -334,33 +438,21 @@ async function loadSettings() {
     document.getElementById('discord_channels').value = config.discord_channels || '[]';
     renderSelectedChannels();
   } catch (err) {
-    console.error('Failed to load settings:', err);
+    console.error('Failed to load Discord settings:', err);
   }
 }
 
-async function saveSettings(formData) {
-  const messageEl = document.getElementById('settings-message');
+// Save settings for each section
+async function saveGeneralSettings(form) {
+  const messageEl = document.getElementById('general-message');
+  messageEl.textContent = 'Saving...';
+  messageEl.className = 'section-message';
 
   try {
     const data = {
-      feed_title: formData.get('feed_title'),
-      feed_ttl_days: parseInt(formData.get('feed_ttl_days'), 10),
-      ui_password: formData.get('ui_password'),
-      bluesky_enabled: formData.get('bluesky_enabled') === 'on',
-      bluesky_handle: formData.get('bluesky_handle'),
-      bluesky_app_password: formData.get('bluesky_app_password'),
-      bluesky_top_n: parseInt(formData.get('bluesky_top_n'), 10),
-      youtube_enabled: formData.get('youtube_enabled') === 'on',
-      youtube_cookies: formData.get('youtube_cookies') || '',
-      reddit_enabled: formData.get('reddit_enabled') === 'on',
-      reddit_cookies: formData.get('reddit_cookies') || '',
-      reddit_top_n: parseInt(formData.get('reddit_top_n'), 10),
-      reddit_include_comments: formData.get('reddit_include_comments') === 'on',
-      reddit_comment_depth: parseInt(formData.get('reddit_comment_depth'), 10),
-      discord_enabled: formData.get('discord_enabled') === 'on',
-      discord_token: formData.get('discord_token') || '',
-      discord_top_n: parseInt(formData.get('discord_top_n'), 10),
-      discord_channels: formData.get('discord_channels') || '[]',
+      feed_title: form.feed_title.value,
+      feed_ttl_days: parseInt(form.feed_ttl_days.value, 10),
+      ui_password: form.ui_password.value,
     };
 
     await api('/api/config', {
@@ -368,91 +460,123 @@ async function saveSettings(formData) {
       body: JSON.stringify(data),
     });
 
-    messageEl.textContent = 'Settings saved successfully!';
-    messageEl.className = 'message success';
+    messageEl.textContent = 'Saved!';
+    messageEl.className = 'section-message success';
+    setTimeout(() => { messageEl.textContent = ''; }, 3000);
   } catch (err) {
-    messageEl.textContent = 'Failed to save settings: ' + err.message;
-    messageEl.className = 'message error';
+    messageEl.textContent = 'Error: ' + err.message;
+    messageEl.className = 'section-message error';
   }
-
-  setTimeout(() => {
-    messageEl.textContent = '';
-  }, 3000);
 }
 
-// Section-specific save
-async function saveSection(section) {
-  const messageEl = document.getElementById(`${section}-message`);
-  if (messageEl) {
-    messageEl.textContent = 'Saving...';
-    messageEl.className = 'section-message';
-  }
+async function saveBlueskySettings(form) {
+  const messageEl = document.getElementById('bluesky-message');
+  messageEl.textContent = 'Saving...';
+  messageEl.className = 'section-message';
 
   try {
-    let data = {};
-
-    switch (section) {
-      case 'general':
-        data = {
-          feed_title: document.getElementById('feed_title').value,
-          feed_ttl_days: parseInt(document.getElementById('feed_ttl_days').value, 10),
-          ui_password: document.getElementById('ui_password').value,
-        };
-        break;
-      case 'bluesky':
-        data = {
-          bluesky_enabled: document.getElementById('bluesky_enabled').checked,
-          bluesky_handle: document.getElementById('bluesky_handle').value,
-          bluesky_app_password: document.getElementById('bluesky_app_password').value,
-          bluesky_top_n: parseInt(document.getElementById('bluesky_top_n').value, 10),
-        };
-        break;
-      case 'youtube':
-        data = {
-          youtube_enabled: document.getElementById('youtube_enabled').checked,
-          youtube_cookies: document.getElementById('youtube_cookies').value || '',
-        };
-        break;
-      case 'reddit':
-        data = {
-          reddit_enabled: document.getElementById('reddit_enabled').checked,
-          reddit_cookies: document.getElementById('reddit_cookies').value || '',
-          reddit_top_n: parseInt(document.getElementById('reddit_top_n').value, 10),
-          reddit_include_comments: document.getElementById('reddit_include_comments').checked,
-          reddit_comment_depth: parseInt(document.getElementById('reddit_comment_depth').value, 10),
-        };
-        break;
-      case 'discord':
-        data = {
-          discord_enabled: document.getElementById('discord_enabled').checked,
-          discord_token: document.getElementById('discord_token').value || '',
-          discord_top_n: parseInt(document.getElementById('discord_top_n').value, 10),
-          discord_channels: document.getElementById('discord_channels').value || '[]',
-        };
-        break;
-    }
+    const data = {
+      bluesky_enabled: form.bluesky_enabled.checked,
+      bluesky_handle: form.bluesky_handle.value,
+      bluesky_app_password: form.bluesky_app_password.value,
+      bluesky_top_n: parseInt(form.bluesky_top_n.value, 10),
+    };
 
     await api('/api/config', {
       method: 'POST',
       body: JSON.stringify(data),
     });
 
-    if (messageEl) {
-      messageEl.textContent = 'Saved!';
-      messageEl.className = 'section-message success';
-      setTimeout(() => {
-        messageEl.textContent = '';
-      }, 3000);
-    }
+    messageEl.textContent = 'Saved!';
+    messageEl.className = 'section-message success';
+    setTimeout(() => { messageEl.textContent = ''; }, 3000);
   } catch (err) {
-    if (messageEl) {
-      messageEl.textContent = 'Error: ' + err.message;
-      messageEl.className = 'section-message error';
-    }
+    messageEl.textContent = 'Error: ' + err.message;
+    messageEl.className = 'section-message error';
   }
 }
 
-// Test source fetch (without deduplication)
+async function saveYouTubeSettings(form) {
+  const messageEl = document.getElementById('youtube-message');
+  messageEl.textContent = 'Saving...';
+  messageEl.className = 'section-message';
+
+  try {
+    const data = {
+      youtube_enabled: form.youtube_enabled.checked,
+      youtube_cookies: form.youtube_cookies.value || '',
+    };
+
+    await api('/api/config', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+
+    messageEl.textContent = 'Saved!';
+    messageEl.className = 'section-message success';
+    setTimeout(() => { messageEl.textContent = ''; }, 3000);
+  } catch (err) {
+    messageEl.textContent = 'Error: ' + err.message;
+    messageEl.className = 'section-message error';
+  }
+}
+
+async function saveRedditSettings(form) {
+  const messageEl = document.getElementById('reddit-message');
+  messageEl.textContent = 'Saving...';
+  messageEl.className = 'section-message';
+
+  try {
+    const data = {
+      reddit_enabled: form.reddit_enabled.checked,
+      reddit_cookies: form.reddit_cookies.value || '',
+      reddit_top_n: parseInt(form.reddit_top_n.value, 10),
+      reddit_include_comments: form.reddit_include_comments.checked,
+      reddit_comment_depth: parseInt(form.reddit_comment_depth.value, 10),
+    };
+
+    await api('/api/config', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+
+    messageEl.textContent = 'Saved!';
+    messageEl.className = 'section-message success';
+    setTimeout(() => { messageEl.textContent = ''; }, 3000);
+  } catch (err) {
+    messageEl.textContent = 'Error: ' + err.message;
+    messageEl.className = 'section-message error';
+  }
+}
+
+async function saveDiscordSettings(form) {
+  const messageEl = document.getElementById('discord-message');
+  messageEl.textContent = 'Saving...';
+  messageEl.className = 'section-message';
+
+  try {
+    const data = {
+      discord_enabled: form.discord_enabled.checked,
+      discord_token: form.discord_token.value || '',
+      discord_top_n: parseInt(form.discord_top_n.value, 10),
+      discord_channels: form.discord_channels.value || '[]',
+    };
+
+    await api('/api/config', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+
+    messageEl.textContent = 'Saved!';
+    messageEl.className = 'section-message success';
+    setTimeout(() => { messageEl.textContent = ''; }, 3000);
+  } catch (err) {
+    messageEl.textContent = 'Error: ' + err.message;
+    messageEl.className = 'section-message error';
+  }
+}
+
+// Test source fetch
 async function testSource(source) {
   const messageEl = document.getElementById(`${source}-message`);
   if (messageEl) {
@@ -467,7 +591,6 @@ async function testSource(source) {
       messageEl.textContent = '';
     }
 
-    // Show results in modal
     showTestResults(source, result);
   } catch (err) {
     if (messageEl) {
@@ -513,8 +636,11 @@ function closeTestResults() {
   document.getElementById('test-results-modal').classList.add('hidden');
 }
 
-// Feed Preview
-async function loadFeedItems() {
+// Feed Preview - with lazy loading
+async function loadFeedPreview() {
+  const list = document.getElementById('feed-list');
+  list.innerHTML = '<p class="loading">Loading...</p>';
+
   try {
     const params = new URLSearchParams({
       page: currentPage,
@@ -525,30 +651,29 @@ async function loadFeedItems() {
       params.set('source', currentSource);
     }
 
+    // First load just metadata (no content)
     const data = await api(`/api/feed-items?${params}`);
 
-    const list = document.getElementById('feed-list');
     list.innerHTML = '';
 
     for (const item of data.items) {
       const div = document.createElement('div');
       div.className = 'feed-item';
+      div.dataset.digestId = item.id;
       div.innerHTML = `
-        <div class="feed-item-header">
+        <div class="feed-item-header" onclick="toggleFeedItem(this)">
           <span class="source-badge ${item.source}">${item.source}</span>
-          <span class="feed-item-title">
-            <a href="${escapeHtml(item.url)}" target="_blank">${escapeHtml(item.title)}</a>
-            ${item.is_notification ? '<span class="notification-badge">NOTIFICATION</span>' : ''}
-          </span>
+          <span class="feed-item-title">${escapeHtml(item.title)}</span>
+          <span class="expand-arrow">▶</span>
         </div>
-        <div class="feed-item-meta">
-          ${item.author ? `By ${escapeHtml(item.author)} • ` : ''}
-          ${new Date(item.published_at).toLocaleString()}
+        <div class="feed-item-details hidden">
+          <div class="feed-item-meta">
+            ${new Date(item.published_at).toLocaleString()}
+          </div>
+          <div class="feed-item-content">
+            <em>Loading content...</em>
+          </div>
         </div>
-        ${item.content ? `
-          <div class="feed-item-content">${item.content}</div>
-          <button class="feed-item-toggle" onclick="toggleContent(this)">Show more</button>
-        ` : ''}
       `;
       list.appendChild(div);
     }
@@ -559,14 +684,59 @@ async function loadFeedItems() {
     document.getElementById('prev-page').disabled = currentPage <= 1;
     document.getElementById('next-page').disabled = currentPage >= totalPages;
   } catch (err) {
-    console.error('Failed to load feed items:', err);
+    console.error('Failed to load feed preview:', err);
+    list.innerHTML = `<p class="error">Failed to load: ${escapeHtml(err.message)}</p>`;
   }
 }
 
-function toggleContent(button) {
-  const item = button.closest('.feed-item');
+async function toggleFeedItem(header) {
+  const item = header.closest('.feed-item');
+  const details = item.querySelector('.feed-item-details');
+  const isExpanding = details.classList.contains('hidden');
+
+  details.classList.toggle('hidden');
   item.classList.toggle('expanded');
-  button.textContent = item.classList.contains('expanded') ? 'Show less' : 'Show more';
+
+  // Lazy load content when expanding
+  if (isExpanding && !item.dataset.loaded) {
+    const digestId = item.dataset.digestId;
+    const contentEl = item.querySelector('.feed-item-content');
+
+    try {
+      const data = await api(`/api/digest/${digestId}`);
+      let content = data.content || '<em>No content</em>';
+
+      // Apply simple mode if enabled
+      if (previewSimpleMode) {
+        content = simplifyHtml(content);
+      }
+
+      contentEl.innerHTML = content;
+      item.dataset.loaded = 'true';
+    } catch (err) {
+      contentEl.innerHTML = `<em>Failed to load: ${escapeHtml(err.message)}</em>`;
+    }
+  }
+}
+
+// Simple HTML transformation (client-side version)
+function simplifyHtml(html) {
+  return html
+    // Convert YouTube iframes to links
+    .replace(/<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi,
+      '<p><a href="https://www.youtube.com/watch?v=$1">▶ Watch on YouTube</a></p>')
+    // Convert video tags to links
+    .replace(/<video[^>]*>[\s\S]*?<source[^>]*src="([^"]+)"[^>]*>[\s\S]*?<\/video>/gi,
+      '<p><a href="$1">▶ View Video</a></p>')
+    // Remove inline styles
+    .replace(/\s*style="[^"]*"/gi, '')
+    // Remove class attributes
+    .replace(/\s*class="[^"]*"/gi, '')
+    // Simplify divs to paragraphs
+    .replace(/<div[^>]*>/gi, '<p>')
+    .replace(/<\/div>/gi, '</p>')
+    // Remove empty paragraphs
+    .replace(/<p>\s*<\/p>/gi, '');
 }
 
 async function toggleRecentItem(header) {
@@ -574,7 +744,6 @@ async function toggleRecentItem(header) {
   const isExpanding = !item.classList.contains('expanded');
   item.classList.toggle('expanded');
 
-  // Lazy load content when expanding
   if (isExpanding && !item.dataset.loaded) {
     const digestId = item.dataset.digestId;
     const bodyEl = item.querySelector('.recent-item-body');
@@ -584,7 +753,7 @@ async function toggleRecentItem(header) {
       bodyEl.innerHTML = data.content || '<em>No content</em>';
       item.dataset.loaded = 'true';
     } catch (err) {
-      bodyEl.innerHTML = `<em>Failed to load content: ${escapeHtml(err.message)}</em>`;
+      bodyEl.innerHTML = `<em>Failed to load: ${escapeHtml(err.message)}</em>`;
     }
   }
 }
@@ -596,8 +765,37 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function buildFeedUrl() {
+  const format = document.getElementById('feed-format-select')?.value || 'feed.xml';
+  const simple = document.getElementById('feed-simple-mode')?.checked || false;
+
+  let url = window.location.origin + '/' + format;
+  const params = new URLSearchParams();
+
+  if (feedToken) {
+    params.set('token', feedToken);
+  }
+  if (simple) {
+    params.set('simple', 'true');
+  }
+
+  const queryString = params.toString();
+  if (queryString) {
+    url += '?' + queryString;
+  }
+
+  return url;
+}
+
+function updateFeedUrl() {
+  const urlInput = document.getElementById('feed-url-display');
+  if (urlInput) {
+    urlInput.value = buildFeedUrl();
+  }
+}
+
 function copyFeedUrl() {
-  const url = window.location.origin + '/feed.xml';
+  const url = buildFeedUrl();
   navigator.clipboard.writeText(url).then(() => {
     const btn = document.querySelector('.copy-btn');
     const originalText = btn.textContent;
@@ -627,6 +825,8 @@ function setSelectedChannels(channels) {
 
 function renderSelectedChannels() {
   const container = document.getElementById('discord-servers-container');
+  if (!container) return;
+
   const selectedChannels = getSelectedChannels();
 
   if (selectedChannels.length === 0 && discordGuilds.length === 0) {
@@ -635,7 +835,6 @@ function renderSelectedChannels() {
   }
 
   if (discordGuilds.length === 0 && selectedChannels.length > 0) {
-    // Show selected channels even without fetching servers
     const grouped = {};
     for (const ch of selectedChannels) {
       if (!grouped[ch.guildId]) {
@@ -662,6 +861,8 @@ function renderSelectedChannels() {
 
 function renderServers() {
   const container = document.getElementById('discord-servers-container');
+  if (!container) return;
+
   const selectedChannels = getSelectedChannels();
   const selectedIds = new Set(selectedChannels.map(ch => ch.channelId));
 
@@ -699,17 +900,13 @@ function renderServers() {
 
 async function fetchDiscordServers() {
   const container = document.getElementById('discord-servers-container');
-  console.log('fetchDiscordServers called');
   container.innerHTML = '<p>Loading servers...</p>';
 
   try {
-    console.log('Calling /api/discord/guilds...');
     const guilds = await api('/api/discord/guilds');
-    console.log('Got guilds:', guilds);
     discordGuilds = guilds.map(g => ({ ...g, expanded: false, channels: null }));
     renderServers();
   } catch (err) {
-    console.error('fetchDiscordServers error:', err);
     container.innerHTML = `<p class="error">Failed to fetch servers: ${escapeHtml(err.message)}</p>`;
   }
 }
@@ -721,7 +918,6 @@ async function toggleServer(guildId) {
   guild.expanded = !guild.expanded;
 
   if (guild.expanded && !guild.channels) {
-    // Fetch channels for this guild
     renderServers();
     try {
       const channels = await api(`/api/discord/channels/${guildId}`);
@@ -739,12 +935,10 @@ function toggleChannel(guildId, guildName, channelId, channelName, checked) {
   const selectedChannels = getSelectedChannels();
 
   if (checked) {
-    // Add channel if not already selected
     if (!selectedChannels.find(ch => ch.channelId === channelId)) {
       selectedChannels.push({ guildId, guildName, channelId, channelName });
     }
   } else {
-    // Remove channel
     const index = selectedChannels.findIndex(ch => ch.channelId === channelId);
     if (index !== -1) {
       selectedChannels.splice(index, 1);
@@ -785,7 +979,6 @@ function renderLogs(logs) {
   const levelFilter = currentLogLevelFilter;
   const sourceFilter = currentLogSourceFilter;
 
-  // Filter logs by level and source
   let filteredLogs = logs;
 
   if (levelFilter) {
@@ -801,7 +994,6 @@ function renderLogs(logs) {
     return;
   }
 
-  // Render logs chronologically (oldest first, newest at bottom)
   const html = filteredLogs.map(log => {
     const time = new Date(log.timestamp).toLocaleTimeString();
     const level = log.level.toLowerCase();
@@ -817,8 +1009,6 @@ function renderLogs(logs) {
   }).join('');
 
   container.innerHTML = html;
-
-  // Auto-scroll to bottom
   container.scrollTop = container.scrollHeight;
 }
 
@@ -875,7 +1065,7 @@ function renderSchedules() {
   for (const schedule of schedules) {
     const daysText = schedule.days_of_week.map(d => dayNames[d]).join(', ');
     const sourcesText = schedule.sources.join(', ');
-    const time = schedule.time_of_day.substring(0, 5); // HH:MM
+    const time = schedule.time_of_day.substring(0, 5);
     const nextRun = schedule.nextRun ? new Date(schedule.nextRun).toLocaleString() : 'Not scheduled';
     const lastRun = schedule.lastRun ? new Date(schedule.lastRun).toLocaleString() : 'Never';
     const statusClass = schedule.enabled ? 'enabled' : 'disabled';
@@ -928,19 +1118,16 @@ function openScheduleModal(schedule = null) {
     document.getElementById('schedule-timezone').value = schedule.timezone;
     document.getElementById('schedule-enabled').checked = schedule.enabled;
 
-    // Set days
     document.querySelectorAll('#schedule-form input[name="days"]').forEach(cb => {
       cb.checked = schedule.days_of_week.includes(parseInt(cb.value, 10));
     });
 
-    // Set sources
     document.querySelectorAll('#schedule-form input[name="sources"]').forEach(cb => {
       cb.checked = schedule.sources.includes(cb.value);
     });
   } else {
     title.textContent = 'Add Schedule';
     document.getElementById('schedule-id').value = '';
-    // Default to all weekdays
     selectDays([1, 2, 3, 4, 5]);
   }
 
@@ -1021,7 +1208,7 @@ async function toggleScheduleEnabled(id, enabled) {
     loadSchedules();
   } catch (err) {
     alert('Failed to update schedule: ' + err.message);
-    loadSchedules(); // Reload to reset UI
+    loadSchedules();
   }
 }
 
@@ -1035,7 +1222,7 @@ async function runScheduleNow(id) {
   try {
     await api(`/api/schedules/${id}/run`, { method: 'POST' });
     loadSchedules();
-    loadDashboard(); // Refresh dashboard stats too
+    loadDashboard();
   } catch (err) {
     alert('Failed to run schedule: ' + err.message);
     loadSchedules();
@@ -1061,12 +1248,31 @@ document.addEventListener('DOMContentLoaded', () => {
   // Logout button
   document.getElementById('logout-btn').addEventListener('click', logout);
 
-  // Navigation
-  document.querySelectorAll('nav a[data-page]').forEach(link => {
+  // Navigation - intercept link clicks for client-side routing
+  document.querySelectorAll('nav a[href]').forEach(link => {
     link.addEventListener('click', (e) => {
-      e.preventDefault();
-      showPage(link.dataset.page);
+      const href = link.getAttribute('href');
+      if (href && href.startsWith('/')) {
+        e.preventDefault();
+        navigateTo(href);
+      }
     });
+  });
+
+  // Also handle settings nav card clicks
+  document.querySelectorAll('.settings-nav-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      const href = card.getAttribute('href');
+      if (href && href.startsWith('/')) {
+        e.preventDefault();
+        navigateTo(href);
+      }
+    });
+  });
+
+  // Handle browser back/forward
+  window.addEventListener('popstate', () => {
+    routeToCurrentPage();
   });
 
   // Poll buttons
@@ -1091,74 +1297,113 @@ document.addEventListener('DOMContentLoaded', () => {
     clearAllData();
   });
 
-  // Settings form - prevent default submission (uses section-specific saves now)
-  document.getElementById('settings-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-  });
+  // Settings forms
+  const generalForm = document.getElementById('settings-general-form');
+  if (generalForm) {
+    generalForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      saveGeneralSettings(e.target);
+    });
+  }
 
-  // Close test results modal when clicking outside
+  const blueskyForm = document.getElementById('settings-bluesky-form');
+  if (blueskyForm) {
+    blueskyForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      saveBlueskySettings(e.target);
+    });
+  }
+
+  const youtubeForm = document.getElementById('settings-youtube-form');
+  if (youtubeForm) {
+    youtubeForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      saveYouTubeSettings(e.target);
+    });
+  }
+
+  const redditForm = document.getElementById('settings-reddit-form');
+  if (redditForm) {
+    redditForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      saveRedditSettings(e.target);
+    });
+  }
+
+  const discordForm = document.getElementById('settings-discord-form');
+  if (discordForm) {
+    discordForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      saveDiscordSettings(e.target);
+    });
+  }
+
+  // Regenerate feed token
+  const regenerateTokenBtn = document.getElementById('regenerate-token-btn');
+  if (regenerateTokenBtn) {
+    regenerateTokenBtn.addEventListener('click', async () => {
+      if (!confirm('Are you sure? This will break existing RSS subscriptions.')) {
+        return;
+      }
+
+      regenerateTokenBtn.disabled = true;
+      regenerateTokenBtn.textContent = 'Regenerating...';
+
+      try {
+        const result = await api('/api/feed-token/regenerate', { method: 'POST' });
+        feedToken = result.token;
+        document.getElementById('feed_token').value = result.token;
+        updateFeedUrl();
+        alert('Feed token regenerated. Update your RSS reader with the new URL.');
+      } catch (err) {
+        alert('Failed to regenerate token: ' + err.message);
+      } finally {
+        regenerateTokenBtn.disabled = false;
+        regenerateTokenBtn.textContent = 'Regenerate';
+      }
+    });
+  }
+
+  // Close test results modal
   document.getElementById('test-results-modal').addEventListener('click', (e) => {
     if (e.target.id === 'test-results-modal') {
       closeTestResults();
     }
   });
 
-  // Feed filters
-  document.getElementById('source-filter').addEventListener('change', (e) => {
-    currentSource = e.target.value;
-    currentPage = 1;
-    loadFeedItems();
-  });
+  // Feed preview controls
+  const previewSourceFilter = document.getElementById('preview-source-filter');
+  if (previewSourceFilter) {
+    previewSourceFilter.addEventListener('change', (e) => {
+      currentSource = e.target.value;
+      currentPage = 1;
+      loadFeedPreview();
+    });
+  }
+
+  const previewSimpleModeCheckbox = document.getElementById('preview-simple-mode');
+  if (previewSimpleModeCheckbox) {
+    previewSimpleModeCheckbox.addEventListener('change', (e) => {
+      previewSimpleMode = e.target.checked;
+      // Clear loaded state so content reloads with new mode
+      document.querySelectorAll('.feed-item[data-loaded]').forEach(item => {
+        delete item.dataset.loaded;
+      });
+    });
+  }
 
   // Pagination
   document.getElementById('prev-page').addEventListener('click', () => {
     if (currentPage > 1) {
       currentPage--;
-      loadFeedItems();
+      loadFeedPreview();
     }
   });
 
   document.getElementById('next-page').addEventListener('click', () => {
     currentPage++;
-    loadFeedItems();
+    loadFeedPreview();
   });
-
-  // Bluesky test connection (only if button exists)
-  const blueskyTestBtn = document.getElementById('bluesky-test-btn');
-  if (blueskyTestBtn) {
-    blueskyTestBtn.addEventListener('click', async () => {
-      const btn = blueskyTestBtn;
-      const resultEl = document.getElementById('bluesky-test-result');
-
-      btn.disabled = true;
-      btn.textContent = 'Testing...';
-      if (resultEl) {
-        resultEl.textContent = 'Connecting to Bluesky...';
-        resultEl.className = '';
-      }
-
-      try {
-        const result = await api('/api/bluesky/test', { method: 'POST' });
-        if (resultEl) {
-          if (result.success) {
-            resultEl.textContent = 'Connection successful!';
-            resultEl.className = 'success';
-          } else {
-            resultEl.textContent = 'Failed: ' + (result.error || 'Unknown error');
-            resultEl.className = 'error';
-          }
-        }
-      } catch (err) {
-        if (resultEl) {
-          resultEl.textContent = 'Error: ' + err.message;
-          resultEl.className = 'error';
-        }
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Test Connection';
-      }
-    });
-  }
 
   // Discord test connection
   const discordTestBtn = document.getElementById('discord-test-btn');
@@ -1214,7 +1459,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Logs page
   document.getElementById('refresh-logs-btn').addEventListener('click', loadLogs);
-
   document.getElementById('clear-logs-btn').addEventListener('click', clearLogs);
 
   document.getElementById('auto-refresh-logs').addEventListener('change', (e) => {
@@ -1246,7 +1490,6 @@ document.addEventListener('DOMContentLoaded', () => {
     saveSchedule(formData);
   });
 
-  // Close modal when clicking outside
   document.getElementById('schedule-modal').addEventListener('click', (e) => {
     if (e.target.id === 'schedule-modal') {
       closeScheduleModal();
