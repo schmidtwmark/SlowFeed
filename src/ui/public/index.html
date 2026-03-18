@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slowfeed</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Login Screen -->
+    <div id="login-screen" class="screen">
+      <div class="login-container">
+        <h1>Slowfeed</h1>
+        <p>Enter your password to continue</p>
+        <form id="login-form">
+          <input type="password" id="password-input" placeholder="Password" required>
+          <button type="submit">Login</button>
+        </form>
+        <p id="login-error" class="error"></p>
+      </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="main-screen" class="screen hidden">
+      <nav>
+        <h1>Slowfeed</h1>
+        <ul>
+          <li><a href="#" data-page="dashboard" class="active">Dashboard</a></li>
+          <li><a href="#" data-page="schedules">Schedules</a></li>
+          <li><a href="#" data-page="settings">Settings</a></li>
+          <li><a href="#" data-page="feed">Feed Preview</a></li>
+          <li><a href="#" data-page="logs">Logs</a></li>
+        </ul>
+        <button id="logout-btn">Logout</button>
+      </nav>
+
+      <main>
+        <!-- Dashboard Page -->
+        <section id="page-dashboard" class="page">
+          <h2>Dashboard</h2>
+
+          <div class="feed-links">
+            <span>Feed URL:</span>
+            <a href="/feed.xml" target="_blank">/feed.xml</a>
+            <a href="/feed.rss" target="_blank">/feed.rss</a>
+            <a href="/feed.atom" target="_blank">/feed.atom</a>
+            <button class="copy-btn" onclick="copyFeedUrl()">Copy</button>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-card">
+              <h3>Total Items</h3>
+              <p id="stat-total">0</p>
+            </div>
+            <div class="stat-card" data-source-card="reddit">
+              <h3>Reddit</h3>
+              <p id="stat-reddit">0</p>
+              <div class="poll-status" id="status-reddit"></div>
+              <div class="card-buttons">
+                <button class="poll-btn" data-source="reddit">Refresh</button>
+                <button class="clear-btn" data-source="reddit">Clear</button>
+              </div>
+            </div>
+            <div class="stat-card" data-source-card="bluesky">
+              <h3>Bluesky</h3>
+              <p id="stat-bluesky">0</p>
+              <div class="poll-status" id="status-bluesky"></div>
+              <div class="card-buttons">
+                <button class="poll-btn" data-source="bluesky">Refresh</button>
+                <button class="clear-btn" data-source="bluesky">Clear</button>
+              </div>
+            </div>
+            <div class="stat-card" data-source-card="youtube">
+              <h3>YouTube</h3>
+              <p id="stat-youtube">0</p>
+              <div class="poll-status" id="status-youtube"></div>
+              <div class="card-buttons">
+                <button class="poll-btn" data-source="youtube">Refresh</button>
+                <button class="clear-btn" data-source="youtube">Clear</button>
+              </div>
+            </div>
+            <div class="stat-card" data-source-card="discord">
+              <h3>Discord</h3>
+              <p id="stat-discord">0</p>
+              <div class="poll-status" id="status-discord"></div>
+              <div class="card-buttons">
+                <button class="poll-btn" data-source="discord">Refresh</button>
+                <button class="clear-btn" data-source="discord">Clear</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="refresh-all-btn">Refresh All Sources</button>
+            <button id="clear-all-btn" class="danger-btn">Clear All Data</button>
+          </div>
+
+          <div class="recent-items">
+            <h3>Recent Items</h3>
+            <ul id="recent-items-list"></ul>
+          </div>
+        </section>
+
+        <!-- Schedules Page -->
+        <section id="page-schedules" class="page hidden">
+          <h2>Schedules</h2>
+          <p class="page-description">Configure when to poll each source. Each schedule runs at the specified time(s) and creates a consolidated digest.</p>
+
+          <div class="schedules-actions">
+            <button id="add-schedule-btn" class="primary-btn">Add Schedule</button>
+          </div>
+
+          <div id="schedules-list" class="schedules-list">
+            <p class="loading">Loading schedules...</p>
+          </div>
+
+          <!-- Schedule Editor Modal -->
+          <div id="schedule-modal" class="modal hidden">
+            <div class="modal-content">
+              <h3 id="schedule-modal-title">Add Schedule</h3>
+              <form id="schedule-form">
+                <input type="hidden" id="schedule-id" name="id">
+
+                <div class="form-group">
+                  <label for="schedule-name">Name</label>
+                  <input type="text" id="schedule-name" name="name" required placeholder="e.g., Morning Digest">
+                </div>
+
+                <div class="form-group">
+                  <label for="schedule-time">Time</label>
+                  <input type="time" id="schedule-time" name="time" required>
+                </div>
+
+                <div class="form-group">
+                  <label for="schedule-timezone">Timezone</label>
+                  <select id="schedule-timezone" name="timezone" required>
+                    <option value="America/New_York">Eastern Time (ET)</option>
+                    <option value="America/Chicago">Central Time (CT)</option>
+                    <option value="America/Denver">Mountain Time (MT)</option>
+                    <option value="America/Los_Angeles">Pacific Time (PT)</option>
+                    <option value="America/Phoenix">Arizona (AZ)</option>
+                    <option value="UTC">UTC</option>
+                    <option value="Europe/London">London (GMT/BST)</option>
+                    <option value="Europe/Paris">Paris (CET/CEST)</option>
+                    <option value="Europe/Berlin">Berlin (CET/CEST)</option>
+                    <option value="Asia/Tokyo">Tokyo (JST)</option>
+                    <option value="Asia/Shanghai">Shanghai (CST)</option>
+                    <option value="Australia/Sydney">Sydney (AEST)</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label>Days of Week</label>
+                  <div class="days-checkboxes">
+                    <label><input type="checkbox" name="days" value="0"> Sun</label>
+                    <label><input type="checkbox" name="days" value="1"> Mon</label>
+                    <label><input type="checkbox" name="days" value="2"> Tue</label>
+                    <label><input type="checkbox" name="days" value="3"> Wed</label>
+                    <label><input type="checkbox" name="days" value="4"> Thu</label>
+                    <label><input type="checkbox" name="days" value="5"> Fri</label>
+                    <label><input type="checkbox" name="days" value="6"> Sat</label>
+                  </div>
+                  <div class="days-shortcuts">
+                    <button type="button" onclick="selectDays([1,2,3,4,5])">Weekdays</button>
+                    <button type="button" onclick="selectDays([0,6])">Weekends</button>
+                    <button type="button" onclick="selectDays([0,1,2,3,4,5,6])">Every day</button>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label>Sources</label>
+                  <div class="sources-checkboxes">
+                    <label><input type="checkbox" name="sources" value="reddit"> Reddit</label>
+                    <label><input type="checkbox" name="sources" value="bluesky"> Bluesky</label>
+                    <label><input type="checkbox" name="sources" value="youtube"> YouTube</label>
+                    <label><input type="checkbox" name="sources" value="discord"> Discord</label>
+                  </div>
+                </div>
+
+                <div class="form-group checkbox">
+                  <input type="checkbox" id="schedule-enabled" name="enabled" checked>
+                  <label for="schedule-enabled">Enabled</label>
+                </div>
+
+                <div class="modal-actions">
+                  <button type="button" id="cancel-schedule-btn" class="secondary-btn">Cancel</button>
+                  <button type="submit" class="primary-btn">Save Schedule</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <!-- Settings Page -->
+        <section id="page-settings" class="page hidden">
+          <h2>Settings</h2>
+
+          <form id="settings-form">
+            <fieldset>
+              <legend>General</legend>
+              <div class="form-group">
+                <label for="feed_title">Feed Title</label>
+                <input type="text" id="feed_title" name="feed_title">
+              </div>
+              <div class="form-group">
+                <label for="feed_ttl_days">Feed TTL (days)</label>
+                <input type="number" id="feed_ttl_days" name="feed_ttl_days" min="1" max="90">
+              </div>
+              <div class="form-group">
+                <label for="ui_password">UI Password</label>
+                <input type="password" id="ui_password" name="ui_password">
+              </div>
+              <p class="fieldset-note">To configure polling times, use the <a href="#" onclick="showPage('schedules'); return false;">Schedules</a> page.</p>
+              <div class="section-actions">
+                <button type="button" onclick="saveSection('general')">Save General Settings</button>
+                <span class="section-message" id="general-message"></span>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Bluesky</legend>
+              <p class="fieldset-note">Fetches your Bluesky timeline using the official AT Protocol API</p>
+              <div class="form-group checkbox">
+                <input type="checkbox" id="bluesky_enabled" name="bluesky_enabled">
+                <label for="bluesky_enabled">Enable Bluesky</label>
+              </div>
+              <div class="form-group">
+                <label for="bluesky_handle">Handle</label>
+                <input type="text" id="bluesky_handle" name="bluesky_handle" placeholder="you.bsky.social">
+              </div>
+              <div class="form-group">
+                <label for="bluesky_app_password">App Password</label>
+                <input type="password" id="bluesky_app_password" name="bluesky_app_password" placeholder="xxxx-xxxx-xxxx-xxxx">
+                <details class="help-details">
+                  <summary>How to get an App Password</summary>
+                  <ol>
+                    <li>Go to <a href="https://bsky.app/settings/app-passwords" target="_blank">bsky.app/settings/app-passwords</a></li>
+                    <li>Click "Add App Password"</li>
+                    <li>Give it a name (e.g., "Slowfeed")</li>
+                    <li>Copy the generated password (format: xxxx-xxxx-xxxx-xxxx)</li>
+                    <li>Paste it here</li>
+                  </ol>
+                  <p><strong>Note:</strong> App passwords are separate from your main password and can be revoked anytime. Never share your main Bluesky password.</p>
+                </details>
+              </div>
+              <div class="form-group">
+                <label for="bluesky_top_n">Top Posts Count</label>
+                <input type="number" id="bluesky_top_n" name="bluesky_top_n" min="1" max="100">
+              </div>
+              <div class="section-actions">
+                <button type="button" onclick="saveSection('bluesky')">Save Bluesky Settings</button>
+                <button type="button" onclick="testSource('bluesky')">Test Fetch</button>
+                <span class="section-message" id="bluesky-message"></span>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>YouTube</legend>
+              <p class="fieldset-note">Scrapes youtube.com/feed/subscriptions using your browser cookies</p>
+              <div class="form-group checkbox">
+                <input type="checkbox" id="youtube_enabled" name="youtube_enabled">
+                <label for="youtube_enabled">Enable YouTube</label>
+              </div>
+              <div class="form-group">
+                <label for="youtube_cookies">Browser Cookies</label>
+                <textarea id="youtube_cookies" name="youtube_cookies" rows="6" placeholder="Paste your YouTube cookies here (Netscape cookies.txt format or raw Cookie header)"></textarea>
+                <details class="help-details">
+                  <summary>How to get long-lasting YouTube cookies</summary>
+                  <p>Use an <strong>incognito/private window</strong> to get cookies that last months instead of days:</p>
+                  <ol>
+                    <li>Install a cookie export extension like <a href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank">Get cookies.txt LOCALLY</a> (Chrome) or <a href="https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/" target="_blank">cookies.txt</a> (Firefox)</li>
+                    <li>Open a new <strong>incognito/private browsing window</strong></li>
+                    <li>Go to <a href="https://accounts.google.com" target="_blank">accounts.google.com</a> and log in</li>
+                    <li>Navigate to <a href="https://www.youtube.com/robots.txt" target="_blank">youtube.com/robots.txt</a></li>
+                    <li>Click the cookie export extension and export cookies for the current site</li>
+                    <li><strong>Immediately close the incognito window</strong> (do not browse further)</li>
+                    <li>Paste the exported cookies.txt content here</li>
+                  </ol>
+                  <p><strong>Why incognito?</strong> Cookies from regular sessions are tied to your browsing activity and expire quickly. Incognito cookies created for a minimal session last much longer (often months).</p>
+                  <p><strong>Format:</strong> Both Netscape cookies.txt format (from extensions) and raw Cookie header format (from DevTools) are supported.</p>
+                </details>
+              </div>
+              <div class="section-actions">
+                <button type="button" onclick="saveSection('youtube')">Save YouTube Settings</button>
+                <button type="button" onclick="testSource('youtube')">Test Fetch</button>
+                <span class="section-message" id="youtube-message"></span>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Reddit</legend>
+              <p class="fieldset-note">Scrapes old.reddit.com (optionally with your cookies for personalized feed)</p>
+              <div class="form-group checkbox">
+                <input type="checkbox" id="reddit_enabled" name="reddit_enabled">
+                <label for="reddit_enabled">Enable Reddit</label>
+              </div>
+              <div class="form-group">
+                <label for="reddit_cookies">Browser Cookies (optional)</label>
+                <textarea id="reddit_cookies" name="reddit_cookies" rows="3" placeholder="Paste your Reddit cookies here for personalized feed"></textarea>
+                <details class="help-details">
+                  <summary>How to get Reddit cookies</summary>
+                  <p>Without cookies, Slowfeed will scrape the public Reddit front page. With cookies, you get your personalized home feed based on your subscriptions.</p>
+                  <ol>
+                    <li>Open <a href="https://old.reddit.com" target="_blank">old.reddit.com</a> in Chrome/Firefox and make sure you're logged in</li>
+                    <li>Press <kbd>F12</kbd> to open Developer Tools</li>
+                    <li>Go to the <strong>Network</strong> tab</li>
+                    <li>Refresh the page (<kbd>F5</kbd>)</li>
+                    <li>Click on the first request to "old.reddit.com" in the list</li>
+                    <li>In the right panel, scroll down to <strong>Request Headers</strong></li>
+                    <li>Find the <code>Cookie</code> header and copy its entire value</li>
+                    <li>Paste the value here</li>
+                  </ol>
+                  <p><strong>Important:</strong> Use old.reddit.com, not www.reddit.com. The cookie format is different.</p>
+                </details>
+              </div>
+              <div class="form-group">
+                <label for="reddit_top_n">Top Posts Count</label>
+                <input type="number" id="reddit_top_n" name="reddit_top_n" min="1" max="100">
+              </div>
+              <div class="form-group checkbox">
+                <input type="checkbox" id="reddit_include_comments" name="reddit_include_comments">
+                <label for="reddit_include_comments">Include Comments</label>
+              </div>
+              <div class="form-group">
+                <label for="reddit_comment_depth">Comment Depth</label>
+                <input type="number" id="reddit_comment_depth" name="reddit_comment_depth" min="0" max="10">
+              </div>
+              <div class="section-actions">
+                <button type="button" onclick="saveSection('reddit')">Save Reddit Settings</button>
+                <button type="button" onclick="testSource('reddit')">Test Fetch</button>
+                <span class="section-message" id="reddit-message"></span>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Discord</legend>
+              <p class="fieldset-note">Fetches messages from selected Discord channels using your user token</p>
+              <div class="form-group checkbox">
+                <input type="checkbox" id="discord_enabled" name="discord_enabled">
+                <label for="discord_enabled">Enable Discord</label>
+              </div>
+              <div class="form-group">
+                <label for="discord_token">Discord Token</label>
+                <input type="password" id="discord_token" name="discord_token" placeholder="Your Discord user token">
+                <details class="help-details">
+                  <summary>How to get your Discord token</summary>
+                  <ol>
+                    <li>Open <a href="https://discord.com/app" target="_blank">discord.com/app</a> in Chrome/Firefox (not the desktop app)</li>
+                    <li>Press <kbd>F12</kbd> to open Developer Tools</li>
+                    <li>Go to the <strong>Network</strong> tab</li>
+                    <li>In the Filter box, type <code>api</code> to filter requests</li>
+                    <li>Send a message in any channel, or switch channels</li>
+                    <li>Click on any request to <code>discord.com/api</code> in the list</li>
+                    <li>In the right panel, scroll down to <strong>Request Headers</strong></li>
+                    <li>Find the <code>Authorization</code> header and copy its value (do NOT include the word "Authorization:")</li>
+                    <li>Paste the value here</li>
+                  </ol>
+                  <p><strong>Security note:</strong> Your Discord token grants full access to your account. Keep it secret and never share it. Slowfeed stores it locally and only uses it to read messages from channels you select.</p>
+                </details>
+              </div>
+              <div class="form-group">
+                <button type="button" id="discord-test-btn">Test Connection</button>
+                <span id="discord-test-result"></span>
+              </div>
+              <div class="form-group">
+                <label for="discord_top_n">Messages per Channel</label>
+                <input type="number" id="discord_top_n" name="discord_top_n" min="1" max="100">
+              </div>
+              <div class="form-group">
+                <label>Selected Channels</label>
+                <button type="button" id="discord-fetch-servers-btn">Fetch Servers</button>
+                <div id="discord-servers-container" class="discord-servers"></div>
+                <input type="hidden" id="discord_channels" name="discord_channels">
+              </div>
+              <div class="section-actions">
+                <button type="button" onclick="saveSection('discord')">Save Discord Settings</button>
+                <button type="button" onclick="testSource('discord')">Test Fetch</button>
+                <span class="section-message" id="discord-message"></span>
+              </div>
+            </fieldset>
+          </form>
+
+          <!-- Test Results Modal -->
+          <div id="test-results-modal" class="modal hidden">
+            <div class="modal-content modal-large">
+              <h3 id="test-results-title">Test Results</h3>
+              <div id="test-results-content" class="test-results-content"></div>
+              <div class="modal-actions">
+                <button type="button" onclick="closeTestResults()">Close</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Feed Preview Page -->
+        <section id="page-feed" class="page hidden">
+          <h2>Feed Preview</h2>
+
+          <div class="feed-controls">
+            <label for="source-filter">Filter by source:</label>
+            <select id="source-filter">
+              <option value="">All Sources</option>
+              <option value="reddit">Reddit</option>
+              <option value="bluesky">Bluesky</option>
+              <option value="youtube">YouTube</option>
+              <option value="discord">Discord</option>
+            </select>
+          </div>
+
+          <div class="feed-list" id="feed-list"></div>
+
+          <div class="pagination">
+            <button id="prev-page" disabled>Previous</button>
+            <span id="page-info">Page 1</span>
+            <button id="next-page">Next</button>
+          </div>
+        </section>
+
+        <!-- Logs Page -->
+        <section id="page-logs" class="page hidden">
+          <h2>Logs</h2>
+
+          <div class="logs-controls">
+            <button id="refresh-logs-btn">Refresh</button>
+            <button id="clear-logs-btn">Clear Logs</button>
+            <label class="checkbox-inline">
+              <input type="checkbox" id="auto-refresh-logs">
+              Auto-refresh
+            </label>
+            <label for="log-source-filter">Source:</label>
+            <select id="log-source-filter">
+              <option value="">All</option>
+              <option value="reddit">Reddit</option>
+              <option value="bluesky">Bluesky</option>
+              <option value="youtube">YouTube</option>
+              <option value="discord">Discord</option>
+              <option value="system">System</option>
+            </select>
+            <label for="log-level-filter">Level:</label>
+            <select id="log-level-filter">
+              <option value="">All</option>
+              <option value="error">Errors</option>
+              <option value="warn">Warnings</option>
+              <option value="info">Info</option>
+            </select>
+          </div>
+
+          <div class="logs-container" id="logs-container">
+            <div class="logs-placeholder">Loading logs...</div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

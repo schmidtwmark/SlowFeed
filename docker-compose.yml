@@ -1,0 +1,34 @@
+services:
+  slowfeed:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"  # Accessible from local network
+    environment:
+      - DATABASE_URL=postgresql://slowfeed:slowfeed@db:5432/slowfeed
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: slowfeed
+      POSTGRES_PASSWORD: slowfeed
+      POSTGRES_DB: slowfeed
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U slowfeed"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg_data:
