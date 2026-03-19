@@ -83,6 +83,7 @@ function formatBlueskyPost(post: DigestPost): string {
 /**
  * Group Bluesky posts into threads and format them.
  * Posts that are replies to each other get grouped under a single thread.
+ * Overall order is chronological (oldest first), based on each thread/post's earliest timestamp.
  */
 function formatBlueskyPosts(posts: DigestPost[]): string {
   // Group posts by thread root URI
@@ -97,14 +98,11 @@ function formatBlueskyPosts(posts: DigestPost[]): string {
       existing.push(post);
       threads.set(rootUri, existing);
     } else {
-      // Check if this post IS a root that other posts reply to
-      // We'll use a second pass to merge these
       standalone.push(post);
     }
   }
 
-  // Merge: if a standalone post's URL matches a thread root, prepend it
-  // Build a URI lookup from standalone posts (at:// URI from rawJson)
+  // Merge: if a standalone post is the root of a thread, attach it
   const standaloneByUri = new Map<string, DigestPost>();
   for (const post of standalone) {
     const raw = post.rawJson as { uri?: string } | undefined;
@@ -114,41 +112,60 @@ function formatBlueskyPosts(posts: DigestPost[]): string {
   }
 
   const usedStandalone = new Set<string>();
-  const parts: string[] = [];
 
-  // Format threads
+  // Build a list of { earliestTime, formatFn } so we can sort everything chronologically
+  interface FormattedGroup {
+    earliestTime: number;
+    render: () => string;
+  }
+  const groups: FormattedGroup[] = [];
+
+  // Threads
   for (const [rootUri, threadPosts] of threads) {
-    // Check if root post is in our standalone list
     const rootPost = standaloneByUri.get(rootUri);
     const allInThread = rootPost ? [rootPost, ...threadPosts] : threadPosts;
     if (rootPost) usedStandalone.add(rootPost.postId);
 
-    // Sort thread by publishedAt ascending (chronological)
+    // Sort thread internally (chronological)
     allInThread.sort((a, b) => a.publishedAt.getTime() - b.publishedAt.getTime());
 
-    if (allInThread.length > 1) {
-      parts.push(`<p><strong>Thread (${allInThread.length} posts):</strong></p>`);
-    }
-
-    for (const post of allInThread) {
-      parts.push(formatBlueskyPost(post));
-    }
-
-    // Link to the last post in the thread
-    const lastPost = allInThread[allInThread.length - 1];
-    parts.push(`<p><a href="${escapeHtml(lastPost.url)}">View on Bluesky →</a></p>`);
-    parts.push('<hr>');
+    groups.push({
+      earliestTime: allInThread[0].publishedAt.getTime(),
+      render: () => {
+        const parts: string[] = [];
+        if (allInThread.length > 1) {
+          parts.push(`<p><strong>Thread (${allInThread.length} posts):</strong></p>`);
+        }
+        for (const post of allInThread) {
+          parts.push(formatBlueskyPost(post));
+        }
+        const lastPost = allInThread[allInThread.length - 1];
+        parts.push(`<p><a href="${escapeHtml(lastPost.url)}">View on Bluesky →</a></p>`);
+        parts.push('<hr>');
+        return parts.join('\n');
+      },
+    });
   }
 
-  // Format remaining standalone posts
+  // Remaining standalone posts
   for (const post of standalone) {
     if (usedStandalone.has(post.postId)) continue;
-    parts.push(formatBlueskyPost(post));
-    parts.push(`<p><a href="${escapeHtml(post.url)}">View on Bluesky →</a></p>`);
-    parts.push('<hr>');
+    groups.push({
+      earliestTime: post.publishedAt.getTime(),
+      render: () => {
+        const parts: string[] = [];
+        parts.push(formatBlueskyPost(post));
+        parts.push(`<p><a href="${escapeHtml(post.url)}">View on Bluesky →</a></p>`);
+        parts.push('<hr>');
+        return parts.join('\n');
+      },
+    });
   }
 
-  return parts.join('\n');
+  // Sort all groups oldest-first
+  groups.sort((a, b) => a.earliestTime - b.earliestTime);
+
+  return groups.map(g => g.render()).join('\n');
 }
 
 /**
@@ -211,7 +228,53 @@ function formatDiscordMessage(post: DigestPost): string {
 }
 
 /**
- * Group Discord posts by channel and format with channel headers
+ * Build a thread tree from Discord messages using reply references.
+ * Returns an array of thread groups, each sorted chronologically.
+ * A "thread" is a root message plus all messages that reply to it (directly or transitively).
+ */
+function groupDiscordThreads(posts: DigestPost[]): DigestPost[][] {
+  const byId = new Map<string, DigestPost>();
+  for (const post of posts) {
+    byId.set(post.postId, post);
+  }
+
+  // Find the root of each message's thread by walking up the reply chain
+  function findRoot(post: DigestPost): string {
+    const visited = new Set<string>();
+    let current = post;
+    while (current.metadata?.replyToMessageId) {
+      if (visited.has(current.postId)) break; // cycle guard
+      visited.add(current.postId);
+      const parent = byId.get(current.metadata.replyToMessageId);
+      if (!parent) break;
+      current = parent;
+    }
+    return current.postId;
+  }
+
+  // Group by root
+  const threads = new Map<string, DigestPost[]>();
+  for (const post of posts) {
+    const rootId = findRoot(post);
+    if (!threads.has(rootId)) {
+      threads.set(rootId, []);
+    }
+    threads.get(rootId)!.push(post);
+  }
+
+  // Sort each thread chronologically, then sort threads by their earliest message
+  const result: DigestPost[][] = [];
+  for (const thread of threads.values()) {
+    thread.sort((a, b) => a.publishedAt.getTime() - b.publishedAt.getTime());
+    result.push(thread);
+  }
+  result.sort((a, b) => a[0].publishedAt.getTime() - b[0].publishedAt.getTime());
+
+  return result;
+}
+
+/**
+ * Group Discord posts by channel, then by thread within each channel
  */
 function formatDiscordPosts(posts: DigestPost[]): string {
   // Group by guildName + channelName
@@ -234,11 +297,16 @@ function formatDiscordPosts(posts: DigestPost[]): string {
     // Channel header
     parts.push(`<h3>${escapeHtml(guildName)} · #${escapeHtml(channelName)}</h3>`);
 
-    // Sort messages chronologically within channel
-    channelPosts.sort((a, b) => a.publishedAt.getTime() - b.publishedAt.getTime());
+    // Group into threads, then format
+    const threads = groupDiscordThreads(channelPosts);
 
-    for (const post of channelPosts) {
-      parts.push(formatDiscordMessage(post));
+    for (const thread of threads) {
+      if (thread.length > 1) {
+        parts.push(`<p><strong>Thread (${thread.length} messages):</strong></p>`);
+      }
+      for (const post of thread) {
+        parts.push(formatDiscordMessage(post));
+      }
     }
 
     parts.push('<hr>');

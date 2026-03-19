@@ -42,6 +42,11 @@ interface DiscordMessage {
     image?: { url: string };
     thumbnail?: { url: string };
   }>;
+  message_reference?: {
+    message_id?: string;
+    channel_id?: string;
+    guild_id?: string;
+  };
 }
 
 interface SelectedChannel {
@@ -261,6 +266,7 @@ export async function pollDiscord(): Promise<DigestPost[]> {
           metadata: {
             guildName: channel.guildName,
             channelName: channel.channelName,
+            replyToMessageId: message.message_reference?.message_id,
           },
         });
       }
