@@ -43,6 +43,12 @@ export interface DigestPost {
     duration?: string;
     guildName?: string;
     channelName?: string;
+    // Discord-specific
+    replyToMessageId?: string; // Discord message ID this replies to
+    // Bluesky-specific
+    repostedBy?: string;       // handle of person who reposted
+    rootUri?: string;          // AT URI of thread root (for reply grouping)
+    parentUri?: string;        // AT URI of direct parent post
   };
 }
 

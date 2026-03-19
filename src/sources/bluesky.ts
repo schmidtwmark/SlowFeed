@@ -161,6 +161,16 @@ export async function pollBluesky(): Promise<DigestPost[]> {
       // Extract post ID from URI
       const postId = post.uri.split('/').pop() || post.cid;
 
+      // Detect repost
+      const reason = feedViewPost.reason as { $type?: string; by?: { handle?: string; displayName?: string } } | undefined;
+      const isRepost = reason?.$type === 'app.bsky.feed.defs#reasonRepost';
+      const repostedBy = isRepost ? (reason?.by?.displayName || reason?.by?.handle || undefined) : undefined;
+
+      // Detect reply thread info
+      const record = post.record as { reply?: { root?: { uri?: string }; parent?: { uri?: string } } };
+      const rootUri = record.reply?.root?.uri || undefined;
+      const parentUri = record.reply?.parent?.uri || undefined;
+
       digestPosts.push({
         postId,
         title: `@${post.author.handle}: ${(post.record as { text?: string }).text?.substring(0, 100) || 'Post'}`,
@@ -169,6 +179,11 @@ export async function pollBluesky(): Promise<DigestPost[]> {
         author: `@${post.author.handle}`,
         publishedAt: new Date(post.indexedAt),
         rawJson: post,
+        metadata: {
+          repostedBy,
+          rootUri,
+          parentUri,
+        },
       });
     }
 
