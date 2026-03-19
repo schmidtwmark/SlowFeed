@@ -53,72 +53,39 @@ function stripHtml(html: string): string {
 
 /**
  * Simplify HTML for better RSS reader compatibility
- * Converts to a very basic format that reads well even as plain text
+ * Keeps images and links clickable, removes complex styling
  */
 function simplifyHtml(html: string): string {
-  // First, extract and format each post block
-  // Posts are wrapped in divs with border/padding styles
-
   let result = html
-    // Convert YouTube iframes to simple links
+    // Convert YouTube iframes to clickable links
     .replace(/<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi,
-      '[Video: https://www.youtube.com/watch?v=$1]')
+      '<p><a href="https://www.youtube.com/watch?v=$1">▶ Watch Video</a></p>')
     // Convert video tags to links
     .replace(/<video[^>]*>[\s\S]*?<source[^>]*src="([^"]+)"[^>]*>[\s\S]*?<\/video>/gi,
-      '[Video: $1]')
-    // Convert images to alt text or link
-    .replace(/<img[^>]*alt="([^"]*)"[^>]*src="([^"]+)"[^>]*>/gi, '[Image: $1]')
-    .replace(/<img[^>]*src="([^"]+)"[^>]*>/gi, '[Image]')
+      '<p><a href="$1">▶ Watch Video</a></p>')
+    // Simplify images - keep them but remove inline styles
+    .replace(/<img([^>]*)style="[^"]*"([^>]*)>/gi, '<img$1$2>')
     // Remove style and script tags entirely
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    // Remove border-styled divs (post wrappers) - separator added later after "View in" links
-    .replace(/<div[^>]*style="[^"]*border[^"]*"[^>]*>/gi, '')
-    // Convert remaining divs to newlines
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<div[^>]*>/gi, '')
-    // Convert paragraphs to double newlines
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<p[^>]*>/gi, '')
-    // Convert breaks to newlines
-    .replace(/<br\s*\/?>/gi, '\n')
-    // Convert headers to plain text
-    .replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '\n$1\n')
-    // Convert bold/strong to plain text
-    .replace(/<(b|strong)[^>]*>([\s\S]*?)<\/(b|strong)>/gi, '$2')
-    // Convert italic/em to plain text
-    .replace(/<(i|em)[^>]*>([\s\S]*?)<\/(i|em)>/gi, '$2')
-    // Convert links to text with URL
-    .replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (match, url, text) => {
-      const cleanText = text.replace(/<[^>]+>/g, '').trim();
-      if (cleanText === url || cleanText === '') {
-        return url;
-      }
-      return `${cleanText} (${url})`;
-    })
-    // Remove all remaining HTML tags
-    .replace(/<[^>]+>/g, '')
-    // Decode common HTML entities
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&mdash;/g, '—')
-    .replace(/&ndash;/g, '–')
-    // Add separator after "View in/on X" links (which end each post)
-    .replace(/(View (?:in|on) [^\n]+)/gi, '$1\n\n━━━━━━━━━━━━━━━━━━━━')
-    // Clean up excessive whitespace
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n[ \t]+/g, '\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    // Remove trailing separator (last post doesn't need one)
-    .replace(/━+\s*$/, '')
-    .trim()
-    // Convert newlines to <br> tags for HTML rendering
-    .replace(/\n/g, '<br>');
+    // Remove blockquote styles but keep the element
+    .replace(/<blockquote[^>]*style="[^"]*"[^>]*>/gi, '<blockquote>')
+    // Add separator before border-styled divs (post wrappers)
+    .replace(/<div[^>]*style="[^"]*border[^"]*"[^>]*>/gi, '<hr>')
+    // Remove other div styles
+    .replace(/<div[^>]*style="[^"]*"[^>]*>/gi, '<div>')
+    // Remove paragraph styles
+    .replace(/<p[^>]*style="[^"]*"[^>]*>/gi, '<p>')
+    // Simplify links - remove styles but keep href
+    .replace(/<a([^>]*)style="[^"]*"([^>]*)>/gi, '<a$1$2>')
+    // Remove spans entirely (usually just styling wrappers)
+    .replace(/<\/?span[^>]*>/gi, '')
+    // Clean up empty paragraphs
+    .replace(/<p>\s*<\/p>/gi, '')
+    // Remove leading separator (first post doesn't need one)
+    .replace(/^(\s*<br\s*\/?>\s*)*<hr>/i, '')
+    // Remove trailing separators
+    .replace(/(<hr>\s*(<br\s*\/?>)*\s*)+$/i, '');
 
   return result;
 }
