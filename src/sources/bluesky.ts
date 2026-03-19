@@ -7,11 +7,6 @@ let agent: BskyAgent | null = null;
 let lastLoginTime: number = 0;
 const SESSION_DURATION = 60 * 60 * 1000; // 1 hour
 
-interface ScoredPost {
-  post: AppBskyFeedDefs.FeedViewPost;
-  score: number;
-}
-
 async function getAgent(): Promise<BskyAgent | null> {
   const config = getConfig();
 
@@ -41,27 +36,6 @@ async function getAgent(): Promise<BskyAgent | null> {
     agent = null;
     return null;
   }
-}
-
-function calculateScore(post: AppBskyFeedDefs.FeedViewPost): number {
-  const { likeCount = 0, repostCount = 0, replyCount = 0 } = post.post;
-
-  // Base engagement score
-  let score = likeCount * 1 + repostCount * 2 + replyCount * 1.5;
-
-  // Recency bonus (decay posts older than 24h)
-  const postDate = new Date(post.post.indexedAt);
-  const ageHours = (Date.now() - postDate.getTime()) / (1000 * 60 * 60);
-
-  if (ageHours < 24) {
-    // Boost recent posts
-    score *= 1 + (24 - ageHours) / 24;
-  } else {
-    // Decay old posts
-    score *= Math.max(0.1, 1 - (ageHours - 24) / 72);
-  }
-
-  return score;
 }
 
 function extractPostContent(post: AppBskyFeedDefs.PostView): string {
@@ -158,27 +132,29 @@ export async function pollBluesky(): Promise<DigestPost[]> {
       throw new Error('Failed to fetch Bluesky timeline');
     }
 
-    // Score and sort posts
-    const scoredPosts: ScoredPost[] = timeline.data.feed.map((post) => ({
-      post,
-      score: calculateScore(post),
-    }));
+    // Deduplicate posts by URI (same post can appear multiple times via reposts)
+    const seenUris = new Set<string>();
+    const uniqueFeed = timeline.data.feed.filter((feedPost) => {
+      const uri = feedPost.post.uri;
+      if (seenUris.has(uri)) {
+        return false;
+      }
+      seenUris.add(uri);
+      return true;
+    });
 
-    scoredPosts.sort((a, b) => b.score - a.score);
+    const duplicatesRemoved = timeline.data.feed.length - uniqueFeed.length;
+    if (duplicatesRemoved > 0) {
+      logger.debug(`Bluesky: filtered out ${duplicatesRemoved} duplicate posts`);
+    }
 
-    // Take top N posts
-    const topPosts = scoredPosts.slice(0, config.bluesky_top_n);
+    // Take first N posts (timeline is already in chronological order)
+    const topPosts = uniqueFeed.slice(0, config.bluesky_top_n);
 
     const digestPosts: DigestPost[] = [];
 
-    for (const { post: feedViewPost } of topPosts) {
+    for (const feedViewPost of topPosts) {
       const post = feedViewPost.post;
-
-      // Skip if this is a repost and we already have the original
-      if (feedViewPost.reason && AppBskyFeedDefs.isReasonRepost(feedViewPost.reason)) {
-        // Still include reposts, but mark them
-      }
-
       const content = extractPostContent(post);
       const url = getPostUrl(post);
 

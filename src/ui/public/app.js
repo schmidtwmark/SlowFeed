@@ -735,8 +735,8 @@ function simplifyHtml(html) {
     // Remove style and script tags
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    // Add separator before each post (they have border/padding styles)
-    .replace(/<div[^>]*style="[^"]*border[^"]*"[^>]*>/gi, '\n\n━━━━━━━━━━━━━━━━━━━━\n\n')
+    // Remove border-styled divs (post wrappers) - separator added later after "View in" links
+    .replace(/<div[^>]*style="[^"]*border[^"]*"[^>]*>/gi, '')
     // Convert remaining divs to newlines
     .replace(/<\/div>/gi, '\n')
     .replace(/<div[^>]*>/gi, '')
@@ -745,12 +745,12 @@ function simplifyHtml(html) {
     .replace(/<p[^>]*>/gi, '')
     // Convert breaks to newlines
     .replace(/<br\s*\/?>/gi, '\n')
-    // Convert headers
-    .replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '\n**$1**\n')
-    // Convert bold/strong
-    .replace(/<(b|strong)[^>]*>([\s\S]*?)<\/(b|strong)>/gi, '**$2**')
-    // Convert italic/em
-    .replace(/<(i|em)[^>]*>([\s\S]*?)<\/(i|em)>/gi, '_$2_')
+    // Convert headers to plain text
+    .replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '\n$1\n')
+    // Convert bold/strong to plain text
+    .replace(/<(b|strong)[^>]*>([\s\S]*?)<\/(b|strong)>/gi, '$2')
+    // Convert italic/em to plain text
+    .replace(/<(i|em)[^>]*>([\s\S]*?)<\/(i|em)>/gi, '$2')
     // Convert links to text with URL
     .replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (match, url, text) => {
       const cleanText = text.replace(/<[^>]+>/g, '').trim();
@@ -766,16 +766,20 @@ function simplifyHtml(html) {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    // Add separator after "View in/on X" links (which end each post)
+    .replace(/(View (?:in|on) [^\n]+)/gi, '$1\n\n━━━━━━━━━━━━━━━━━━━━')
     // Clean up whitespace
     .replace(/[ \t]+/g, ' ')
     .replace(/\n[ \t]+/g, '\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
-    // Remove leading separator
-    .replace(/^\s*━+\s*/, '')
-    .trim();
+    // Remove trailing separator (last post doesn't need one)
+    .replace(/━+\s*$/, '')
+    .trim()
+    // Convert newlines to <br> tags for HTML rendering
+    .replace(/\n/g, '<br>');
 
-  return `<pre style="white-space: pre-wrap; font-family: inherit;">${result}</pre>`;
+  return result;
 }
 
 async function toggleRecentItem(header) {
