@@ -96,6 +96,8 @@ export function createUiRouter(): Router {
         ...config,
         bluesky_app_password: config.bluesky_app_password ? '••••••••' : '',
         discord_token: config.discord_token ? '••••••••' : '',
+        youtube_cookies: config.youtube_cookies ? '••••••••' : '',
+        reddit_cookies: config.reddit_cookies ? '••••••••' : '',
         ui_password: '••••••••',
         // feed_token is intentionally NOT masked - users need to see it
       };
