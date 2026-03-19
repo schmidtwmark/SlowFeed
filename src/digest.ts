@@ -27,139 +27,125 @@ function escapeHtml(text: string): string {
  * Format a Reddit post for the digest
  */
 function formatRedditPost(post: DigestPost): string {
-  let html = `<div style="border: 1px solid #ccc; border-radius: 8px; padding: 16px; margin-bottom: 16px; background: #fafafa;">`;
+  const parts: string[] = [];
 
-  // Header with subreddit and author
-  const subreddit = post.metadata?.subreddit ? `r/${post.metadata.subreddit}` : '';
-  const author = post.author || '';
-  html += `<div style="margin-bottom: 8px; font-size: 14px; color: #666;">`;
-  if (subreddit) {
-    html += `<strong>${escapeHtml(subreddit)}</strong>`;
+  // Metadata line
+  const meta: string[] = [];
+  if (post.metadata?.subreddit) meta.push(`<strong>r/${escapeHtml(post.metadata.subreddit)}</strong>`);
+  if (post.author) {
+    const cleanAuthor = post.author.replace(/^u\//, '');
+    meta.push(`<a href="https://reddit.com/user/${escapeHtml(cleanAuthor)}">u/${escapeHtml(cleanAuthor)}</a>`);
   }
-  if (author) {
-    html += ` • <a href="https://reddit.com/user/${escapeHtml(author.replace('u/', ''))}" style="color: #0066cc;">${escapeHtml(author)}</a>`;
+  if (post.metadata?.score !== undefined) meta.push(`${post.metadata.score} points`);
+  if (post.metadata?.comments !== undefined) meta.push(`${post.metadata.comments} comments`);
+  if (meta.length > 0) {
+    parts.push(`<p><small>${meta.join(' · ')}</small></p>`);
   }
-  if (post.metadata?.score !== undefined) {
-    html += ` • ${post.metadata.score} points`;
-  }
-  if (post.metadata?.comments !== undefined) {
-    html += ` • ${post.metadata.comments} comments`;
-  }
-  html += `</div>`;
 
-  // Title
-  html += `<h3 style="margin: 0 0 12px 0; font-size: 18px;"><a href="${escapeHtml(post.url)}" style="color: #1a1a1a; text-decoration: none;">${escapeHtml(post.title.replace(/^r\/\w+:\s*/, ''))}</a></h3>`;
+  // Title as heading with link
+  parts.push(`<h3><a href="${escapeHtml(post.url)}">${escapeHtml(post.title.replace(/^r\/\w+:\s*/, ''))}</a></h3>`);
 
-  // Full content (no truncation)
+  // Content
   if (post.content) {
-    html += `<div style="line-height: 1.6;">${post.content}</div>`;
+    parts.push(post.content);
   }
 
-  // View on Reddit link
-  html += `<div style="margin-top: 12px;"><a href="${escapeHtml(post.url)}" style="color: #0066cc; font-size: 14px;">View on Reddit →</a></div>`;
+  // Source link
+  parts.push(`<p><a href="${escapeHtml(post.url)}">View on Reddit →</a></p>`);
+  parts.push('<hr>');
 
-  html += '</div>';
-  return html;
+  return parts.join('\n');
 }
 
 /**
  * Format a Bluesky post for the digest
  */
 function formatBlueskyPost(post: DigestPost): string {
-  let html = `<div style="border: 1px solid #ccc; border-radius: 8px; padding: 16px; margin-bottom: 16px; background: #fafafa;">`;
+  const parts: string[] = [];
 
-  // Author header with link
+  // Author
   if (post.author) {
     const handle = post.author.replace('@', '');
-    html += `<div style="margin-bottom: 12px;">`;
-    html += `<a href="https://bsky.app/profile/${escapeHtml(handle)}" style="color: #0066cc; font-weight: bold; text-decoration: none;">${escapeHtml(post.author)}</a>`;
-    html += `</div>`;
+    parts.push(`<p><strong><a href="https://bsky.app/profile/${escapeHtml(handle)}">${escapeHtml(post.author)}</a></strong></p>`);
   }
 
-  // Post content (text, images, embeds)
+  // Content
   if (post.content) {
-    html += `<div style="line-height: 1.6; margin-bottom: 12px;">${post.content}</div>`;
+    parts.push(post.content);
   }
 
-  // View on Bluesky link
-  html += `<div style="margin-top: 8px;"><a href="${escapeHtml(post.url)}" style="color: #0066cc; font-size: 14px;">View on Bluesky →</a></div>`;
+  // Source link
+  parts.push(`<p><a href="${escapeHtml(post.url)}">View on Bluesky →</a></p>`);
+  parts.push('<hr>');
 
-  html += '</div>';
-  return html;
+  return parts.join('\n');
 }
 
 /**
  * Format a YouTube post for the digest
  */
 function formatYouTubePost(post: DigestPost): string {
-  let html = `<div style="border: 1px solid #ccc; border-radius: 8px; padding: 16px; margin-bottom: 16px; background: #fafafa;">`;
+  const parts: string[] = [];
 
   // Channel name
   if (post.metadata?.channel) {
-    html += `<div style="margin-bottom: 8px; font-weight: bold; color: #333;">${escapeHtml(post.metadata.channel)}</div>`;
+    parts.push(`<p><small>${escapeHtml(post.metadata.channel)}</small></p>`);
   }
 
   // Title
-  html += `<h3 style="margin: 0 0 12px 0; font-size: 18px;"><a href="${escapeHtml(post.url)}" style="color: #1a1a1a; text-decoration: none;">${escapeHtml(post.title)}</a></h3>`;
+  parts.push(`<h3><a href="${escapeHtml(post.url)}">${escapeHtml(post.title)}</a></h3>`);
 
-  // Duration if available
+  // Duration
   if (post.metadata?.duration) {
-    html += `<div style="margin-bottom: 12px; font-size: 14px; color: #666;">Duration: ${escapeHtml(post.metadata.duration)}</div>`;
+    parts.push(`<p><small>Duration: ${escapeHtml(post.metadata.duration)}</small></p>`);
   }
 
-  // Video embed - extract video ID from URL
+  // Clickable thumbnail image (RSS readers don't support iframes)
   const videoIdMatch = post.url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-  const videoId = videoIdMatch ? videoIdMatch[1] : post.postId;
+  const videoId = videoIdMatch ? videoIdMatch[1] : null;
 
   if (videoId) {
-    html += `<div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; margin-bottom: 12px;">`;
-    html += `<iframe src="https://www.youtube.com/embed/${escapeHtml(videoId)}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;" allowfullscreen></iframe>`;
-    html += `</div>`;
+    parts.push(`<p><a href="${escapeHtml(post.url)}"><img src="https://img.youtube.com/vi/${escapeHtml(videoId)}/hqdefault.jpg" alt="${escapeHtml(post.title)}" width="480"></a></p>`);
   } else if (post.metadata?.thumbnail) {
-    // Fallback to thumbnail if we can't get video ID
-    html += `<p><a href="${escapeHtml(post.url)}"><img src="${escapeHtml(post.metadata.thumbnail)}" alt="Thumbnail" style="max-width: 100%; border-radius: 4px;"></a></p>`;
+    parts.push(`<p><a href="${escapeHtml(post.url)}"><img src="${escapeHtml(post.metadata.thumbnail)}" alt="${escapeHtml(post.title)}"></a></p>`);
   }
 
-  // Watch on YouTube link
-  html += `<div><a href="${escapeHtml(post.url)}" style="color: #cc0000; font-size: 14px;">Watch on YouTube →</a></div>`;
+  // Source link
+  parts.push(`<p><a href="${escapeHtml(post.url)}">Watch on YouTube →</a></p>`);
+  parts.push('<hr>');
 
-  html += '</div>';
-  return html;
+  return parts.join('\n');
 }
 
 /**
  * Format a Discord post for the digest
  */
 function formatDiscordPost(post: DigestPost): string {
-  let html = `<div style="border: 1px solid #5865f2; border-left-width: 4px; border-radius: 8px; padding: 16px; margin-bottom: 16px; background: #fafafa;">`;
+  const parts: string[] = [];
 
-  // Server and channel header
-  const serverName = post.metadata?.guildName || '';
-  const channelName = post.metadata?.channelName || '';
-  html += `<div style="margin-bottom: 8px; font-size: 14px; color: #666;">`;
-  if (serverName) {
-    html += `<strong>${escapeHtml(serverName)}</strong>`;
+  // Server and channel
+  const meta: string[] = [];
+  if (post.metadata?.guildName) meta.push(`<strong>${escapeHtml(post.metadata.guildName)}</strong>`);
+  if (post.metadata?.channelName) meta.push(`#${escapeHtml(post.metadata.channelName)}`);
+  if (meta.length > 0) {
+    parts.push(`<p><small>${meta.join(' · ')}</small></p>`);
   }
-  if (channelName) {
-    html += ` • <span style="color: #5865f2;">#${escapeHtml(channelName)}</span>`;
-  }
-  html += `</div>`;
 
   // Author
   if (post.author) {
-    html += `<div style="margin-bottom: 8px; font-weight: bold; color: #333;">${escapeHtml(post.author)}</div>`;
+    parts.push(`<p><strong>${escapeHtml(post.author)}</strong></p>`);
   }
 
-  // Message content
+  // Content
   if (post.content) {
-    html += `<div style="line-height: 1.6; margin-bottom: 12px;">${post.content}</div>`;
+    parts.push(post.content);
   }
 
-  // View in Discord link
-  html += `<div><a href="${escapeHtml(post.url)}" style="color: #5865f2; font-size: 14px;">View in Discord →</a></div>`;
+  // Source link
+  parts.push(`<p><a href="${escapeHtml(post.url)}">View in Discord →</a></p>`);
+  parts.push('<hr>');
 
-  html += '</div>';
-  return html;
+  return parts.join('\n');
 }
 
 /**
@@ -238,8 +224,8 @@ export async function createDigest(
   const notifications = posts.filter(p => p.isNotification);
   const regularPosts = posts.filter(p => !p.isNotification);
 
-  // Build digest content
-  let content = '<div class="digest">';
+  // Build digest content using clean semantic HTML (no inline styles)
+  let content = '';
 
   // Summary
   const summaryParts: string[] = [];
@@ -249,31 +235,25 @@ export async function createDigest(
   if (notifications.length > 0) {
     summaryParts.push(`${notifications.length} notification${notifications.length === 1 ? '' : 's'}`);
   }
-  content += `<p class="digest-summary">${summaryParts.join(', ')} from ${displayName}</p>`;
+  content += `<p><em>${summaryParts.join(', ')} from ${displayName}</em></p>\n`;
 
   // Notifications section (if any)
   if (notifications.length > 0) {
-    content += '<div class="digest-section notifications">';
-    content += '<h2>Notifications</h2>';
+    content += '<h2>Notifications</h2>\n';
     for (const post of notifications) {
       content += formatPost(post, source);
     }
-    content += '</div>';
   }
 
   // Regular posts section
   if (regularPosts.length > 0) {
-    content += '<div class="digest-section posts">';
     if (notifications.length > 0) {
-      content += '<h2>Posts</h2>';
+      content += '<h2>Posts</h2>\n';
     }
     for (const post of regularPosts) {
       content += formatPost(post, source);
     }
-    content += '</div>';
   }
-
-  content += '</div>';
 
   // Generate title
   const title = `${displayName} Digest: ${posts.length} item${posts.length === 1 ? '' : 's'}`;
