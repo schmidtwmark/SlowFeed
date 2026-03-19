@@ -660,5 +660,157 @@ export function createUiRouter(): Router {
     });
   }
 
+  // Public digest view (linked from RSS feed items)
+  router.get('/digest/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const simple = req.query.simple === 'true';
+
+      const { rows } = await query<{
+        id: string;
+        source: string;
+        title: string;
+        content: string;
+        published_at: Date;
+      }>(
+        'SELECT id, source, title, content, published_at FROM digest_items WHERE id = $1',
+        [id]
+      );
+
+      if (rows.length === 0) {
+        res.status(404).send('Digest not found');
+        return;
+      }
+
+      const digest = rows[0];
+      let content = digest.content || '';
+
+      // Optionally simplify HTML
+      if (simple) {
+        content = content
+          // Add separator before each post div
+          .replace(/<div style="border:[^"]*padding:[^"]*>/gi, '<hr style="border:none;border-top:2px solid #ddd;margin:24px 0;"><div>')
+          // Convert YouTube iframes to links
+          .replace(/<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi,
+            '<p><a href="https://www.youtube.com/watch?v=$1">▶ Watch on YouTube</a></p>')
+          // Remove inline styles
+          .replace(/\s*style="[^"]*"/gi, '')
+          // Remove leading separator
+          .replace(/^(\s*<[^>]*>\s*)*<hr[^>]*>/i, '');
+      }
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(digest.title)} - Slowfeed</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+      color: #333;
+    }
+    header {
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #ddd;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+    }
+    .meta {
+      color: #666;
+      font-size: 0.875rem;
+    }
+    .source-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      text-transform: uppercase;
+      color: white;
+      margin-right: 8px;
+    }
+    .source-badge.reddit { background: #ff4500; }
+    .source-badge.bluesky { background: #0085ff; }
+    .source-badge.youtube { background: #ff0000; }
+    .source-badge.discord { background: #5865f2; }
+    .content {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .content a {
+      color: #0066cc;
+    }
+    .content h2, .content h3 {
+      margin-top: 16px;
+      margin-bottom: 8px;
+    }
+    .content p {
+      margin-bottom: 12px;
+    }
+    hr {
+      border: none;
+      border-top: 2px solid #ddd;
+      margin: 24px 0;
+    }
+    footer {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #ddd;
+      font-size: 0.875rem;
+      color: #666;
+    }
+    footer a {
+      color: #0066cc;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span class="source-badge ${digest.source}">${digest.source}</span>${escapeHtml(digest.title)}</h1>
+    <p class="meta">${new Date(digest.published_at).toLocaleString()}</p>
+  </header>
+  <div class="content">
+    ${content}
+  </div>
+  <footer>
+    <p>Powered by <a href="/">Slowfeed</a></p>
+  </footer>
+</body>
+</html>`;
+
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+    } catch (err) {
+      logger.error('Error fetching digest:', err);
+      res.status(500).send('Error loading digest');
+    }
+  });
+
   return router;
+}
+
+// Helper to escape HTML in template
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

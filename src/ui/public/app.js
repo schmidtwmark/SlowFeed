@@ -720,27 +720,62 @@ async function toggleFeedItem(header) {
 }
 
 // Simple HTML transformation (client-side version)
+// Converts to plain text with clear separators
 function simplifyHtml(html) {
-  return html
-    // Add separator before each post div (they have border and padding styles)
-    .replace(/<div style="border:[^"]*padding:[^"]*>/gi, '<hr class="post-separator"><div>')
-    // Convert YouTube iframes to links
+  let result = html
+    // Convert YouTube iframes to simple links
     .replace(/<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi,
-      '<p><a href="https://www.youtube.com/watch?v=$1">▶ Watch on YouTube</a></p>')
+      '[Video: https://www.youtube.com/watch?v=$1]')
     // Convert video tags to links
     .replace(/<video[^>]*>[\s\S]*?<source[^>]*src="([^"]+)"[^>]*>[\s\S]*?<\/video>/gi,
-      '<p><a href="$1">▶ View Video</a></p>')
-    // Remove inline styles
-    .replace(/\s*style="[^"]*"/gi, '')
-    // Remove class attributes (but keep our separator class)
-    .replace(/\s*class="(?!post-separator)[^"]*"/gi, '')
-    // Simplify divs to paragraphs
-    .replace(/<div[^>]*>/gi, '<p>')
-    .replace(/<\/div>/gi, '</p>')
-    // Remove empty paragraphs
-    .replace(/<p>\s*<\/p>/gi, '')
-    // Remove leading separator (first post doesn't need one)
-    .replace(/^(\s*<[^>]*>\s*)*<hr class="post-separator">/i, '');
+      '[Video: $1]')
+    // Convert images to alt text or placeholder
+    .replace(/<img[^>]*alt="([^"]*)"[^>]*src="([^"]+)"[^>]*>/gi, '[Image: $1]')
+    .replace(/<img[^>]*src="([^"]+)"[^>]*>/gi, '[Image]')
+    // Remove style and script tags
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    // Add separator before each post (they have border/padding styles)
+    .replace(/<div[^>]*style="[^"]*border[^"]*"[^>]*>/gi, '\n\n━━━━━━━━━━━━━━━━━━━━\n\n')
+    // Convert remaining divs to newlines
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<div[^>]*>/gi, '')
+    // Convert paragraphs to double newlines
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<p[^>]*>/gi, '')
+    // Convert breaks to newlines
+    .replace(/<br\s*\/?>/gi, '\n')
+    // Convert headers
+    .replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '\n**$1**\n')
+    // Convert bold/strong
+    .replace(/<(b|strong)[^>]*>([\s\S]*?)<\/(b|strong)>/gi, '**$2**')
+    // Convert italic/em
+    .replace(/<(i|em)[^>]*>([\s\S]*?)<\/(i|em)>/gi, '_$2_')
+    // Convert links to text with URL
+    .replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (match, url, text) => {
+      const cleanText = text.replace(/<[^>]+>/g, '').trim();
+      if (cleanText === url || cleanText === '') return url;
+      return `${cleanText} (${url})`;
+    })
+    // Remove all remaining HTML tags
+    .replace(/<[^>]+>/g, '')
+    // Decode HTML entities
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    // Clean up whitespace
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    // Remove leading separator
+    .replace(/^\s*━+\s*/, '')
+    .trim();
+
+  return `<pre style="white-space: pre-wrap; font-family: inherit;">${result}</pre>`;
 }
 
 async function toggleRecentItem(header) {

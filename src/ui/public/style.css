@@ -143,6 +143,11 @@ nav h1 a {
   text-decoration: none;
 }
 
+/* Hide mobile nav toggle on desktop */
+.nav-toggle {
+  display: none;
+}
+
 nav > ul {
   list-style: none;
   flex-grow: 1;
@@ -1488,6 +1493,7 @@ hr.post-separator {
 
   /* Mobile nav toggle button */
   .nav-toggle {
+    display: block;
     position: absolute;
     top: 0.75rem;
     right: 1rem;
