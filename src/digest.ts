@@ -50,8 +50,6 @@ function formatRedditPost(post: DigestPost): string {
     parts.push(post.content);
   }
 
-  // Source link
-  parts.push(`<p><a href="${escapeHtml(post.url)}">View on Reddit →</a></p>`);
   parts.push('<hr>');
 
   return parts.join('\n');
@@ -62,6 +60,11 @@ function formatRedditPost(post: DigestPost): string {
  */
 function formatBlueskyPost(post: DigestPost): string {
   const parts: string[] = [];
+
+  // Repost attribution
+  if (post.metadata?.repostedBy) {
+    parts.push(`<p><small>Reposted by <strong>${escapeHtml(post.metadata.repostedBy)}</strong></small></p>`);
+  }
 
   // Author
   if (post.author) {
@@ -74,9 +77,76 @@ function formatBlueskyPost(post: DigestPost): string {
     parts.push(post.content);
   }
 
-  // Source link
-  parts.push(`<p><a href="${escapeHtml(post.url)}">View on Bluesky →</a></p>`);
-  parts.push('<hr>');
+  return parts.join('\n');
+}
+
+/**
+ * Group Bluesky posts into threads and format them.
+ * Posts that are replies to each other get grouped under a single thread.
+ */
+function formatBlueskyPosts(posts: DigestPost[]): string {
+  // Group posts by thread root URI
+  // Posts without a rootUri are standalone
+  const threads = new Map<string, DigestPost[]>();
+  const standalone: DigestPost[] = [];
+
+  for (const post of posts) {
+    const rootUri = post.metadata?.rootUri;
+    if (rootUri) {
+      const existing = threads.get(rootUri) || [];
+      existing.push(post);
+      threads.set(rootUri, existing);
+    } else {
+      // Check if this post IS a root that other posts reply to
+      // We'll use a second pass to merge these
+      standalone.push(post);
+    }
+  }
+
+  // Merge: if a standalone post's URL matches a thread root, prepend it
+  // Build a URI lookup from standalone posts (at:// URI from rawJson)
+  const standaloneByUri = new Map<string, DigestPost>();
+  for (const post of standalone) {
+    const raw = post.rawJson as { uri?: string } | undefined;
+    if (raw?.uri) {
+      standaloneByUri.set(raw.uri, post);
+    }
+  }
+
+  const usedStandalone = new Set<string>();
+  const parts: string[] = [];
+
+  // Format threads
+  for (const [rootUri, threadPosts] of threads) {
+    // Check if root post is in our standalone list
+    const rootPost = standaloneByUri.get(rootUri);
+    const allInThread = rootPost ? [rootPost, ...threadPosts] : threadPosts;
+    if (rootPost) usedStandalone.add(rootPost.postId);
+
+    // Sort thread by publishedAt ascending (chronological)
+    allInThread.sort((a, b) => a.publishedAt.getTime() - b.publishedAt.getTime());
+
+    if (allInThread.length > 1) {
+      parts.push(`<p><strong>Thread (${allInThread.length} posts):</strong></p>`);
+    }
+
+    for (const post of allInThread) {
+      parts.push(formatBlueskyPost(post));
+    }
+
+    // Link to the last post in the thread
+    const lastPost = allInThread[allInThread.length - 1];
+    parts.push(`<p><a href="${escapeHtml(lastPost.url)}">View on Bluesky →</a></p>`);
+    parts.push('<hr>');
+  }
+
+  // Format remaining standalone posts
+  for (const post of standalone) {
+    if (usedStandalone.has(post.postId)) continue;
+    parts.push(formatBlueskyPost(post));
+    parts.push(`<p><a href="${escapeHtml(post.url)}">View on Bluesky →</a></p>`);
+    parts.push('<hr>');
+  }
 
   return parts.join('\n');
 }
@@ -118,18 +188,10 @@ function formatYouTubePost(post: DigestPost): string {
 }
 
 /**
- * Format a Discord post for the digest
+ * Format a single Discord message (without channel header)
  */
-function formatDiscordPost(post: DigestPost): string {
+function formatDiscordMessage(post: DigestPost): string {
   const parts: string[] = [];
-
-  // Server and channel
-  const meta: string[] = [];
-  if (post.metadata?.guildName) meta.push(`<strong>${escapeHtml(post.metadata.guildName)}</strong>`);
-  if (post.metadata?.channelName) meta.push(`#${escapeHtml(post.metadata.channelName)}`);
-  if (meta.length > 0) {
-    parts.push(`<p><small>${meta.join(' · ')}</small></p>`);
-  }
 
   // Author
   if (post.author) {
@@ -141,9 +203,46 @@ function formatDiscordPost(post: DigestPost): string {
     parts.push(post.content);
   }
 
-  // Source link
-  parts.push(`<p><a href="${escapeHtml(post.url)}">View in Discord →</a></p>`);
-  parts.push('<hr>');
+  // Use discord:// protocol to open in app
+  const appUrl = post.url.replace('https://discord.com/', 'discord://discord.com/');
+  parts.push(`<p><a href="${escapeHtml(appUrl)}">Open in Discord →</a></p>`);
+
+  return parts.join('\n');
+}
+
+/**
+ * Group Discord posts by channel and format with channel headers
+ */
+function formatDiscordPosts(posts: DigestPost[]): string {
+  // Group by guildName + channelName
+  const channels = new Map<string, { guildName: string; channelName: string; posts: DigestPost[] }>();
+
+  for (const post of posts) {
+    const guildName = post.metadata?.guildName || 'Unknown Server';
+    const channelName = post.metadata?.channelName || 'unknown';
+    const key = `${guildName}::${channelName}`;
+
+    if (!channels.has(key)) {
+      channels.set(key, { guildName, channelName, posts: [] });
+    }
+    channels.get(key)!.posts.push(post);
+  }
+
+  const parts: string[] = [];
+
+  for (const { guildName, channelName, posts: channelPosts } of channels.values()) {
+    // Channel header
+    parts.push(`<h3>${escapeHtml(guildName)} · #${escapeHtml(channelName)}</h3>`);
+
+    // Sort messages chronologically within channel
+    channelPosts.sort((a, b) => a.publishedAt.getTime() - b.publishedAt.getTime());
+
+    for (const post of channelPosts) {
+      parts.push(formatDiscordMessage(post));
+    }
+
+    parts.push('<hr>');
+  }
 
   return parts.join('\n');
 }
@@ -160,9 +259,24 @@ function formatPost(post: DigestPost, source: SourceType): string {
     case 'youtube':
       return formatYouTubePost(post);
     case 'discord':
-      return formatDiscordPost(post);
+      return formatDiscordMessage(post);
     default:
       return formatRedditPost(post); // Fallback
+  }
+}
+
+/**
+ * Format a group of posts, using source-specific grouping where applicable
+ */
+function formatPostGroup(posts: DigestPost[], source: SourceType): string {
+  switch (source) {
+    case 'bluesky':
+      return formatBlueskyPosts(posts);
+    case 'discord':
+      return formatDiscordPosts(posts);
+    default:
+      // Default: format each post individually
+      return posts.map(post => formatPost(post, source)).join('\n');
   }
 }
 
@@ -240,9 +354,7 @@ export async function createDigest(
   // Notifications section (if any)
   if (notifications.length > 0) {
     content += '<h2>Notifications</h2>\n';
-    for (const post of notifications) {
-      content += formatPost(post, source);
-    }
+    content += formatPostGroup(notifications, source);
   }
 
   // Regular posts section
@@ -250,9 +362,7 @@ export async function createDigest(
     if (notifications.length > 0) {
       content += '<h2>Posts</h2>\n';
     }
-    for (const post of regularPosts) {
-      content += formatPost(post, source);
-    }
+    content += formatPostGroup(regularPosts, source);
   }
 
   // Generate title
