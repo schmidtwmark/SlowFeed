@@ -163,6 +163,78 @@ function formatDiscordPost(post: DigestPost): string {
 }
 
 /**
+ * Format a post as clean, semantic HTML for RSS feed items.
+ * No inline styles — uses simple HTML that renders well in all RSS readers.
+ */
+function formatFeedItemHtml(post: DigestPost, source: SourceType): string {
+  const parts: string[] = [];
+
+  switch (source) {
+    case 'reddit': {
+      const subreddit = post.metadata?.subreddit ? `r/${post.metadata.subreddit}` : '';
+      const meta: string[] = [];
+      if (subreddit) meta.push(subreddit);
+      if (post.author) meta.push(`u/${post.author.replace(/^u\//, '')}`);
+      if (post.metadata?.score !== undefined) meta.push(`${post.metadata.score} points`);
+      if (post.metadata?.comments !== undefined) meta.push(`${post.metadata.comments} comments`);
+
+      if (meta.length > 0) {
+        parts.push(`<p><small>${escapeHtml(meta.join(' · '))}</small></p>`);
+      }
+      if (post.content) {
+        parts.push(post.content);
+      }
+      parts.push(`<p><a href="${escapeHtml(post.url)}">View on Reddit</a></p>`);
+      break;
+    }
+    case 'bluesky': {
+      if (post.author) {
+        const handle = post.author.replace('@', '');
+        parts.push(`<p><a href="https://bsky.app/profile/${escapeHtml(handle)}">${escapeHtml(post.author)}</a></p>`);
+      }
+      if (post.content) {
+        parts.push(`<p>${post.content}</p>`);
+      }
+      parts.push(`<p><a href="${escapeHtml(post.url)}">View on Bluesky</a></p>`);
+      break;
+    }
+    case 'youtube': {
+      if (post.metadata?.channel) {
+        parts.push(`<p><small>${escapeHtml(post.metadata.channel)}</small></p>`);
+      }
+      const videoIdMatch = post.url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+      const videoId = videoIdMatch ? videoIdMatch[1] : null;
+      if (videoId) {
+        parts.push(`<p><a href="${escapeHtml(post.url)}"><img src="https://img.youtube.com/vi/${escapeHtml(videoId)}/hqdefault.jpg" alt="${escapeHtml(post.title)}" width="480" /></a></p>`);
+      } else if (post.metadata?.thumbnail) {
+        parts.push(`<p><a href="${escapeHtml(post.url)}"><img src="${escapeHtml(post.metadata.thumbnail)}" alt="${escapeHtml(post.title)}" /></a></p>`);
+      }
+      if (post.metadata?.duration) {
+        parts.push(`<p><small>Duration: ${escapeHtml(post.metadata.duration)}</small></p>`);
+      }
+      parts.push(`<p><a href="${escapeHtml(post.url)}">Watch on YouTube</a></p>`);
+      break;
+    }
+    case 'discord': {
+      const discordMeta: string[] = [];
+      if (post.metadata?.guildName) discordMeta.push(post.metadata.guildName);
+      if (post.metadata?.channelName) discordMeta.push(`#${post.metadata.channelName}`);
+      if (post.author) discordMeta.push(post.author);
+      if (discordMeta.length > 0) {
+        parts.push(`<p><small>${escapeHtml(discordMeta.join(' · '))}</small></p>`);
+      }
+      if (post.content) {
+        parts.push(`<p>${post.content}</p>`);
+      }
+      parts.push(`<p><a href="${escapeHtml(post.url)}">View in Discord</a></p>`);
+      break;
+    }
+  }
+
+  return parts.join('\n');
+}
+
+/**
  * Format a single post based on its source
  */
 function formatPost(post: DigestPost, source: SourceType): string {
@@ -281,7 +353,7 @@ export async function createDigest(
   // Collect post IDs
   const postIds = posts.map(p => p.postId);
 
-  // Mark all posts as seen and link to digest
+  // Mark all posts as seen, link to digest, and store individual feed items
   for (const post of posts) {
     const seenId = generateId(source, post.postId);
 
@@ -290,6 +362,25 @@ export async function createDigest(
        VALUES ($1, $2, $3, $4, $5, NOW())
        ON CONFLICT (id) DO UPDATE SET digest_id = $5`,
       [seenId, source, post.postId, post.title, digestId]
+    );
+
+    // Store individual post in feed_items for per-item RSS output
+    const feedItemContent = formatFeedItemHtml(post, source);
+    await query(
+      `INSERT INTO feed_items (id, source, title, content, url, author, published_at, is_notification, raw_json, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        seenId,
+        source,
+        post.title,
+        feedItemContent,
+        post.url,
+        post.author,
+        post.publishedAt,
+        post.isNotification ?? false,
+        post.rawJson ? JSON.stringify(post.rawJson) : null,
+      ]
     );
   }
 

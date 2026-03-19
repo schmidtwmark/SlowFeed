@@ -3,33 +3,39 @@ import { Feed } from 'feed';
 import { query } from './db.js';
 import { getConfig } from './config.js';
 
-interface DigestItemRow {
+interface FeedItemRow {
   id: string;
   source: string;
   title: string;
-  content: string;
+  content: string | null;
+  url: string;
+  author: string | null;
   published_at: Date;
+  is_notification: boolean;
 }
 
-async function getDigestItems(source?: string): Promise<DigestItemRow[]> {
+async function getFeedItems(source?: string): Promise<FeedItemRow[]> {
+  const config = getConfig();
+  const ttlDays = config.feed_ttl_days ?? 14;
+
   let sql = `
-    SELECT id, source, title, content, published_at
-    FROM digest_items
+    SELECT id, source, title, content, url, author, published_at, is_notification
+    FROM feed_items
+    WHERE created_at > NOW() - INTERVAL '1 day' * $1
   `;
-  const params: string[] = [];
+  const params: (string | number)[] = [ttlDays];
 
   if (source) {
-    sql += ' WHERE source = $1';
+    sql += ' AND source = $2';
     params.push(source);
   }
 
-  // Sort by published_at descending
   sql += `
     ORDER BY published_at DESC
-    LIMIT 500
+    LIMIT 200
   `;
 
-  const { rows } = await query<DigestItemRow>(sql, params);
+  const { rows } = await query<FeedItemRow>(sql, params);
   return rows;
 }
 
@@ -52,45 +58,19 @@ function stripHtml(html: string): string {
 }
 
 /**
- * Simplify HTML for better RSS reader compatibility
- * Keeps images and links clickable, removes complex styling
+ * Get a source label for feed item titles
  */
-function simplifyHtml(html: string): string {
-  let result = html
-    // Convert YouTube iframes to clickable links
-    .replace(/<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi,
-      '<p><a href="https://www.youtube.com/watch?v=$1">▶ Watch Video</a></p>')
-    // Convert video tags to links
-    .replace(/<video[^>]*>[\s\S]*?<source[^>]*src="([^"]+)"[^>]*>[\s\S]*?<\/video>/gi,
-      '<p><a href="$1">▶ Watch Video</a></p>')
-    // Simplify images - keep them but remove inline styles
-    .replace(/<img([^>]*)style="[^"]*"([^>]*)>/gi, '<img$1$2>')
-    // Remove style and script tags entirely
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    // Remove blockquote styles but keep the element
-    .replace(/<blockquote[^>]*style="[^"]*"[^>]*>/gi, '<blockquote>')
-    // Add separator before border-styled divs (post wrappers)
-    .replace(/<div[^>]*style="[^"]*border[^"]*"[^>]*>/gi, '<hr>')
-    // Remove other div styles
-    .replace(/<div[^>]*style="[^"]*"[^>]*>/gi, '<div>')
-    // Remove paragraph styles
-    .replace(/<p[^>]*style="[^"]*"[^>]*>/gi, '<p>')
-    // Simplify links - remove styles but keep href
-    .replace(/<a([^>]*)style="[^"]*"([^>]*)>/gi, '<a$1$2>')
-    // Remove spans entirely (usually just styling wrappers)
-    .replace(/<\/?span[^>]*>/gi, '')
-    // Clean up empty paragraphs
-    .replace(/<p>\s*<\/p>/gi, '')
-    // Remove leading separator (first post doesn't need one)
-    .replace(/^(\s*<br\s*\/?>\s*)*<hr>/i, '')
-    // Remove trailing separators
-    .replace(/(<hr>\s*(<br\s*\/?>)*\s*)+$/i, '');
-
-  return result;
+function sourceLabel(source: string): string {
+  switch (source) {
+    case 'reddit': return 'Reddit';
+    case 'bluesky': return 'Bluesky';
+    case 'youtube': return 'YouTube';
+    case 'discord': return 'Discord';
+    default: return source;
+  }
 }
 
-function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: string, simple = false): string {
+function buildFeed(items: FeedItemRow[], format: 'rss' | 'atom', baseUrl: string): string {
   const config = getConfig();
 
   const feed = new Feed({
@@ -99,24 +79,25 @@ function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: stri
     id: 'slowfeed',
     link: baseUrl,
     language: 'en',
-    updated: new Date(),
+    updated: items.length > 0 ? new Date(items[0].published_at) : new Date(),
     generator: 'Slowfeed',
     copyright: '',
   });
 
   for (const item of items) {
-    const sourceBadge = `[${item.source}]`;
     const content = item.content ?? '';
-    const processedContent = simple ? simplifyHtml(content) : content;
-    const description = stripHtml(content).substring(0, 300) + (content.length > 300 ? '...' : '');
+    const plainText = stripHtml(content);
+    const description = plainText.substring(0, 280) + (plainText.length > 280 ? '...' : '');
 
     feed.addItem({
-      title: `${sourceBadge} ${item.title}`,
+      title: item.title,
       id: item.id,
-      link: `${baseUrl}/digest/${item.id}`,
+      link: item.url,
       description: description,
-      content: processedContent || undefined,
+      content: content || undefined,
       date: new Date(item.published_at),
+      author: item.author ? [{ name: item.author }] : undefined,
+      category: [{ name: sourceLabel(item.source) }],
     });
   }
 
@@ -126,19 +107,16 @@ function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: stri
 export function createFeedRouter(): Router {
   const router = Router();
 
-  // Helper to get base URL from request
   const getBaseUrl = (req: import('express').Request): string => {
     const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
     const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3000';
     return `${protocol}://${host}`;
   };
 
-  // Middleware to validate feed token
   const validateToken = (req: import('express').Request, res: import('express').Response, next: import('express').NextFunction) => {
     const config = getConfig();
     const expectedToken = config.feed_token;
 
-    // If no token is configured, allow access (backwards compatibility)
     if (!expectedToken) {
       return next();
     }
@@ -153,16 +131,12 @@ export function createFeedRouter(): Router {
     next();
   };
 
-  // RSS feed - support both .rss and .xml extensions
-  // Use ?simple=true for simplified HTML (better compatibility with some readers)
-  // Use ?token=<secret> for authentication
   const handleRssFeed = async (req: import('express').Request, res: import('express').Response) => {
     try {
       const source = typeof req.query.source === 'string' ? req.query.source : undefined;
-      const simple = req.query.simple === 'true';
-      const items = await getDigestItems(source);
+      const items = await getFeedItems(source);
       const baseUrl = getBaseUrl(req);
-      const xml = buildFeed(items, 'rss', baseUrl, simple);
+      const xml = buildFeed(items, 'rss', baseUrl);
 
       res.set('Content-Type', 'application/rss+xml; charset=utf-8');
       res.send(xml);
@@ -179,10 +153,9 @@ export function createFeedRouter(): Router {
   router.get('/feed.atom', validateToken, async (req, res) => {
     try {
       const source = typeof req.query.source === 'string' ? req.query.source : undefined;
-      const simple = req.query.simple === 'true';
-      const items = await getDigestItems(source);
+      const items = await getFeedItems(source);
       const baseUrl = getBaseUrl(req);
-      const xml = buildFeed(items, 'atom', baseUrl, simple);
+      const xml = buildFeed(items, 'atom', baseUrl);
 
       res.set('Content-Type', 'application/atom+xml; charset=utf-8');
       res.send(xml);
