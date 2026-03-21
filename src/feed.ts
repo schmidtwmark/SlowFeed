@@ -51,7 +51,57 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: string): string {
+/**
+ * Simplify HTML for better RSS reader compatibility
+ * Keeps images and links clickable, removes complex styling
+ * Ensures output is valid XML for RSS feeds
+ */
+function simplifyHtml(html: string): string {
+  let result = html
+    // Convert YouTube iframes to clickable links
+    .replace(/<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi,
+      '<p><a href="https://www.youtube.com/watch?v=$1">▶ Watch Video</a></p>')
+    // Convert video tags to links
+    .replace(/<video[^>]*>[\s\S]*?<source[^>]*src="([^"]+)"[^>]*>[\s\S]*?<\/video>/gi,
+      '<p><a href="$1">▶ Watch Video</a></p>')
+    // Remove style and script tags entirely
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    // Simplify images - extract just src and alt, ensure self-closing
+    .replace(/<img[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*>/gi, '<img src="$1" alt="$2" />')
+    .replace(/<img[^>]*alt="([^"]*)"[^>]*src="([^"]*)"[^>]*>/gi, '<img src="$2" alt="$1" />')
+    .replace(/<img[^>]*src="([^"]*)"[^>]*>/gi, '<img src="$1" alt="" />')
+    // Add separator before border-styled divs (post wrappers)
+    .replace(/<div[^>]*style="[^"]*border[^"]*"[^>]*>/gi, '<hr />')
+    // Remove blockquote styles but keep the element
+    .replace(/<blockquote[^>]*>/gi, '<blockquote>')
+    // Remove div styles and simplify
+    .replace(/<div[^>]*>/gi, '<div>')
+    // Remove paragraph styles
+    .replace(/<p[^>]*>/gi, '<p>')
+    // Simplify links - extract just href
+    .replace(/<a[^>]*href="([^"]*)"[^>]*>/gi, '<a href="$1">')
+    // Remove spans entirely (usually just styling wrappers)
+    .replace(/<\/?span[^>]*>/gi, '')
+    // Ensure br tags are self-closing for XML
+    .replace(/<br\s*\/?>/gi, '<br />')
+    // Ensure hr tags are self-closing for XML
+    .replace(/<hr\s*\/?>/gi, '<hr />')
+    // Clean up empty paragraphs
+    .replace(/<p>\s*<\/p>/gi, '')
+    // Clean up empty divs
+    .replace(/<div>\s*<\/div>/gi, '')
+    // Remove leading separator (first post doesn't need one)
+    .replace(/^(\s*<br \/>\s*)*<hr \/>/i, '')
+    // Remove trailing separators
+    .replace(/(<hr \/>\s*(<br \/>)*\s*)+$/i, '')
+    // Fix any unescaped ampersands in URLs (but not already-escaped ones)
+    .replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);)/gi, '&amp;');
+
+  return result;
+}
+
+function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: string, simple = false): string {
   const config = getConfig();
 
   const feed = new Feed({
@@ -68,6 +118,7 @@ function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: stri
   for (const item of items) {
     const sourceBadge = `[${item.source}]`;
     const content = item.content ?? '';
+    const processedContent = simple ? simplifyHtml(content) : content;
     const description = stripHtml(content).substring(0, 300) + (content.length > 300 ? '...' : '');
 
     feed.addItem({
@@ -75,7 +126,7 @@ function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: stri
       id: item.id,
       link: `${baseUrl}/digest/${item.id}`,
       description: description,
-      content: content || undefined,
+      content: processedContent || undefined,
       date: new Date(item.published_at),
     });
   }
@@ -113,12 +164,16 @@ export function createFeedRouter(): Router {
     next();
   };
 
+  // RSS feed - support both .rss and .xml extensions
+  // Use ?simple=true for simplified HTML (better compatibility with some readers)
+  // Use ?token=<secret> for authentication
   const handleRssFeed = async (req: import('express').Request, res: import('express').Response) => {
     try {
       const source = typeof req.query.source === 'string' ? req.query.source : undefined;
+      const simple = req.query.simple === 'true';
       const items = await getDigestItems(source);
       const baseUrl = getBaseUrl(req);
-      const xml = buildFeed(items, 'rss', baseUrl);
+      const xml = buildFeed(items, 'rss', baseUrl, simple);
 
       res.set('Content-Type', 'application/rss+xml; charset=utf-8');
       res.send(xml);
@@ -135,9 +190,10 @@ export function createFeedRouter(): Router {
   router.get('/feed.atom', validateToken, async (req, res) => {
     try {
       const source = typeof req.query.source === 'string' ? req.query.source : undefined;
+      const simple = req.query.simple === 'true';
       const items = await getDigestItems(source);
       const baseUrl = getBaseUrl(req);
-      const xml = buildFeed(items, 'atom', baseUrl);
+      const xml = buildFeed(items, 'atom', baseUrl, simple);
 
       res.set('Content-Type', 'application/atom+xml; charset=utf-8');
       res.send(xml);

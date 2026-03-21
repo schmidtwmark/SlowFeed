@@ -729,29 +729,37 @@ function simplifyHtml(html) {
     // Convert video tags to links
     .replace(/<video[^>]*>[\s\S]*?<source[^>]*src="([^"]+)"[^>]*>[\s\S]*?<\/video>/gi,
       '<p><a href="$1">▶ Watch Video</a></p>')
-    // Simplify images - keep them but remove inline styles
-    .replace(/<img([^>]*)style="[^"]*"([^>]*)>/gi, '<img$1$2>')
     // Remove style and script tags entirely
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    // Remove blockquote styles but keep the element
-    .replace(/<blockquote[^>]*style="[^"]*"[^>]*>/gi, '<blockquote>')
+    // Simplify images - extract just src and alt
+    .replace(/<img[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*>/gi, '<img src="$1" alt="$2" />')
+    .replace(/<img[^>]*alt="([^"]*)"[^>]*src="([^"]*)"[^>]*>/gi, '<img src="$2" alt="$1" />')
+    .replace(/<img[^>]*src="([^"]*)"[^>]*>/gi, '<img src="$1" alt="" />')
     // Add separator before border-styled divs (post wrappers)
-    .replace(/<div[^>]*style="[^"]*border[^"]*"[^>]*>/gi, '<hr>')
-    // Remove other div styles
-    .replace(/<div[^>]*style="[^"]*"[^>]*>/gi, '<div>')
+    .replace(/<div[^>]*style="[^"]*border[^"]*"[^>]*>/gi, '<hr />')
+    // Remove blockquote styles but keep the element
+    .replace(/<blockquote[^>]*>/gi, '<blockquote>')
+    // Remove div styles and simplify
+    .replace(/<div[^>]*>/gi, '<div>')
     // Remove paragraph styles
-    .replace(/<p[^>]*style="[^"]*"[^>]*>/gi, '<p>')
-    // Simplify links - remove styles but keep href
-    .replace(/<a([^>]*)style="[^"]*"([^>]*)>/gi, '<a$1$2>')
+    .replace(/<p[^>]*>/gi, '<p>')
+    // Simplify links - extract just href
+    .replace(/<a[^>]*href="([^"]*)"[^>]*>/gi, '<a href="$1">')
     // Remove spans entirely (usually just styling wrappers)
     .replace(/<\/?span[^>]*>/gi, '')
+    // Ensure br tags are self-closing
+    .replace(/<br\s*\/?>/gi, '<br />')
+    // Ensure hr tags are self-closing
+    .replace(/<hr\s*\/?>/gi, '<hr />')
     // Clean up empty paragraphs
     .replace(/<p>\s*<\/p>/gi, '')
+    // Clean up empty divs
+    .replace(/<div>\s*<\/div>/gi, '')
     // Remove leading separator (first post doesn't need one)
-    .replace(/^(\s*<br\s*\/?>\s*)*<hr>/i, '')
+    .replace(/^(\s*<br \/>\s*)*<hr \/>/i, '')
     // Remove trailing separators
-    .replace(/(<hr>\s*(<br\s*\/?>)*\s*)+$/i, '');
+    .replace(/(<hr \/>\s*(<br \/>)*\s*)+$/i, '');
 
   return result;
 }
