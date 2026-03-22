@@ -155,6 +155,7 @@ function postViewToDigest(post: AppBskyFeedDefs.PostView, rootUri?: string, pare
     publishedAt: new Date(post.indexedAt),
     rawJson: post,
     metadata: {
+      avatarUrl: post.author.avatar || undefined,
       repostedBy,
       rootUri,
       parentUri,

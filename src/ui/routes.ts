@@ -839,6 +839,21 @@ function buildDigestPageHtml(source: string, title: string, publishedAt: Date, c
       color: var(--text-muted);
     }
 
+    /* Author line with avatar */
+    .post-author {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    img.avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
     article.post a {
       color: var(--link);
       text-decoration: none;

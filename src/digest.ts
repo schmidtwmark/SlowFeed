@@ -58,6 +58,14 @@ function formatRedditPost(post: DigestPost): string {
 }
 
 /**
+ * Render an avatar image tag if URL is available
+ */
+function renderAvatar(avatarUrl: string | undefined, alt: string): string {
+  if (!avatarUrl) return '';
+  return `<img class="avatar" src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(alt)}" width="32" height="32" loading="lazy">`;
+}
+
+/**
  * Format a Bluesky post for the digest
  */
 function formatBlueskyPost(post: DigestPost): string {
@@ -68,10 +76,11 @@ function formatBlueskyPost(post: DigestPost): string {
     parts.push(`<p><small>Reposted by <strong>${escapeHtml(post.metadata.repostedBy)}</strong></small></p>`);
   }
 
-  // Author
+  // Author with avatar
   if (post.author) {
     const handle = post.author.replace('@', '');
-    parts.push(`<p><strong><a href="https://bsky.app/profile/${escapeHtml(handle)}">${escapeHtml(post.author)}</a></strong></p>`);
+    const avatar = renderAvatar(post.metadata?.avatarUrl, post.author);
+    parts.push(`<p class="post-author">${avatar}<strong><a href="https://bsky.app/profile/${escapeHtml(handle)}">${escapeHtml(post.author)}</a></strong></p>`);
   }
 
   // Content
@@ -183,9 +192,10 @@ function formatYouTubePost(post: DigestPost): string {
 
   parts.push(`<article class="post" data-source="youtube" data-url="${escapeHtml(post.url)}"${videoId ? ` data-video-id="${escapeHtml(videoId)}"` : ''}>`);
 
-  // Channel name
+  // Channel name with avatar
   if (post.metadata?.channel) {
-    parts.push(`<p><small>${escapeHtml(post.metadata.channel)}</small></p>`);
+    const avatar = renderAvatar(post.metadata?.avatarUrl, post.metadata.channel);
+    parts.push(`<p class="post-author">${avatar}<small>${escapeHtml(post.metadata.channel)}</small></p>`);
   }
 
   // Title
@@ -216,9 +226,10 @@ function formatYouTubePost(post: DigestPost): string {
 function formatDiscordMessage(post: DigestPost): string {
   const parts: string[] = [];
 
-  // Author
+  // Author with avatar
   if (post.author) {
-    parts.push(`<p><strong>${escapeHtml(post.author)}</strong></p>`);
+    const avatar = renderAvatar(post.metadata?.avatarUrl, post.author);
+    parts.push(`<p class="post-author">${avatar}<strong>${escapeHtml(post.author)}</strong></p>`);
   }
 
   // Content

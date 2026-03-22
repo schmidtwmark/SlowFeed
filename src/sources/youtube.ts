@@ -9,6 +9,7 @@ interface YouTubeVideo {
   title: string;
   channel: string;
   channelUrl: string;
+  channelIcon: string;
   thumbnail: string;
   duration: string;
   publishedText: string;
@@ -199,6 +200,7 @@ function extractVideos(html: string): YouTubeVideo[] {
             title,
             channel: channelName,
             channelUrl: '',
+            channelIcon: '',
             thumbnail: thumbnailUrl,
             duration: '',
             publishedText: '',
@@ -238,11 +240,18 @@ function extractVideos(html: string): YouTubeVideo[] {
                          videoRenderer.viewCountText?.runs?.[0]?.text ||
                          '';
 
+        // Channel icon from channelThumbnailSupportedRenderers or channelThumbnail
+        const channelIcon =
+          videoRenderer.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.[0]?.url ||
+          videoRenderer.channelThumbnail?.thumbnails?.[0]?.url ||
+          '';
+
         videos.push({
           id: videoId,
           title,
           channel,
           channelUrl: channelUrl ? `https://www.youtube.com${channelUrl}` : '',
+          channelIcon,
           thumbnail,
           duration,
           publishedText,
@@ -285,6 +294,7 @@ function extractVideosFromHtml(html: string): YouTubeVideo[] {
       title,
       channel: 'Unknown',
       channelUrl: '',
+      channelIcon: '',
       thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       duration: '',
       publishedText: '',
@@ -387,6 +397,7 @@ export async function pollYouTube(): Promise<DigestPost[]> {
         publishedAt: new Date(), // YouTube doesn't give exact timestamps in the HTML
         rawJson: video,
         metadata: {
+          avatarUrl: video.channelIcon || undefined,
           channel: video.channel,
           duration: video.duration,
           thumbnail: video.thumbnail,
