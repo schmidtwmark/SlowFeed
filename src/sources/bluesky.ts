@@ -139,10 +139,56 @@ async function fetchThreadAncestors(bskyAgent: BskyAgent, postUri: string): Prom
 }
 
 /**
+ * Render a parent/ancestor post as an inline quote card (for reply context)
+ */
+function renderReplyContext(post: AppBskyFeedDefs.PostView): string {
+  const record = post.record as { text?: string };
+  let html = `<blockquote style="border-left: 3px solid #0085ff; margin: 12px 0; padding: 8px 12px; background: rgba(0, 133, 255, 0.08); border-radius: 0 8px 8px 0;">`;
+
+  // Author line with avatar
+  const avatarHtml = post.author.avatar
+    ? `<img class="avatar" src="${escapeHtml(post.author.avatar)}" alt="" width="20" height="20" loading="lazy" style="border-radius: 50%; vertical-align: middle; margin-right: 4px;">`
+    : '';
+  html += `<p style="margin: 0 0 6px 0;">${avatarHtml}<a href="https://bsky.app/profile/${escapeHtml(post.author.handle)}" style="font-weight: bold; color: #0085ff;">@${escapeHtml(post.author.handle)}</a></p>`;
+
+  // Post text
+  if (record.text) {
+    html += `<p style="margin: 0 0 6px 0;">${escapeHtml(record.text)}</p>`;
+  }
+
+  // Inline images from the parent
+  const embed = post.embed;
+  if (embed && AppBskyEmbedImages.isView(embed)) {
+    for (const image of embed.images) {
+      const imageUrl = image.fullsize || image.thumb;
+      html += `<p style="margin: 4px 0;"><img src="${imageUrl}" alt="${escapeHtml(image.alt || '')}" style="max-width: 100%; border-radius: 8px;"></p>`;
+    }
+  }
+
+  // External link card from parent
+  if (embed && AppBskyEmbedExternal.isView(embed)) {
+    const ext = embed.external;
+    if (ext.thumb) {
+      html += `<p style="margin: 4px 0;"><img src="${ext.thumb}" alt="" style="max-width: 100%; border-radius: 4px;"></p>`;
+    }
+    html += `<p style="margin: 4px 0;"><a href="${escapeHtml(ext.uri)}" style="color: #0085ff;">${escapeHtml(ext.title || ext.uri)}</a></p>`;
+  }
+
+  html += `</blockquote>`;
+  return html;
+}
+
+/**
  * Convert a PostView to a DigestPost
  */
-function postViewToDigest(post: AppBskyFeedDefs.PostView, rootUri?: string, parentUri?: string, repostedBy?: string): DigestPost {
-  const content = extractPostContent(post);
+function postViewToDigest(post: AppBskyFeedDefs.PostView, rootUri?: string, parentUri?: string, repostedBy?: string, replyContext?: string): DigestPost {
+  let content = extractPostContent(post);
+
+  // Append reply context (parent posts rendered as quote cards)
+  if (replyContext) {
+    content += replyContext;
+  }
+
   const url = getPostUrl(post);
   const postId = post.uri.split('/').pop() || post.cid;
 
@@ -224,26 +270,49 @@ export async function pollBluesky(): Promise<DigestPost[]> {
       const rootUri = record.reply?.root?.uri || undefined;
       const parentUri = record.reply?.parent?.uri || undefined;
 
-      // If this post is a reply, fetch the full thread (ancestors)
-      if (rootUri && !addedUris.has(rootUri)) {
+      if (rootUri) {
+        // This post is a reply — fetch ancestors for context
         const ancestors = await fetchThreadAncestors(bskyAgent, post.uri);
-        for (const ancestor of ancestors) {
-          if (!addedUris.has(ancestor.uri)) {
-            addedUris.add(ancestor.uri);
-            const ancestorRecord = ancestor.record as { reply?: { root?: { uri?: string }; parent?: { uri?: string } } };
-            digestPosts.push(postViewToDigest(
-              ancestor,
-              ancestorRecord.reply?.root?.uri,
-              ancestorRecord.reply?.parent?.uri,
-            ));
+
+        if (isRepost) {
+          // For reposts of replies: embed parent context inline (like the app shows it)
+          // Don't add ancestors as separate posts — show them as quote cards within this post
+          let replyContext = '';
+          for (const ancestor of ancestors) {
+            replyContext += renderReplyContext(ancestor);
+          }
+
+          if (!addedUris.has(post.uri)) {
+            addedUris.add(post.uri);
+            digestPosts.push(postViewToDigest(post, rootUri, parentUri, repostedBy, replyContext));
+          }
+        } else {
+          // For non-reposted replies: add ancestors as separate posts for thread grouping
+          if (!addedUris.has(rootUri)) {
+            for (const ancestor of ancestors) {
+              if (!addedUris.has(ancestor.uri)) {
+                addedUris.add(ancestor.uri);
+                const ancestorRecord = ancestor.record as { reply?: { root?: { uri?: string }; parent?: { uri?: string } } };
+                digestPosts.push(postViewToDigest(
+                  ancestor,
+                  ancestorRecord.reply?.root?.uri,
+                  ancestorRecord.reply?.parent?.uri,
+                ));
+              }
+            }
+          }
+
+          if (!addedUris.has(post.uri)) {
+            addedUris.add(post.uri);
+            digestPosts.push(postViewToDigest(post, rootUri, parentUri));
           }
         }
-      }
-
-      // Add the post itself
-      if (!addedUris.has(post.uri)) {
-        addedUris.add(post.uri);
-        digestPosts.push(postViewToDigest(post, rootUri, parentUri, repostedBy));
+      } else {
+        // Standalone post (not a reply)
+        if (!addedUris.has(post.uri)) {
+          addedUris.add(post.uri);
+          digestPosts.push(postViewToDigest(post, rootUri, parentUri, repostedBy));
+        }
       }
     }
 
