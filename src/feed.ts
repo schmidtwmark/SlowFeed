@@ -69,13 +69,14 @@ function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: stri
     const sourceBadge = `[${item.source}]`;
     const content = item.content ?? '';
     const description = stripHtml(content).substring(0, 300) + (content.length > 300 ? '...' : '');
+    const digestUrl = `${baseUrl}/digest/${item.id}`;
 
     feed.addItem({
       title: `${sourceBadge} ${item.title}`,
       id: item.id,
-      link: `${baseUrl}/digest/${item.id}`,
+      link: digestUrl,
       description: description,
-      content: content || undefined,
+      content: `<p>${description}</p><p><a href="${digestUrl}">View full digest →</a></p>`,
       date: new Date(item.published_at),
     });
   }

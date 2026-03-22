@@ -29,6 +29,8 @@ function escapeHtml(text: string): string {
 function formatRedditPost(post: DigestPost): string {
   const parts: string[] = [];
 
+  parts.push(`<article class="post" data-source="reddit" data-url="${escapeHtml(post.url)}">`);
+
   // Metadata line
   const meta: string[] = [];
   if (post.metadata?.subreddit) meta.push(`<strong>r/${escapeHtml(post.metadata.subreddit)}</strong>`);
@@ -50,7 +52,7 @@ function formatRedditPost(post: DigestPost): string {
     parts.push(post.content);
   }
 
-  parts.push('<hr>');
+  parts.push('</article>');
 
   return parts.join('\n');
 }
@@ -133,15 +135,16 @@ function formatBlueskyPosts(posts: DigestPost[]): string {
       earliestTime: allInThread[0].publishedAt.getTime(),
       render: () => {
         const parts: string[] = [];
+        const lastPost = allInThread[allInThread.length - 1];
+        parts.push(`<article class="post thread" data-source="bluesky" data-url="${escapeHtml(lastPost.url)}">`);
         if (allInThread.length > 1) {
           parts.push(`<p><strong>Thread (${allInThread.length} posts):</strong></p>`);
         }
         for (const post of allInThread) {
           parts.push(formatBlueskyPost(post));
         }
-        const lastPost = allInThread[allInThread.length - 1];
         parts.push(`<p><a href="${escapeHtml(lastPost.url)}">View on Bluesky →</a></p>`);
-        parts.push('<hr>');
+        parts.push('</article>');
         return parts.join('\n');
       },
     });
@@ -154,9 +157,10 @@ function formatBlueskyPosts(posts: DigestPost[]): string {
       earliestTime: post.publishedAt.getTime(),
       render: () => {
         const parts: string[] = [];
+        parts.push(`<article class="post" data-source="bluesky" data-url="${escapeHtml(post.url)}">`);
         parts.push(formatBlueskyPost(post));
         parts.push(`<p><a href="${escapeHtml(post.url)}">View on Bluesky →</a></p>`);
-        parts.push('<hr>');
+        parts.push('</article>');
         return parts.join('\n');
       },
     });
@@ -174,6 +178,11 @@ function formatBlueskyPosts(posts: DigestPost[]): string {
 function formatYouTubePost(post: DigestPost): string {
   const parts: string[] = [];
 
+  const videoIdMatch = post.url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  const videoId = videoIdMatch ? videoIdMatch[1] : null;
+
+  parts.push(`<article class="post" data-source="youtube" data-url="${escapeHtml(post.url)}"${videoId ? ` data-video-id="${escapeHtml(videoId)}"` : ''}>`);
+
   // Channel name
   if (post.metadata?.channel) {
     parts.push(`<p><small>${escapeHtml(post.metadata.channel)}</small></p>`);
@@ -187,19 +196,16 @@ function formatYouTubePost(post: DigestPost): string {
     parts.push(`<p><small>Duration: ${escapeHtml(post.metadata.duration)}</small></p>`);
   }
 
-  // Clickable thumbnail image (RSS readers don't support iframes)
-  const videoIdMatch = post.url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-  const videoId = videoIdMatch ? videoIdMatch[1] : null;
-
+  // Embed placeholder - the digest page will render iframes; fallback to thumbnail
   if (videoId) {
-    parts.push(`<p><a href="${escapeHtml(post.url)}"><img src="https://img.youtube.com/vi/${escapeHtml(videoId)}/hqdefault.jpg" alt="${escapeHtml(post.title)}" width="480"></a></p>`);
+    parts.push(`<div class="youtube-embed" data-video-id="${escapeHtml(videoId)}"><a href="${escapeHtml(post.url)}"><img src="https://img.youtube.com/vi/${escapeHtml(videoId)}/hqdefault.jpg" alt="${escapeHtml(post.title)}" width="480"></a></div>`);
   } else if (post.metadata?.thumbnail) {
     parts.push(`<p><a href="${escapeHtml(post.url)}"><img src="${escapeHtml(post.metadata.thumbnail)}" alt="${escapeHtml(post.title)}"></a></p>`);
   }
 
   // Source link
   parts.push(`<p><a href="${escapeHtml(post.url)}">Watch on YouTube →</a></p>`);
-  parts.push('<hr>');
+  parts.push('</article>');
 
   return parts.join('\n');
 }
@@ -301,15 +307,17 @@ function formatDiscordPosts(posts: DigestPost[]): string {
     const threads = groupDiscordThreads(channelPosts);
 
     for (const thread of threads) {
+      const firstPost = thread[0];
+      const appUrl = firstPost.url.replace('https://discord.com/', 'discord://discord.com/');
+      parts.push(`<article class="post${thread.length > 1 ? ' thread' : ''}" data-source="discord" data-url="${escapeHtml(appUrl)}">`);
       if (thread.length > 1) {
         parts.push(`<p><strong>Thread (${thread.length} messages):</strong></p>`);
       }
       for (const post of thread) {
         parts.push(formatDiscordMessage(post));
       }
+      parts.push('</article>');
     }
-
-    parts.push('<hr>');
   }
 
   return parts.join('\n');

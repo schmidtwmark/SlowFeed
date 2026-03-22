@@ -107,6 +107,61 @@ function getPostUrl(post: AppBskyFeedDefs.PostView): string {
   return `https://bsky.app/profile/${post.author.handle}/post/${rkey}`;
 }
 
+/**
+ * Given a post URI, fetch its full thread and return all posts from root to the post itself.
+ * Returns posts in chronological order (root first). Only follows the direct reply chain,
+ * not sibling replies.
+ */
+async function fetchThreadAncestors(bskyAgent: BskyAgent, postUri: string): Promise<AppBskyFeedDefs.PostView[]> {
+  try {
+    const threadResponse = await bskyAgent.getPostThread({ uri: postUri, depth: 0, parentHeight: 20 });
+    if (!threadResponse.success) return [];
+
+    // Walk up the parent chain collecting ancestors
+    const ancestors: AppBskyFeedDefs.PostView[] = [];
+    let current = threadResponse.data.thread;
+
+    // First collect the thread post itself
+    if (AppBskyFeedDefs.isThreadViewPost(current)) {
+      // Walk up the parent chain
+      let parent = current.parent;
+      while (parent && AppBskyFeedDefs.isThreadViewPost(parent)) {
+        ancestors.unshift(parent.post); // prepend so root ends up first
+        parent = parent.parent;
+      }
+    }
+
+    return ancestors;
+  } catch (err) {
+    logger.debug(`Failed to fetch thread ancestors for ${postUri}: ${(err as Error).message}`);
+    return [];
+  }
+}
+
+/**
+ * Convert a PostView to a DigestPost
+ */
+function postViewToDigest(post: AppBskyFeedDefs.PostView, rootUri?: string, parentUri?: string, repostedBy?: string): DigestPost {
+  const content = extractPostContent(post);
+  const url = getPostUrl(post);
+  const postId = post.uri.split('/').pop() || post.cid;
+
+  return {
+    postId,
+    title: `@${post.author.handle}: ${(post.record as { text?: string }).text?.substring(0, 100) || 'Post'}`,
+    content,
+    url,
+    author: `@${post.author.handle}`,
+    publishedAt: new Date(post.indexedAt),
+    rawJson: post,
+    metadata: {
+      repostedBy,
+      rootUri,
+      parentUri,
+    },
+  };
+}
+
 export async function pollBluesky(): Promise<DigestPost[]> {
   const config = getConfig();
 
@@ -152,14 +207,11 @@ export async function pollBluesky(): Promise<DigestPost[]> {
     const topPosts = uniqueFeed.slice(0, config.bluesky_top_n);
 
     const digestPosts: DigestPost[] = [];
+    // Track URIs we've already added to avoid duplicates from thread fetching
+    const addedUris = new Set<string>();
 
     for (const feedViewPost of topPosts) {
       const post = feedViewPost.post;
-      const content = extractPostContent(post);
-      const url = getPostUrl(post);
-
-      // Extract post ID from URI
-      const postId = post.uri.split('/').pop() || post.cid;
 
       // Detect repost
       const reason = feedViewPost.reason as { $type?: string; by?: { handle?: string; displayName?: string } } | undefined;
@@ -171,20 +223,27 @@ export async function pollBluesky(): Promise<DigestPost[]> {
       const rootUri = record.reply?.root?.uri || undefined;
       const parentUri = record.reply?.parent?.uri || undefined;
 
-      digestPosts.push({
-        postId,
-        title: `@${post.author.handle}: ${(post.record as { text?: string }).text?.substring(0, 100) || 'Post'}`,
-        content,
-        url,
-        author: `@${post.author.handle}`,
-        publishedAt: new Date(post.indexedAt),
-        rawJson: post,
-        metadata: {
-          repostedBy,
-          rootUri,
-          parentUri,
-        },
-      });
+      // If this post is a reply, fetch the full thread (ancestors)
+      if (rootUri && !addedUris.has(rootUri)) {
+        const ancestors = await fetchThreadAncestors(bskyAgent, post.uri);
+        for (const ancestor of ancestors) {
+          if (!addedUris.has(ancestor.uri)) {
+            addedUris.add(ancestor.uri);
+            const ancestorRecord = ancestor.record as { reply?: { root?: { uri?: string }; parent?: { uri?: string } } };
+            digestPosts.push(postViewToDigest(
+              ancestor,
+              ancestorRecord.reply?.root?.uri,
+              ancestorRecord.reply?.parent?.uri,
+            ));
+          }
+        }
+      }
+
+      // Add the post itself
+      if (!addedUris.has(post.uri)) {
+        addedUris.add(post.uri);
+        digestPosts.push(postViewToDigest(post, rootUri, parentUri, repostedBy));
+      }
     }
 
     logger.info(`Bluesky poll complete: found ${digestPosts.length} posts`);
