@@ -51,6 +51,7 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+
 function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: string): string {
   const config = getConfig();
 
@@ -114,6 +115,9 @@ export function createFeedRouter(): Router {
     next();
   };
 
+  // RSS feed - support both .rss and .xml extensions
+  // Use ?simple=true for simplified HTML (better compatibility with some readers)
+  // Use ?token=<secret> for authentication
   const handleRssFeed = async (req: import('express').Request, res: import('express').Response) => {
     try {
       const source = typeof req.query.source === 'string' ? req.query.source : undefined;
