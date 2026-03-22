@@ -408,7 +408,14 @@ async function loadYouTubeSettings() {
     const config = await api('/api/config');
 
     document.getElementById('youtube_enabled').checked = config.youtube_enabled || false;
-    document.getElementById('youtube_cookies').value = config.youtube_cookies || '';
+    const cookiesEl = document.getElementById('youtube_cookies');
+    if (config.youtube_cookies === '••••••••') {
+      cookiesEl.value = '';
+      cookiesEl.placeholder = 'Cookies are configured. Paste new cookies here to replace them.';
+    } else {
+      cookiesEl.value = config.youtube_cookies || '';
+      cookiesEl.placeholder = 'Paste your YouTube cookies here (Netscape cookies.txt format or raw Cookie header)';
+    }
   } catch (err) {
     console.error('Failed to load YouTube settings:', err);
   }
@@ -419,7 +426,14 @@ async function loadRedditSettings() {
     const config = await api('/api/config');
 
     document.getElementById('reddit_enabled').checked = config.reddit_enabled || false;
-    document.getElementById('reddit_cookies').value = config.reddit_cookies || '';
+    const cookiesEl = document.getElementById('reddit_cookies');
+    if (config.reddit_cookies === '••••••••') {
+      cookiesEl.value = '';
+      cookiesEl.placeholder = 'Cookies are configured. Paste new cookies here to replace them.';
+    } else {
+      cookiesEl.value = config.reddit_cookies || '';
+      cookiesEl.placeholder = 'Paste your Reddit cookies here for personalized feed';
+    }
     document.getElementById('reddit_top_n').value = config.reddit_top_n || 30;
     document.getElementById('reddit_include_comments').checked = config.reddit_include_comments !== false;
     document.getElementById('reddit_comment_depth').value = config.reddit_comment_depth || 3;
@@ -504,8 +518,13 @@ async function saveYouTubeSettings(form) {
   try {
     const data = {
       youtube_enabled: form.youtube_enabled.checked,
-      youtube_cookies: form.youtube_cookies.value || '',
     };
+
+    // Only send cookies if user entered new ones (don't overwrite with empty)
+    const cookiesValue = form.youtube_cookies.value;
+    if (cookiesValue) {
+      data.youtube_cookies = cookiesValue;
+    }
 
     await api('/api/config', {
       method: 'POST',
@@ -529,11 +548,16 @@ async function saveRedditSettings(form) {
   try {
     const data = {
       reddit_enabled: form.reddit_enabled.checked,
-      reddit_cookies: form.reddit_cookies.value || '',
       reddit_top_n: parseInt(form.reddit_top_n.value, 10),
       reddit_include_comments: form.reddit_include_comments.checked,
       reddit_comment_depth: parseInt(form.reddit_comment_depth.value, 10),
     };
+
+    // Only send cookies if user entered new ones (don't overwrite with empty)
+    const cookiesValue = form.reddit_cookies.value;
+    if (cookiesValue) {
+      data.reddit_cookies = cookiesValue;
+    }
 
     await api('/api/config', {
       method: 'POST',

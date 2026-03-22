@@ -35,6 +35,7 @@ export interface DigestPost {
   rawJson?: unknown;
   // Source-specific metadata
   metadata?: {
+    avatarUrl?: string;            // User/channel avatar URL
     score?: number;
     subreddit?: string;
     comments?: number;

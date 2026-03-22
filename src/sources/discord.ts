@@ -26,6 +26,7 @@ interface DiscordMessage {
     username: string;
     discriminator: string;
     global_name?: string;
+    avatar?: string;
   };
   content: string;
   timestamp: string;
@@ -255,6 +256,11 @@ export async function pollDiscord(): Promise<DigestPost[]> {
         const preview = getMessagePreview(message);
         const messageUrl = `https://discord.com/channels/${channel.guildId}/${channel.channelId}/${message.id}`;
 
+        // Build Discord CDN avatar URL
+        const avatarUrl = message.author.avatar
+          ? `https://cdn.discordapp.com/avatars/${message.author.id}/${message.author.avatar}.png?size=64`
+          : undefined;
+
         digestPosts.push({
           postId: message.id,
           title: `#${channel.channelName} - @${authorName}: ${preview}`,
@@ -264,6 +270,7 @@ export async function pollDiscord(): Promise<DigestPost[]> {
           publishedAt: new Date(message.timestamp),
           rawJson: message,
           metadata: {
+            avatarUrl,
             guildName: channel.guildName,
             channelName: channel.channelName,
             replyToMessageId: message.message_reference?.message_id,

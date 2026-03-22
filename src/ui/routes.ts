@@ -96,6 +96,8 @@ export function createUiRouter(): Router {
         ...config,
         bluesky_app_password: config.bluesky_app_password ? '••••••••' : '',
         discord_token: config.discord_token ? '••••••••' : '',
+        youtube_cookies: config.youtube_cookies ? '••••••••' : '',
+        reddit_cookies: config.reddit_cookies ? '••••••••' : '',
         ui_password: '••••••••',
         // feed_token is intentionally NOT masked - users need to see it
       };
@@ -664,7 +666,6 @@ export function createUiRouter(): Router {
   router.get('/digest/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      const simple = req.query.simple === 'true';
 
       const { rows } = await query<{
         id: string;
@@ -683,118 +684,9 @@ export function createUiRouter(): Router {
       }
 
       const digest = rows[0];
-      let content = digest.content || '';
+      const content = digest.content || '';
 
-      // Optionally simplify HTML
-      if (simple) {
-        content = content
-          // Add separator before each post div
-          .replace(/<div style="border:[^"]*padding:[^"]*>/gi, '<hr style="border:none;border-top:2px solid #ddd;margin:24px 0;"><div>')
-          // Convert YouTube iframes to links
-          .replace(/<iframe[^>]*src="https:\/\/www\.youtube\.com\/embed\/([^"]+)"[^>]*>[\s\S]*?<\/iframe>/gi,
-            '<p><a href="https://www.youtube.com/watch?v=$1">▶ Watch on YouTube</a></p>')
-          // Remove inline styles
-          .replace(/\s*style="[^"]*"/gi, '')
-          // Remove leading separator
-          .replace(/^(\s*<[^>]*>\s*)*<hr[^>]*>/i, '');
-      }
-
-      const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(digest.title)} - Slowfeed</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      line-height: 1.6;
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 20px;
-      background: #f5f5f5;
-      color: #333;
-    }
-    header {
-      margin-bottom: 24px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid #ddd;
-    }
-    h1 {
-      font-size: 1.5rem;
-      margin-bottom: 8px;
-    }
-    .meta {
-      color: #666;
-      font-size: 0.875rem;
-    }
-    .source-badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      font-weight: bold;
-      text-transform: uppercase;
-      color: white;
-      margin-right: 8px;
-    }
-    .source-badge.reddit { background: #ff4500; }
-    .source-badge.bluesky { background: #0085ff; }
-    .source-badge.youtube { background: #ff0000; }
-    .source-badge.discord { background: #5865f2; }
-    .content {
-      background: white;
-      padding: 20px;
-      border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    .content img {
-      max-width: 100%;
-      height: auto;
-      border-radius: 4px;
-    }
-    .content a {
-      color: #0066cc;
-    }
-    .content h2, .content h3 {
-      margin-top: 16px;
-      margin-bottom: 8px;
-    }
-    .content p {
-      margin-bottom: 12px;
-    }
-    hr {
-      border: none;
-      border-top: 2px solid #ddd;
-      margin: 24px 0;
-    }
-    footer {
-      margin-top: 24px;
-      padding-top: 16px;
-      border-top: 1px solid #ddd;
-      font-size: 0.875rem;
-      color: #666;
-    }
-    footer a {
-      color: #0066cc;
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <h1><span class="source-badge ${digest.source}">${digest.source}</span>${escapeHtml(digest.title)}</h1>
-    <p class="meta">${new Date(digest.published_at).toLocaleString()}</p>
-  </header>
-  <div class="content">
-    ${content}
-  </div>
-  <footer>
-    <p>Powered by <a href="/">Slowfeed</a></p>
-  </footer>
-</body>
-</html>`;
-
+      const html = buildDigestPageHtml(digest.source, escapeHtml(digest.title), new Date(digest.published_at), content);
       res.set('Content-Type', 'text/html; charset=utf-8');
       res.send(html);
     } catch (err) {
@@ -804,6 +696,405 @@ export function createUiRouter(): Router {
   });
 
   return router;
+}
+
+/**
+ * Build the full interactive digest page HTML.
+ * Features: dark theme, inline YouTube iframes, vim keyboard navigation (j/k/o/gg/G),
+ * responsive images, and post-level focus management.
+ */
+function buildDigestPageHtml(source: string, title: string, publishedAt: Date, content: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} - Slowfeed</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #1a1a2e;
+      --bg-card: #16213e;
+      --border: #2a2a4a;
+      --text: #eaeaea;
+      --text-muted: #a0a0a0;
+      --accent: #e94560;
+      --link: #6db3f2;
+      --focus-ring: #e94560;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      background: var(--bg);
+      color: var(--text);
+      padding: 0;
+    }
+
+    header {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px 20px 16px;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      z-index: 100;
+    }
+
+    header h1 {
+      font-size: 1.25rem;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .meta {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+    }
+
+    .nav-hint {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    .nav-hint kbd {
+      display: inline-block;
+      padding: 1px 5px;
+      font-size: 0.6875rem;
+      font-family: monospace;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      margin: 0 1px;
+    }
+
+    .post-counter {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+
+    .source-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.6875rem;
+      font-weight: bold;
+      text-transform: uppercase;
+      color: white;
+      flex-shrink: 0;
+    }
+    .source-badge.reddit { background: #ff4500; }
+    .source-badge.bluesky { background: #0085ff; }
+    .source-badge.youtube { background: #ff0000; }
+    .source-badge.discord { background: #5865f2; }
+
+    .content {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px 80px;
+    }
+
+    /* Article/post styling */
+    article.post {
+      background: var(--bg-card);
+      border: 2px solid transparent;
+      border-radius: 10px;
+      padding: 20px;
+      margin: 16px 0;
+      transition: border-color 0.15s ease;
+      scroll-margin-top: 100px;
+    }
+
+    article.post.focused {
+      border-color: var(--focus-ring);
+    }
+
+    article.post h3 {
+      margin: 8px 0;
+      font-size: 1.125rem;
+    }
+
+    article.post h3 a {
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    article.post h3 a:hover {
+      color: var(--accent);
+    }
+
+    article.post p {
+      margin-bottom: 10px;
+    }
+
+    article.post small {
+      color: var(--text-muted);
+    }
+
+    /* Author line with avatar */
+    .post-author {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    img.avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    article.post a {
+      color: var(--link);
+      text-decoration: none;
+    }
+
+    article.post a:hover {
+      text-decoration: underline;
+    }
+
+    /* Images */
+    article.post img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 6px;
+      margin: 8px 0;
+    }
+
+    /* YouTube embeds */
+    .youtube-embed {
+      position: relative;
+      width: 100%;
+      max-width: 720px;
+      margin: 12px 0;
+    }
+
+    .youtube-embed iframe {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border: none;
+      border-radius: 6px;
+    }
+
+    .youtube-embed img {
+      cursor: pointer;
+    }
+
+    /* Reddit video/media */
+    article.post video {
+      max-width: 100%;
+      border-radius: 6px;
+    }
+
+    /* Bluesky thread nesting */
+    article.post.thread {
+      border-left: 3px solid var(--link);
+    }
+
+    /* Blockquotes (Bluesky quote posts) */
+    article.post blockquote {
+      border-left: 3px solid var(--border);
+      padding: 8px 12px;
+      margin: 8px 0;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.03);
+      border-radius: 0 6px 6px 0;
+    }
+
+    /* Comment sections */
+    article.post h4 {
+      margin: 12px 0 8px;
+      font-size: 0.9375rem;
+      color: var(--text-muted);
+    }
+
+    /* Horizontal rules within content (not between posts) */
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 16px 0;
+    }
+
+    /* Non-article content (summary line, section headers) */
+    .content > p {
+      padding: 12px 0;
+      color: var(--text-muted);
+    }
+
+    .content > h2 {
+      padding: 16px 0 8px;
+      font-size: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+
+    footer {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+    }
+
+    footer a { color: var(--link); }
+
+    /* Mobile */
+    @media (max-width: 600px) {
+      header { padding: 16px 12px 12px; }
+      header h1 { font-size: 1.0625rem; }
+      .content { padding: 0 12px 60px; }
+      article.post { padding: 14px; margin: 10px 0; }
+      .nav-hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>
+      <span class="source-badge ${source}">${source}</span>
+      ${title}
+      <span class="post-counter" id="post-counter"></span>
+    </h1>
+    <p class="meta">${publishedAt.toISOString().replace('T', ' ').substring(0, 19)} UTC</p>
+    <p class="nav-hint">
+      <kbd>j</kbd>/<kbd>k</kbd> navigate
+      <kbd>o</kbd> open
+      <kbd>gg</kbd> top
+      <kbd>G</kbd> bottom
+    </p>
+  </header>
+
+  <div class="content" id="digest-content">
+    ${content}
+  </div>
+
+  <footer>
+    <p>Powered by <a href="/">Slowfeed</a></p>
+  </footer>
+
+  <script>
+  (function() {
+    // --- YouTube: replace thumbnail placeholders with iframes ---
+    document.querySelectorAll('.youtube-embed[data-video-id]').forEach(function(el) {
+      var videoId = el.getAttribute('data-video-id');
+      el.innerHTML = '<iframe src="https://www.youtube.com/embed/' + videoId +
+        '?rel=0" allowfullscreen loading="lazy"></iframe>';
+    });
+
+    // --- Reddit: convert reddit video links to embedded players ---
+    document.querySelectorAll('article.post[data-source="reddit"] a[href*="v.redd.it"]').forEach(function(a) {
+      // The parent reddit post URL is on the article
+      var article = a.closest('article.post');
+      if (!article) return;
+      var redditUrl = article.getAttribute('data-url');
+      if (redditUrl) {
+        var container = document.createElement('div');
+        container.className = 'youtube-embed';
+        container.innerHTML = '<iframe src="https://www.redditmedia.com/mediaembed/lq?responsive=true&is_hierarchical=false" ' +
+          'sandbox="allow-scripts allow-same-origin allow-popups" allowfullscreen loading="lazy"></iframe>';
+        // Fallback: just leave the link if embed doesn't work
+      }
+    });
+
+    // --- Vim-style keyboard navigation ---
+    var posts = Array.from(document.querySelectorAll('article.post'));
+    var currentIndex = -1;
+    var gPending = false;
+
+    function updateCounter() {
+      var counter = document.getElementById('post-counter');
+      if (counter && posts.length > 0) {
+        counter.textContent = (currentIndex + 1) + '/' + posts.length;
+      }
+    }
+
+    function focusPost(index) {
+      if (index < 0 || index >= posts.length) return;
+
+      // Remove previous focus
+      if (currentIndex >= 0 && currentIndex < posts.length) {
+        posts[currentIndex].classList.remove('focused');
+      }
+
+      currentIndex = index;
+      posts[currentIndex].classList.add('focused');
+      posts[currentIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      updateCounter();
+    }
+
+    updateCounter();
+
+    document.addEventListener('keydown', function(e) {
+      // Don't capture if user is in an input/textarea
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      var key = e.key;
+
+      // Handle 'gg' sequence
+      if (gPending) {
+        gPending = false;
+        if (key === 'g') {
+          e.preventDefault();
+          focusPost(0);
+          return;
+        }
+      }
+
+      switch (key) {
+        case 'j':
+          e.preventDefault();
+          focusPost(currentIndex < 0 ? 0 : Math.min(currentIndex + 1, posts.length - 1));
+          break;
+
+        case 'k':
+          e.preventDefault();
+          if (currentIndex > 0) focusPost(currentIndex - 1);
+          break;
+
+        case 'o':
+        case 'Enter':
+          e.preventDefault();
+          if (currentIndex >= 0 && currentIndex < posts.length) {
+            var url = posts[currentIndex].getAttribute('data-url');
+            if (url) window.open(url, '_blank');
+          }
+          break;
+
+        case 'G':
+          e.preventDefault();
+          focusPost(posts.length - 1);
+          break;
+
+        case 'g':
+          gPending = true;
+          setTimeout(function() { gPending = false; }, 500);
+          break;
+      }
+    });
+
+    // Also allow click-to-focus
+    posts.forEach(function(post, idx) {
+      post.addEventListener('click', function(e) {
+        // Don't steal clicks on links
+        if (e.target.tagName === 'A' || e.target.closest('a')) return;
+        focusPost(idx);
+      });
+    });
+  })();
+  </script>
+</body>
+</html>`;
 }
 
 // Helper to escape HTML in template
