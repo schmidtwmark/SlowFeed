@@ -19,6 +19,7 @@ interface RedditPost {
   isSelf: boolean;
   isImage: boolean;
   isVideo: boolean;
+  isGallery: boolean;
   previewUrl: string | null;
 }
 
@@ -117,6 +118,9 @@ function extractPosts(html: string): RedditPost[] {
     const videoHosts = /^https?:\/\/(v\.redd\.it|gfycat\.com|redgifs\.com|streamable\.com)/i;
     const isVideo = !isSelf && videoHosts.test(postUrl);
 
+    // Detect gallery URLs
+    const isGallery = /reddit\.com\/gallery\//i.test(postUrl) || /\/gallery\//i.test(postUrl);
+
     // Try to extract preview URL from thing block
     let previewUrl: string | null = null;
     const previewMatch = thingBlock.match(/data-url="(https?:\/\/preview\.redd\.it\/[^"]+)"/i) ||
@@ -147,6 +151,7 @@ function extractPosts(html: string): RedditPost[] {
       isSelf,
       isImage,
       isVideo,
+      isGallery,
       previewUrl,
     });
   }
@@ -185,6 +190,138 @@ function extractComments(html: string, maxComments: number): RedditComment[] {
   }
 
   return comments;
+}
+
+interface RedditPostJson {
+  selftextHtml: string;
+  galleryImageUrls: string[];
+  videoUrl: string | null;
+  videoAudioUrl: string | null;
+}
+
+async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> {
+  try {
+    const jsonUrl = `${permalink}.json`;
+    const cookies = getRedditCookies();
+
+    const headers: Record<string, string> = {
+      'User-Agent': USER_AGENT,
+      'Accept': 'application/json',
+    };
+    if (cookies) {
+      headers['Cookie'] = cookies;
+    }
+
+    const response = await fetch(jsonUrl, { headers });
+    if (!response.ok) return null;
+
+    const json = await response.json() as Array<{
+      data: {
+        children: Array<{
+          data: {
+            selftext_html?: string;
+            selftext?: string;
+            media_metadata?: Record<string, {
+              status: string;
+              s?: { u?: string; gif?: string };
+            }>;
+            gallery_data?: { items: Array<{ media_id: string }> };
+            media?: {
+              reddit_video?: {
+                fallback_url?: string;
+                dash_url?: string;
+              };
+            };
+            secure_media?: {
+              reddit_video?: {
+                fallback_url?: string;
+              };
+            };
+            crosspost_parent_list?: Array<{
+              media?: {
+                reddit_video?: {
+                  fallback_url?: string;
+                };
+              };
+              secure_media?: {
+                reddit_video?: {
+                  fallback_url?: string;
+                };
+              };
+              media_metadata?: Record<string, {
+                status: string;
+                s?: { u?: string; gif?: string };
+              }>;
+              gallery_data?: { items: Array<{ media_id: string }> };
+            }>;
+          };
+        }>;
+      };
+    }>;
+
+    if (!Array.isArray(json) || json.length === 0) return null;
+
+    const postData = json[0]?.data?.children?.[0]?.data;
+    if (!postData) return null;
+
+    // Check crosspost parent for media
+    const crosspost = postData.crosspost_parent_list?.[0];
+
+    // Extract selftext HTML
+    const selftextHtml = postData.selftext_html
+      ? decodeHtmlEntities(postData.selftext_html)
+      : '';
+
+    // Extract gallery images
+    const galleryImageUrls: string[] = [];
+    const mediaMetadata = postData.media_metadata || crosspost?.media_metadata;
+    const galleryData = postData.gallery_data || crosspost?.gallery_data;
+
+    if (mediaMetadata && galleryData) {
+      // Use gallery_data.items for ordering
+      for (const item of galleryData.items) {
+        const meta = mediaMetadata[item.media_id];
+        if (meta?.status === 'valid' && meta.s) {
+          const url = meta.s.gif || meta.s.u;
+          if (url) {
+            // Reddit encodes URLs with &amp; in the JSON
+            galleryImageUrls.push(url.replace(/&amp;/g, '&'));
+          }
+        }
+      }
+    } else if (mediaMetadata) {
+      // No gallery_data ordering, just iterate
+      for (const meta of Object.values(mediaMetadata)) {
+        if (meta?.status === 'valid' && meta.s) {
+          const url = meta.s.gif || meta.s.u;
+          if (url) {
+            galleryImageUrls.push(url.replace(/&amp;/g, '&'));
+          }
+        }
+      }
+    }
+
+    // Extract video URL
+    let videoUrl: string | null = null;
+    let videoAudioUrl: string | null = null;
+    const redditVideo = postData.media?.reddit_video
+      || postData.secure_media?.reddit_video
+      || crosspost?.media?.reddit_video
+      || crosspost?.secure_media?.reddit_video;
+
+    if (redditVideo?.fallback_url) {
+      videoUrl = redditVideo.fallback_url;
+      // Derive audio URL from the video URL
+      const audioUrl = videoUrl.replace(/DASH_\d+\.mp4/, 'DASH_AUDIO_128.mp4')
+        .replace(/DASH_\d+\?/, 'DASH_AUDIO_128?');
+      videoAudioUrl = audioUrl;
+    }
+
+    return { selftextHtml, galleryImageUrls, videoUrl, videoAudioUrl };
+  } catch (err) {
+    logger.debug(`Failed to fetch post JSON for ${permalink}: ${(err as Error).message}`);
+    return null;
+  }
 }
 
 async function fetchPostWithComments(permalink: string, commentDepth: number): Promise<{ selftext: string; comments: RedditComment[] }> {
@@ -287,39 +424,58 @@ export async function pollReddit(): Promise<DigestPost[]> {
     for (const post of topPosts) {
       let content = '';
 
-      // For image posts, embed the image
-      if (post.isImage) {
+      // Fetch JSON data for rich content (galleries, videos, selftext)
+      const postJson = await fetchPostJson(post.permalink);
+
+      // For gallery posts, show all images inline
+      if (post.isGallery && postJson && postJson.galleryImageUrls.length > 0) {
+        for (const imageUrl of postJson.galleryImageUrls) {
+          content += `<p><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(post.title)}" style="max-width: 100%; border-radius: 8px;"></p>`;
+        }
+      } else if (post.isImage) {
+        // For single image posts, embed the image
         const imageUrl = post.url;
         content += `<p><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(post.title)}" style="max-width: 100%; border-radius: 8px;"></p>`;
-      } else if (post.previewUrl && !post.isSelf) {
+      } else if (post.previewUrl && !post.isSelf && !post.isVideo) {
         // Use preview image for link posts if available
         content += `<p><img src="${escapeHtml(post.previewUrl)}" alt="Preview" style="max-width: 100%; border-radius: 8px;"></p>`;
       }
 
-      // For video posts, show a link with indicator
-      if (post.isVideo) {
-        content += `<p style="padding: 12px; background: #f5f5f5; border-radius: 8px;">🎬 <a href="${escapeHtml(post.url)}" style="color: #0066cc;">View Video</a></p>`;
+      // For video posts, embed inline video player
+      if (post.isVideo && postJson?.videoUrl) {
+        content += `<div style="margin: 12px 0;">`;
+        content += `<video controls preload="metadata" style="max-width: 100%; border-radius: 8px;" playsinline>`;
+        content += `<source src="${escapeHtml(postJson.videoUrl)}" type="video/mp4">`;
+        content += `</video>`;
+        content += `</div>`;
+      } else if (post.isVideo) {
+        // Fallback if we couldn't get the video URL
+        content += `<p style="padding: 12px; background: #f5f5f5; border-radius: 8px;"><a href="${escapeHtml(post.url)}" style="color: #0066cc;">View Video on Reddit</a></p>`;
+      }
+
+      // Selftext - show inline from JSON data (works even without comments enabled)
+      if (postJson?.selftextHtml) {
+        content += `<div style="margin: 12px 0; line-height: 1.6;">${postJson.selftextHtml}</div>`;
       }
 
       // Fetch comments if enabled
       if (config.reddit_include_comments && post.numComments > 0) {
-        const { selftext, comments } = await fetchPostWithComments(
+        const { comments } = await fetchPostWithComments(
           post.permalink,
           config.reddit_comment_depth
         );
-
-        if (selftext) {
-          content += `<div style="margin: 12px 0; padding: 12px; background: #f9f9f9; border-radius: 8px; line-height: 1.6;">${escapeHtml(selftext)}</div>`;
-        }
 
         content += formatComments(comments);
 
         // Small delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 500));
+      } else {
+        // Small delay even without comments to avoid rate limiting on JSON fetch
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
 
-      // Add link for non-self, non-image, non-video posts
-      if (!post.isSelf && !post.isImage && !post.isVideo && post.url) {
+      // Add link for non-self, non-image, non-video, non-gallery posts
+      if (!post.isSelf && !post.isImage && !post.isVideo && !post.isGallery && post.url) {
         // Show as a link card
         content += `<div style="border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; background: #f9f9f9;">`;
         content += `<a href="${escapeHtml(post.url)}" style="color: #0066cc; word-break: break-all;">${escapeHtml(post.url)}</a>`;
@@ -327,8 +483,8 @@ export async function pollReddit(): Promise<DigestPost[]> {
       }
 
       // Truncate very long content
-      if (content.length > 10000) {
-        content = content.substring(0, 10000) + `<p><a href="${post.permalink}">... read more on Reddit</a></p>`;
+      if (content.length > 20000) {
+        content = content.substring(0, 20000) + `<p><a href="${post.permalink}">... read more on Reddit</a></p>`;
       }
 
       digestPosts.push({
