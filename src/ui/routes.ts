@@ -686,7 +686,34 @@ export function createUiRouter(): Router {
       const digest = rows[0];
       const content = digest.content || '';
 
-      const html = buildDigestPageHtml(digest.source, escapeHtml(digest.title), new Date(digest.published_at), content);
+      // Get previous and next digests for navigation
+      const { rows: prevRows } = await query<{ id: string; title: string }>(
+        `SELECT id, title FROM digest_items
+         WHERE published_at > $1
+         ORDER BY published_at ASC
+         LIMIT 1`,
+        [digest.published_at]
+      );
+
+      const { rows: nextRows } = await query<{ id: string; title: string }>(
+        `SELECT id, title FROM digest_items
+         WHERE published_at < $1
+         ORDER BY published_at DESC
+         LIMIT 1`,
+        [digest.published_at]
+      );
+
+      const prevDigest = prevRows[0] || null;
+      const nextDigest = nextRows[0] || null;
+
+      const html = buildDigestPageHtml(
+        digest.source,
+        escapeHtml(digest.title),
+        new Date(digest.published_at),
+        content,
+        prevDigest,
+        nextDigest
+      );
       res.set('Content-Type', 'text/html; charset=utf-8');
       res.send(html);
     } catch (err) {
@@ -698,12 +725,30 @@ export function createUiRouter(): Router {
   return router;
 }
 
+interface DigestNav {
+  id: string;
+  title: string;
+}
+
 /**
  * Build the full interactive digest page HTML.
  * Features: dark theme, inline YouTube iframes, vim keyboard navigation (j/k/o/gg/G),
  * responsive images, and post-level focus management.
  */
-function buildDigestPageHtml(source: string, title: string, publishedAt: Date, content: string): string {
+function buildDigestPageHtml(
+  source: string,
+  title: string,
+  publishedAt: Date,
+  content: string,
+  prevDigest: DigestNav | null,
+  nextDigest: DigestNav | null
+): string {
+  const prevLink = prevDigest
+    ? `<a href="/digest/${prevDigest.id}" class="nav-arrow prev" title="${escapeHtml(prevDigest.title)}">← Newer</a>`
+    : '<span class="nav-arrow disabled">← Newer</span>';
+  const nextLink = nextDigest
+    ? `<a href="/digest/${nextDigest.id}" class="nav-arrow next" title="${escapeHtml(nextDigest.title)}">Older →</a>`
+    : '<span class="nav-arrow disabled">Older →</span>';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -779,6 +824,40 @@ function buildDigestPageHtml(source: string, title: string, publishedAt: Date, c
       color: var(--text-muted);
       margin-left: auto;
       flex-shrink: 0;
+    }
+
+    .digest-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .nav-arrow {
+      font-size: 0.875rem;
+      color: var(--link);
+      text-decoration: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+
+    .nav-arrow:hover {
+      background: var(--bg-card);
+      text-decoration: underline;
+    }
+
+    .nav-arrow.disabled {
+      color: var(--text-muted);
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .nav-arrow.disabled:hover {
+      background: none;
+      text-decoration: none;
     }
 
     .source-badge {
@@ -967,12 +1046,16 @@ function buildDigestPageHtml(source: string, title: string, publishedAt: Date, c
       <span class="post-counter" id="post-counter"></span>
     </h1>
     <p class="meta">${publishedAt.toISOString().replace('T', ' ').substring(0, 19)} UTC</p>
-    <p class="nav-hint">
-      <kbd>j</kbd>/<kbd>k</kbd> navigate
-      <kbd>o</kbd> open
-      <kbd>gg</kbd> top
-      <kbd>G</kbd> bottom
-    </p>
+    <div class="digest-nav">
+      ${prevLink}
+      <p class="nav-hint">
+        <kbd>j</kbd>/<kbd>k</kbd> navigate
+        <kbd>o</kbd> open
+        <kbd>gg</kbd> top
+        <kbd>G</kbd> bottom
+      </p>
+      ${nextLink}
+    </div>
   </header>
 
   <div class="content" id="digest-content">

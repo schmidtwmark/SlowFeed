@@ -54,7 +54,7 @@ function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: stri
       title: item.title,
       id: item.id,
       link: digestUrl,
-      description: 'Click to view full digest',
+      content: `<a href="${digestUrl}">View Full Digest</a>`,
       date: new Date(item.published_at),
     });
   }
