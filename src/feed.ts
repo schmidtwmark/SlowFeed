@@ -33,25 +33,6 @@ async function getDigestItems(source?: string): Promise<DigestItemRow[]> {
   return rows;
 }
 
-/**
- * Strip HTML to plain text for description field
- */
-function stripHtml(html: string): string {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-
 function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: string): string {
   const config = getConfig();
 
@@ -67,17 +48,13 @@ function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: stri
   });
 
   for (const item of items) {
-    const sourceBadge = `[${item.source}]`;
-    const content = item.content ?? '';
-    const description = stripHtml(content).substring(0, 300) + (content.length > 300 ? '...' : '');
     const digestUrl = `${baseUrl}/digest/${item.id}`;
 
     feed.addItem({
-      title: `${sourceBadge} ${item.title}`,
+      title: item.title,
       id: item.id,
       link: digestUrl,
-      description: description,
-      content: `<p>${description}</p><p><a href="${digestUrl}">View full digest →</a></p>`,
+      description: 'Click to view full digest',
       date: new Date(item.published_at),
     });
   }

@@ -7,6 +7,52 @@ let currentSource = '';
 let feedToken = '';
 let previewSimpleMode = false;
 
+/**
+ * Render a digest item card (shared between dashboard and feed preview)
+ * @param {Object} item - The digest item
+ * @param {string} item.id - Digest ID
+ * @param {string} item.source - Source name (reddit, bluesky, etc.)
+ * @param {string} item.title - Digest title
+ * @param {string} item.published_at - ISO timestamp
+ * @param {number} [item.post_count] - Number of posts in digest
+ * @param {string} className - CSS class prefix ('recent-item' or 'feed-item')
+ * @param {string} toggleFn - Name of toggle function to call
+ * @returns {HTMLElement}
+ */
+function renderDigestCard(item, className, toggleFn) {
+  const el = document.createElement(className === 'recent-item' ? 'li' : 'div');
+  el.className = className;
+  el.dataset.digestId = item.id;
+
+  const timestamp = new Date(item.published_at).toLocaleString();
+  const postCount = item.post_count ? `<span class="item-meta">${item.post_count} items</span>` : '';
+  const digestUrl = `/digest/${item.id}`;
+
+  // Class names differ between recent-item and feed-item for historical reasons
+  const isRecentItem = className === 'recent-item';
+  const detailsClass = isRecentItem ? 'recent-item-content' : 'feed-item-details';
+  const contentClass = isRecentItem ? 'recent-item-body' : 'feed-item-content';
+  const titleClass = isRecentItem ? 'item-title' : 'feed-item-title';
+  const metaClass = isRecentItem ? 'recent-item-meta' : 'feed-item-meta';
+
+  el.innerHTML = `
+    <div class="${className}-header" onclick="${toggleFn}(this)">
+      <span class="source-badge ${item.source}">${item.source}</span>
+      <span class="${titleClass}">${escapeHtml(item.title)}</span>
+      ${postCount}
+      <span class="expand-arrow">▶</span>
+    </div>
+    <div class="${detailsClass} hidden">
+      <div class="${metaClass}">
+        <span class="timestamp">${timestamp}</span>
+        <a href="${digestUrl}" target="_blank" class="view-digest-link">View Full Digest →</a>
+      </div>
+      <div class="${contentClass}"><em>Loading...</em></div>
+    </div>
+  `;
+  return el;
+}
+
 // API Helper
 async function api(endpoint, options = {}) {
   const headers = {
@@ -217,23 +263,7 @@ async function loadDashboard() {
     list.innerHTML = '';
 
     for (const item of stats.recentItems) {
-      const li = document.createElement('li');
-      li.className = 'recent-item';
-      li.dataset.digestId = item.id;
-      li.innerHTML = `
-        <div class="recent-item-header" onclick="toggleRecentItem(this)">
-          <span class="source-badge ${item.source}">${item.source}</span>
-          <span class="item-title">${escapeHtml(item.title)}</span>
-          <span class="item-meta">${item.post_count} items</span>
-          <span class="expand-arrow">▶</span>
-        </div>
-        <div class="recent-item-content">
-          <div class="recent-item-meta">
-            <span>${new Date(item.published_at).toLocaleString()}</span>
-          </div>
-          <div class="recent-item-body"><em>Loading...</em></div>
-        </div>
-      `;
+      const li = renderDigestCard(item, 'recent-item', 'toggleRecentItem');
       list.appendChild(li);
     }
   } catch (err) {
@@ -681,24 +711,7 @@ async function loadFeedPreview() {
     list.innerHTML = '';
 
     for (const item of data.items) {
-      const div = document.createElement('div');
-      div.className = 'feed-item';
-      div.dataset.digestId = item.id;
-      div.innerHTML = `
-        <div class="feed-item-header" onclick="toggleFeedItem(this)">
-          <span class="source-badge ${item.source}">${item.source}</span>
-          <span class="feed-item-title">${escapeHtml(item.title)}</span>
-          <span class="expand-arrow">▶</span>
-        </div>
-        <div class="feed-item-details hidden">
-          <div class="feed-item-meta">
-            ${new Date(item.published_at).toLocaleString()}
-          </div>
-          <div class="feed-item-content">
-            <em>Loading content...</em>
-          </div>
-        </div>
-      `;
+      const div = renderDigestCard(item, 'feed-item', 'toggleFeedItem');
       list.appendChild(div);
     }
 
@@ -790,7 +803,10 @@ function simplifyHtml(html) {
 
 async function toggleRecentItem(header) {
   const item = header.closest('.recent-item');
-  const isExpanding = !item.classList.contains('expanded');
+  const content = item.querySelector('.recent-item-content');
+  const isExpanding = content.classList.contains('hidden');
+
+  content.classList.toggle('hidden');
   item.classList.toggle('expanded');
 
   if (isExpanding && !item.dataset.loaded) {
