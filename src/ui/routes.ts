@@ -687,25 +687,26 @@ export function createUiRouter(): Router {
       const content = digest.content || '';
 
       // Get previous (newer) and next (older) digests for navigation
-      // Use ID as tiebreaker for digests with same timestamp
       const { rows: prevRows } = await query<{ id: string; source: string; published_at: Date }>(
         `SELECT id, source, published_at FROM digest_items
-         WHERE (published_at > $1) OR (published_at = $1 AND id > $2)
-         ORDER BY published_at ASC, id ASC
+         WHERE published_at > $1 AND id != $2
+         ORDER BY published_at ASC
          LIMIT 1`,
         [digest.published_at, id]
       );
 
       const { rows: nextRows } = await query<{ id: string; source: string; published_at: Date }>(
         `SELECT id, source, published_at FROM digest_items
-         WHERE (published_at < $1) OR (published_at = $1 AND id < $2)
-         ORDER BY published_at DESC, id DESC
+         WHERE published_at < $1 AND id != $2
+         ORDER BY published_at DESC
          LIMIT 1`,
         [digest.published_at, id]
       );
 
       const prevDigest = prevRows[0] || null;
       const nextDigest = nextRows[0] || null;
+
+      logger.debug(`Digest nav for ${id}: prev=${prevDigest?.id || 'none'}, next=${nextDigest?.id || 'none'}, current_ts=${digest.published_at}`);
 
       const html = buildDigestPageHtml(
         digest.source,
@@ -732,13 +733,6 @@ interface DigestNav {
   published_at: Date;
 }
 
-function formatNavLabel(digest: DigestNav): string {
-  const source = digest.source.charAt(0).toUpperCase() + digest.source.slice(1);
-  const date = new Date(digest.published_at);
-  const timestamp = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  return `${source} · ${timestamp}`;
-}
-
 /**
  * Build the full interactive digest page HTML.
  * Features: dark theme, inline YouTube iframes, vim keyboard navigation (j/k/o/gg/G),
@@ -752,11 +746,15 @@ function buildDigestPageHtml(
   prevDigest: DigestNav | null,
   nextDigest: DigestNav | null
 ): string {
+  // Nav links use data attributes for client-side timestamp formatting
+  const prevSource = prevDigest ? prevDigest.source.charAt(0).toUpperCase() + prevDigest.source.slice(1) : '';
   const prevLink = prevDigest
-    ? `<a href="/digest/${prevDigest.id}" class="nav-arrow prev">← ${formatNavLabel(prevDigest)}</a>`
+    ? `<a href="/digest/${encodeURIComponent(prevDigest.id)}" class="nav-arrow prev" data-utc="${new Date(prevDigest.published_at).toISOString()}" title="Go to ${prevDigest.id}">← ${prevSource} · <span class="nav-time"></span></a>`
     : '<span class="nav-arrow disabled">← Newer</span>';
+
+  const nextSource = nextDigest ? nextDigest.source.charAt(0).toUpperCase() + nextDigest.source.slice(1) : '';
   const nextLink = nextDigest
-    ? `<a href="/digest/${nextDigest.id}" class="nav-arrow next">${formatNavLabel(nextDigest)} →</a>`
+    ? `<a href="/digest/${encodeURIComponent(nextDigest.id)}" class="nav-arrow next" data-utc="${new Date(nextDigest.published_at).toISOString()}" title="Go to ${nextDigest.id}">${nextSource} · <span class="nav-time"></span> →</a>`
     : '<span class="nav-arrow disabled">Older →</span>';
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1077,12 +1075,21 @@ function buildDigestPageHtml(
 
   <script>
   (function() {
-    // --- Format timestamp in user's local time ---
+    // --- Format timestamps in user's local time ---
     var tsEl = document.getElementById('digest-timestamp');
     if (tsEl && tsEl.dataset.utc) {
       var date = new Date(tsEl.dataset.utc);
       tsEl.textContent = date.toLocaleString();
     }
+
+    // Format nav link timestamps
+    document.querySelectorAll('.nav-arrow[data-utc]').forEach(function(el) {
+      var date = new Date(el.dataset.utc);
+      var timeSpan = el.querySelector('.nav-time');
+      if (timeSpan) {
+        timeSpan.textContent = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      }
+    });
 
     // --- YouTube: replace thumbnail placeholders with iframes ---
     document.querySelectorAll('.youtube-embed[data-video-id]').forEach(function(el) {
