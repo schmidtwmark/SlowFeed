@@ -687,16 +687,16 @@ export function createUiRouter(): Router {
       const content = digest.content || '';
 
       // Get previous and next digests for navigation
-      const { rows: prevRows } = await query<{ id: string; title: string }>(
-        `SELECT id, title FROM digest_items
+      const { rows: prevRows } = await query<{ id: string; source: string; published_at: Date }>(
+        `SELECT id, source, published_at FROM digest_items
          WHERE published_at > $1
          ORDER BY published_at ASC
          LIMIT 1`,
         [digest.published_at]
       );
 
-      const { rows: nextRows } = await query<{ id: string; title: string }>(
-        `SELECT id, title FROM digest_items
+      const { rows: nextRows } = await query<{ id: string; source: string; published_at: Date }>(
+        `SELECT id, source, published_at FROM digest_items
          WHERE published_at < $1
          ORDER BY published_at DESC
          LIMIT 1`,
@@ -727,7 +727,15 @@ export function createUiRouter(): Router {
 
 interface DigestNav {
   id: string;
-  title: string;
+  source: string;
+  published_at: Date;
+}
+
+function formatNavLabel(digest: DigestNav): string {
+  const source = digest.source.charAt(0).toUpperCase() + digest.source.slice(1);
+  const date = new Date(digest.published_at);
+  const timestamp = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return `${source} · ${timestamp}`;
 }
 
 /**
@@ -744,10 +752,10 @@ function buildDigestPageHtml(
   nextDigest: DigestNav | null
 ): string {
   const prevLink = prevDigest
-    ? `<a href="/digest/${prevDigest.id}" class="nav-arrow prev" title="${escapeHtml(prevDigest.title)}">← Newer</a>`
+    ? `<a href="/digest/${prevDigest.id}" class="nav-arrow prev">← ${formatNavLabel(prevDigest)}</a>`
     : '<span class="nav-arrow disabled">← Newer</span>';
   const nextLink = nextDigest
-    ? `<a href="/digest/${nextDigest.id}" class="nav-arrow next" title="${escapeHtml(nextDigest.title)}">Older →</a>`
+    ? `<a href="/digest/${nextDigest.id}" class="nav-arrow next">${formatNavLabel(nextDigest)} →</a>`
     : '<span class="nav-arrow disabled">Older →</span>';
   return `<!DOCTYPE html>
 <html lang="en">
