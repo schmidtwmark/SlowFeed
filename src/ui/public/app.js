@@ -40,11 +40,11 @@ function renderDigestCard(item, className, toggleFn) {
       <span class="source-badge ${item.source}">${item.source}</span>
       <span class="${titleClass}">${escapeHtml(item.title)}</span>
       ${postCount}
+      <span class="header-timestamp">${timestamp}</span>
       <span class="expand-arrow">▶</span>
     </div>
     <div class="${detailsClass} hidden">
       <div class="${metaClass}">
-        <span class="timestamp">${timestamp}</span>
         <a href="${digestUrl}" target="_blank" class="view-digest-link">View Full Digest →</a>
       </div>
       <div class="${contentClass}"><em>Loading...</em></div>

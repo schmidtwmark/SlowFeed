@@ -686,21 +686,22 @@ export function createUiRouter(): Router {
       const digest = rows[0];
       const content = digest.content || '';
 
-      // Get previous and next digests for navigation
+      // Get previous (newer) and next (older) digests for navigation
+      // Use ID as tiebreaker for digests with same timestamp
       const { rows: prevRows } = await query<{ id: string; source: string; published_at: Date }>(
         `SELECT id, source, published_at FROM digest_items
-         WHERE published_at > $1
-         ORDER BY published_at ASC
+         WHERE (published_at > $1) OR (published_at = $1 AND id > $2)
+         ORDER BY published_at ASC, id ASC
          LIMIT 1`,
-        [digest.published_at]
+        [digest.published_at, id]
       );
 
       const { rows: nextRows } = await query<{ id: string; source: string; published_at: Date }>(
         `SELECT id, source, published_at FROM digest_items
-         WHERE published_at < $1
-         ORDER BY published_at DESC
+         WHERE (published_at < $1) OR (published_at = $1 AND id < $2)
+         ORDER BY published_at DESC, id DESC
          LIMIT 1`,
-        [digest.published_at]
+        [digest.published_at, id]
       );
 
       const prevDigest = prevRows[0] || null;
@@ -1053,7 +1054,7 @@ function buildDigestPageHtml(
       ${title}
       <span class="post-counter" id="post-counter"></span>
     </h1>
-    <p class="meta">${publishedAt.toISOString().replace('T', ' ').substring(0, 19)} UTC</p>
+    <p class="meta"><span id="digest-timestamp" data-utc="${publishedAt.toISOString()}"></span></p>
     <div class="digest-nav">
       ${prevLink}
       <p class="nav-hint">
@@ -1076,6 +1077,13 @@ function buildDigestPageHtml(
 
   <script>
   (function() {
+    // --- Format timestamp in user's local time ---
+    var tsEl = document.getElementById('digest-timestamp');
+    if (tsEl && tsEl.dataset.utc) {
+      var date = new Date(tsEl.dataset.utc);
+      tsEl.textContent = date.toLocaleString();
+    }
+
     // --- YouTube: replace thumbnail placeholders with iframes ---
     document.querySelectorAll('.youtube-embed[data-video-id]').forEach(function(el) {
       var videoId = el.getAttribute('data-video-id');

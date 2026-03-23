@@ -444,10 +444,18 @@ h2 {
   flex-shrink: 0;
 }
 
+.header-timestamp {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .recent-item-header .expand-arrow {
   color: var(--text-muted);
   font-size: 0.75rem;
   transition: transform 0.2s;
+  margin-left: 8px;
 }
 
 .recent-item.expanded .expand-arrow {
@@ -1402,7 +1410,7 @@ input[type="time"]:focus {
   color: var(--text-muted);
   font-size: 0.75rem;
   transition: transform 0.2s;
-  margin-left: auto;
+  margin-left: 8px;
 }
 
 .feed-item.expanded .feed-item-header .expand-arrow {
