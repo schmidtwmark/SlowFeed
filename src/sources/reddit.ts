@@ -441,16 +441,17 @@ export async function pollReddit(): Promise<DigestPost[]> {
         content += `<p><img src="${escapeHtml(post.previewUrl)}" alt="Preview" style="max-width: 100%; border-radius: 8px;"></p>`;
       }
 
-      // For video posts, embed inline video player
-      if (post.isVideo && postJson?.videoUrl) {
-        content += `<div style="margin: 12px 0;">`;
-        content += `<video controls preload="metadata" style="max-width: 100%; border-radius: 8px;" playsinline>`;
-        content += `<source src="${escapeHtml(postJson.videoUrl)}" type="video/mp4">`;
-        content += `</video>`;
+      // For video posts, show preview with link to Reddit (Reddit videos have separate audio tracks that don't work inline)
+      if (post.isVideo) {
+        content += `<div style="margin: 12px 0; position: relative;">`;
+        // Show preview image if available
+        if (post.previewUrl) {
+          content += `<img src="${escapeHtml(post.previewUrl)}" alt="Video preview" style="max-width: 100%; border-radius: 8px; opacity: 0.9;">`;
+        }
+        content += `<div style="padding: 12px; background: #1a1a2e; border-radius: 8px; text-align: center; margin-top: ${post.previewUrl ? '-40px' : '0'}; position: relative;">`;
+        content += `<a href="${escapeHtml(post.permalink)}" style="color: #6db3f2; font-weight: 500;">▶ Watch Video on Reddit</a>`;
         content += `</div>`;
-      } else if (post.isVideo) {
-        // Fallback if we couldn't get the video URL
-        content += `<p style="padding: 12px; background: #f5f5f5; border-radius: 8px;"><a href="${escapeHtml(post.url)}" style="color: #0066cc;">View Video on Reddit</a></p>`;
+        content += `</div>`;
       }
 
       // Selftext - show inline from JSON data (works even without comments enabled)

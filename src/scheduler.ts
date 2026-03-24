@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { getConfig, loadConfig } from './config.js';
+import { query } from './db.js';
 import { pruneOldItems } from './dedup.js';
 import { logger } from './logger.js';
 import { pollReddit } from './sources/reddit.js';
@@ -10,7 +11,7 @@ import { pollRedditNotifications } from './notifications/reddit-mail.js';
 import { pollBlueskyNotifications } from './notifications/bluesky-replies.js';
 import { getEnabledSchedules, scheduleToCron } from './schedules.js';
 import { filterNewPosts, createDigest, pruneOldDigests } from './digest.js';
-import type { PollSchedule, SourceType, DigestPost } from './types/index.js';
+import type { PollSchedule, PollRun, SourceType, DigestPost } from './types/index.js';
 
 // Map of schedule ID to cron job
 const scheduleJobs: Map<number, cron.ScheduledTask> = new Map();
@@ -41,6 +42,34 @@ const pollStatus: Map<string, PollStatus> = new Map([
 ]);
 
 const scheduleStatus: Map<number, ScheduleStatus> = new Map();
+
+// Create a new poll run record
+async function createPollRun(schedule: PollSchedule): Promise<PollRun> {
+  const { rows } = await query<{ id: number }>(
+    `INSERT INTO poll_runs (schedule_id, schedule_name, sources, started_at, status)
+     VALUES ($1, $2, $3, NOW(), 'running')
+     RETURNING id`,
+    [schedule.id > 0 ? schedule.id : null, schedule.name, schedule.sources]
+  );
+
+  return {
+    id: rows[0].id,
+    schedule_id: schedule.id > 0 ? schedule.id : null,
+    schedule_name: schedule.name,
+    sources: schedule.sources,
+    started_at: new Date(),
+    completed_at: null,
+    status: 'running',
+  };
+}
+
+// Mark a poll run as completed or failed
+async function completePollRun(runId: number, status: 'completed' | 'failed'): Promise<void> {
+  await query(
+    `UPDATE poll_runs SET completed_at = NOW(), status = $1 WHERE id = $2`,
+    [status, runId]
+  );
+}
 
 export function getPollStatus(): Map<string, PollStatus> {
   return pollStatus;
@@ -77,13 +106,20 @@ function getNotificationPollFn(source: SourceType): (() => Promise<DigestPost[]>
 }
 
 // Run a scheduled poll for specific sources
-async function runScheduledPoll(schedule: PollSchedule): Promise<void> {
+async function runScheduledPoll(schedule: PollSchedule): Promise<PollRun | null> {
   const status = scheduleStatus.get(schedule.id);
   if (status) {
     status.isRunning = true;
   }
 
   logger.info(`Running scheduled poll "${schedule.name}" for sources: ${schedule.sources.join(', ')}`);
+
+  // Create a poll run record
+  const pollRun = await createPollRun(schedule);
+  logger.info(`Created poll run #${pollRun.id}`);
+
+  let hasError = false;
+  let hasContent = false;
 
   try {
     // Poll each source in the schedule
@@ -112,10 +148,10 @@ async function runScheduledPoll(schedule: PollSchedule): Promise<void> {
         const newPosts = await filterNewPosts(allPosts, source);
 
         // Create digest if there are new posts
-        // Pass undefined for schedule.id if it's 0 (dummy/initial poll)
         if (newPosts.length > 0) {
-          await createDigest(source, newPosts, schedule.id > 0 ? schedule.id : undefined);
+          await createDigest(source, newPosts, schedule.id > 0 ? schedule.id : undefined, pollRun.id);
           logger.info(`Created ${source} digest with ${newPosts.length} items`);
+          hasContent = true;
         } else {
           logger.info(`No new posts for ${source}`);
         }
@@ -130,6 +166,7 @@ async function runScheduledPoll(schedule: PollSchedule): Promise<void> {
           sourceStatus.lastError = errorMessage;
         }
         logger.error(`${source} poll failed:`, err);
+        hasError = true;
       } finally {
         if (sourceStatus) {
           sourceStatus.isPolling = false;
@@ -141,7 +178,14 @@ async function runScheduledPoll(schedule: PollSchedule): Promise<void> {
       status.lastRun = new Date();
     }
 
-    logger.info(`Scheduled poll "${schedule.name}" completed`);
+    // Mark poll run as completed (or failed if there were errors)
+    await completePollRun(pollRun.id, hasError ? 'failed' : 'completed');
+    logger.info(`Scheduled poll "${schedule.name}" completed (run #${pollRun.id})`);
+
+    return hasContent ? pollRun : null;
+  } catch (err) {
+    await completePollRun(pollRun.id, 'failed');
+    throw err;
   } finally {
     if (status) {
       status.isRunning = false;
@@ -268,7 +312,7 @@ export async function triggerSchedulePoll(scheduleId: number): Promise<void> {
 }
 
 // Manual trigger: poll a single source (creates a digest)
-export async function triggerSourcePoll(source: SourceType): Promise<void> {
+export async function triggerSourcePoll(source: SourceType, pollRunId?: number): Promise<void> {
   logger.info(`Manual poll triggered for: ${source}`);
 
   const sourceStatus = pollStatus.get(source);
@@ -296,7 +340,7 @@ export async function triggerSourcePoll(source: SourceType): Promise<void> {
 
     // Create digest if there are new posts
     if (newPosts.length > 0) {
-      await createDigest(source, newPosts);
+      await createDigest(source, newPosts, undefined, pollRunId);
       logger.info(`Created ${source} digest with ${newPosts.length} items`);
     } else {
       logger.info(`No new posts for ${source}`);
@@ -321,7 +365,7 @@ export async function triggerSourcePoll(source: SourceType): Promise<void> {
 }
 
 // Manual trigger: poll all enabled sources
-export async function triggerMainPoll(): Promise<void> {
+export async function triggerMainPoll(): Promise<PollRun | null> {
   logger.info('Manual poll triggered for all sources');
 
   const config = getConfig();
@@ -332,10 +376,43 @@ export async function triggerMainPoll(): Promise<void> {
   if (config.youtube_enabled) sources.push('youtube');
   if (config.discord_enabled) sources.push('discord');
 
-  // Poll each source
-  for (const source of sources) {
-    await triggerSourcePoll(source);
+  if (sources.length === 0) {
+    logger.info('No sources enabled');
+    return null;
   }
 
-  logger.info('Manual poll completed');
+  // Create a manual poll run
+  const manualSchedule: PollSchedule = {
+    id: 0,
+    name: 'Manual Poll',
+    days_of_week: [],
+    time_of_day: '00:00',
+    timezone: 'UTC',
+    sources,
+    enabled: true,
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+
+  const pollRun = await createPollRun(manualSchedule);
+  logger.info(`Created manual poll run #${pollRun.id}`);
+
+  let hasContent = false;
+  let hasError = false;
+
+  // Poll each source
+  for (const source of sources) {
+    try {
+      await triggerSourcePoll(source, pollRun.id);
+      hasContent = true;
+    } catch {
+      hasError = true;
+    }
+  }
+
+  // Mark poll run as completed
+  await completePollRun(pollRun.id, hasError ? 'failed' : 'completed');
+  logger.info(`Manual poll completed (run #${pollRun.id})`);
+
+  return hasContent ? pollRun : null;
 }

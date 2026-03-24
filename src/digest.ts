@@ -410,7 +410,8 @@ export async function filterNewPosts(
 export async function createDigest(
   source: SourceType,
   posts: DigestPost[],
-  scheduleId?: number
+  scheduleId?: number,
+  pollRunId?: number
 ): Promise<DigestItem | null> {
   if (posts.length === 0) {
     logger.debug(`No posts to create digest for ${source}`);
@@ -472,16 +473,18 @@ export async function createDigest(
 
   // Insert the digest item
   await query(
-    `INSERT INTO digest_items (id, source, schedule_id, title, content, post_count, post_ids, published_at, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+    `INSERT INTO digest_items (id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, published_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
      ON CONFLICT (id) DO UPDATE SET
-       content = $5,
-       post_count = $6,
-       post_ids = $7`,
+       content = $6,
+       post_count = $7,
+       post_ids = $8,
+       poll_run_id = $4`,
     [
       digestId,
       source,
       scheduleId ?? null,
+      pollRunId ?? null,
       title,
       content,
       posts.length,
@@ -495,6 +498,7 @@ export async function createDigest(
     id: digestId,
     source,
     schedule_id: scheduleId ?? null,
+    poll_run_id: pollRunId ?? null,
     title,
     content,
     post_count: posts.length,
@@ -509,7 +513,7 @@ export async function createDigest(
  */
 export async function getDigestItems(source?: SourceType): Promise<DigestItem[]> {
   let sql = `
-    SELECT id, source, schedule_id, title, content, post_count, post_ids, published_at, created_at
+    SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, published_at, created_at
     FROM digest_items
   `;
   const params: string[] = [];
@@ -527,6 +531,7 @@ export async function getDigestItems(source?: SourceType): Promise<DigestItem[]>
     id: row.id,
     source: row.source as SourceType,
     schedule_id: row.schedule_id,
+    poll_run_id: row.poll_run_id,
     title: row.title,
     content: row.content,
     post_count: row.post_count,

@@ -3,37 +3,69 @@ import { Feed } from 'feed';
 import { query } from './db.js';
 import { getConfig } from './config.js';
 
-interface DigestItemRow {
-  id: string;
-  source: string;
-  title: string;
-  content: string;
-  published_at: Date;
+interface PollRunRow {
+  id: number;
+  schedule_name: string | null;
+  sources: string[];
+  started_at: Date;
+  status: string;
 }
 
-async function getDigestItems(source?: string): Promise<DigestItemRow[]> {
-  let sql = `
-    SELECT id, source, title, content, published_at
-    FROM digest_items
+interface PollRunWithDigests extends PollRunRow {
+  digest_count: number;
+  total_posts: number;
+}
+
+async function getPollRuns(): Promise<PollRunWithDigests[]> {
+  const sql = `
+    SELECT
+      pr.id,
+      pr.schedule_name,
+      pr.sources,
+      pr.started_at,
+      pr.status,
+      COUNT(di.id)::integer as digest_count,
+      COALESCE(SUM(di.post_count), 0)::integer as total_posts
+    FROM poll_runs pr
+    LEFT JOIN digest_items di ON di.poll_run_id = pr.id
+    WHERE pr.status = 'completed'
+    GROUP BY pr.id, pr.schedule_name, pr.sources, pr.started_at, pr.status
+    HAVING COUNT(di.id) > 0
+    ORDER BY pr.started_at DESC
+    LIMIT 100
   `;
-  const params: string[] = [];
 
-  if (source) {
-    sql += ' WHERE source = $1';
-    params.push(source);
-  }
-
-  // Sort by published_at descending
-  sql += `
-    ORDER BY published_at DESC
-    LIMIT 500
-  `;
-
-  const { rows } = await query<DigestItemRow>(sql, params);
+  const { rows } = await query<PollRunWithDigests>(sql, []);
   return rows;
 }
 
-function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: string): string {
+function formatPollRunTitle(run: PollRunWithDigests): string {
+  const date = new Date(run.started_at);
+  const dateStr = date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  const timeStr = date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+
+  // Build source list
+  const sourceNames = run.sources.map(s => {
+    switch (s) {
+      case 'reddit': return 'Reddit';
+      case 'bluesky': return 'Bluesky';
+      case 'youtube': return 'YouTube';
+      case 'discord': return 'Discord';
+      default: return s;
+    }
+  });
+
+  return `${sourceNames.join(', ')} - ${dateStr} at ${timeStr}`;
+}
+
+function buildFeed(runs: PollRunWithDigests[], format: 'rss' | 'atom', baseUrl: string): string {
   const config = getConfig();
 
   const feed = new Feed({
@@ -47,15 +79,16 @@ function buildFeed(items: DigestItemRow[], format: 'rss' | 'atom', baseUrl: stri
     copyright: '',
   });
 
-  for (const item of items) {
-    const digestUrl = `${baseUrl}/digest/${item.id}`;
+  for (const run of runs) {
+    const runUrl = `${baseUrl}/run/${run.id}`;
+    const title = formatPollRunTitle(run);
 
     feed.addItem({
-      title: item.title,
-      id: item.id,
-      link: digestUrl,
-      content: `<a href="${digestUrl}">View Full Digest</a>`,
-      date: new Date(item.published_at),
+      title,
+      id: `run-${run.id}`,
+      link: runUrl,
+      content: `<a href="${runUrl}">View ${run.total_posts} items from ${run.digest_count} source${run.digest_count === 1 ? '' : 's'}</a>`,
+      date: new Date(run.started_at),
     });
   }
 
@@ -93,14 +126,12 @@ export function createFeedRouter(): Router {
   };
 
   // RSS feed - support both .rss and .xml extensions
-  // Use ?simple=true for simplified HTML (better compatibility with some readers)
   // Use ?token=<secret> for authentication
   const handleRssFeed = async (req: import('express').Request, res: import('express').Response) => {
     try {
-      const source = typeof req.query.source === 'string' ? req.query.source : undefined;
-      const items = await getDigestItems(source);
+      const runs = await getPollRuns();
       const baseUrl = getBaseUrl(req);
-      const xml = buildFeed(items, 'rss', baseUrl);
+      const xml = buildFeed(runs, 'rss', baseUrl);
 
       res.set('Content-Type', 'application/rss+xml; charset=utf-8');
       res.send(xml);
@@ -116,10 +147,9 @@ export function createFeedRouter(): Router {
 
   router.get('/feed.atom', validateToken, async (req, res) => {
     try {
-      const source = typeof req.query.source === 'string' ? req.query.source : undefined;
-      const items = await getDigestItems(source);
+      const runs = await getPollRuns();
       const baseUrl = getBaseUrl(req);
-      const xml = buildFeed(items, 'atom', baseUrl);
+      const xml = buildFeed(runs, 'atom', baseUrl);
 
       res.set('Content-Type', 'application/atom+xml; charset=utf-8');
       res.send(xml);

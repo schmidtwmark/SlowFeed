@@ -662,6 +662,81 @@ export function createUiRouter(): Router {
     });
   }
 
+  // Poll run view (linked from RSS feed items)
+  router.get('/run/:id', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        res.status(400).send('Invalid run ID');
+        return;
+      }
+
+      // Get the poll run
+      const { rows: runRows } = await query<{
+        id: number;
+        schedule_name: string | null;
+        sources: string[];
+        started_at: Date;
+        status: string;
+      }>(
+        'SELECT id, schedule_name, sources, started_at, status FROM poll_runs WHERE id = $1',
+        [id]
+      );
+
+      if (runRows.length === 0) {
+        res.status(404).send('Poll run not found');
+        return;
+      }
+
+      const run = runRows[0];
+
+      // Get all digests for this run
+      const { rows: digestRows } = await query<{
+        id: string;
+        source: string;
+        title: string;
+        content: string;
+        post_count: number;
+        published_at: Date;
+      }>(
+        `SELECT id, source, title, content, post_count, published_at
+         FROM digest_items
+         WHERE poll_run_id = $1
+         ORDER BY source`,
+        [id]
+      );
+
+      // Get previous (newer) and next (older) runs for navigation
+      const { rows: prevRows } = await query<{ id: number; started_at: Date }>(
+        `SELECT id, started_at FROM poll_runs
+         WHERE started_at > $1 AND id != $2 AND status = 'completed'
+         AND EXISTS (SELECT 1 FROM digest_items WHERE poll_run_id = poll_runs.id)
+         ORDER BY started_at ASC
+         LIMIT 1`,
+        [run.started_at, id]
+      );
+
+      const { rows: nextRows } = await query<{ id: number; started_at: Date }>(
+        `SELECT id, started_at FROM poll_runs
+         WHERE started_at < $1 AND id != $2 AND status = 'completed'
+         AND EXISTS (SELECT 1 FROM digest_items WHERE poll_run_id = poll_runs.id)
+         ORDER BY started_at DESC
+         LIMIT 1`,
+        [run.started_at, id]
+      );
+
+      const prevRun = prevRows[0] || null;
+      const nextRun = nextRows[0] || null;
+
+      const html = buildPollRunPageHtml(run, digestRows, prevRun, nextRun);
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+    } catch (err) {
+      logger.error('Error fetching poll run:', err);
+      res.status(500).send('Error loading poll run');
+    }
+  });
+
   // Public digest view (linked from RSS feed items)
   router.get('/digest/:id', async (req, res) => {
     try {
@@ -1195,6 +1270,556 @@ function buildDigestPageHtml(
         // Don't steal clicks on links
         if (e.target.tagName === 'A' || e.target.closest('a')) return;
         focusPost(idx);
+      });
+    });
+  })();
+  </script>
+</body>
+</html>`;
+}
+
+interface PollRunData {
+  id: number;
+  schedule_name: string | null;
+  sources: string[];
+  started_at: Date;
+  status: string;
+}
+
+interface DigestData {
+  id: string;
+  source: string;
+  title: string;
+  content: string;
+  post_count: number;
+  published_at: Date;
+}
+
+interface RunNav {
+  id: number;
+  started_at: Date;
+}
+
+/**
+ * Build the poll run page HTML with source tabs and navigation.
+ */
+function buildPollRunPageHtml(
+  run: PollRunData,
+  digests: DigestData[],
+  prevRun: RunNav | null,
+  nextRun: RunNav | null
+): string {
+  const runDate = new Date(run.started_at);
+  const totalPosts = digests.reduce((sum, d) => sum + d.post_count, 0);
+
+  // Build source tabs
+  const sourcesWithContent = digests.map(d => d.source);
+  const sourceOrder = ['reddit', 'bluesky', 'youtube', 'discord'];
+  const orderedSources = sourceOrder.filter(s => sourcesWithContent.includes(s));
+
+  const tabs = orderedSources.map((source, idx) => {
+    const digest = digests.find(d => d.source === source);
+    const displayName = source.charAt(0).toUpperCase() + source.slice(1);
+    const count = digest?.post_count || 0;
+    return `<button class="source-tab ${source}${idx === 0 ? ' active' : ''}" data-source="${source}">
+      ${displayName} <span class="tab-count">${count}</span>
+    </button>`;
+  }).join('');
+
+  // Build content sections for each source
+  const sections = orderedSources.map((source, idx) => {
+    const digest = digests.find(d => d.source === source);
+    if (!digest) return '';
+    return `<div class="source-section${idx === 0 ? ' active' : ''}" data-source="${source}">
+      ${digest.content}
+    </div>`;
+  }).join('');
+
+  // Navigation
+  const prevLink = prevRun
+    ? `<a href="/run/${prevRun.id}" class="nav-arrow prev" data-utc="${new Date(prevRun.started_at).toISOString()}">← <span class="nav-time"></span></a>`
+    : '<span class="nav-arrow disabled">← Newer</span>';
+
+  const nextLink = nextRun
+    ? `<a href="/run/${nextRun.id}" class="nav-arrow next" data-utc="${new Date(nextRun.started_at).toISOString()}"><span class="nav-time"></span> →</a>`
+    : '<span class="nav-arrow disabled">Older →</span>';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Feed Update - Slowfeed</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #1a1a2e;
+      --bg-card: #16213e;
+      --border: #2a2a4a;
+      --text: #eaeaea;
+      --text-muted: #a0a0a0;
+      --accent: #e94560;
+      --link: #6db3f2;
+      --focus-ring: #e94560;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      background: var(--bg);
+      color: var(--text);
+      padding: 0;
+    }
+
+    header {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px 20px 16px;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      z-index: 100;
+    }
+
+    header h1 {
+      font-size: 1.25rem;
+      margin-bottom: 4px;
+    }
+
+    .meta {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+      margin-bottom: 12px;
+    }
+
+    .source-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .source-tab {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: white;
+      opacity: 0.6;
+    }
+
+    .source-tab:hover {
+      opacity: 0.8;
+    }
+
+    .source-tab.active {
+      opacity: 1;
+      box-shadow: 0 0 0 2px var(--text);
+    }
+
+    .source-tab.reddit { background: #ff4500; }
+    .source-tab.bluesky { background: #0085ff; }
+    .source-tab.youtube { background: #ff0000; }
+    .source-tab.discord { background: #5865f2; }
+
+    .tab-count {
+      display: inline-block;
+      padding: 2px 6px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 10px;
+      font-size: 0.75rem;
+      margin-left: 4px;
+    }
+
+    .digest-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .nav-arrow {
+      font-size: 0.875rem;
+      color: var(--link);
+      text-decoration: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+
+    .nav-arrow:hover {
+      background: var(--bg-card);
+      text-decoration: underline;
+    }
+
+    .nav-arrow.disabled {
+      color: var(--text-muted);
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .nav-arrow.disabled:hover {
+      background: none;
+      text-decoration: none;
+    }
+
+    .nav-hint {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .nav-hint kbd {
+      display: inline-block;
+      padding: 1px 5px;
+      font-size: 0.6875rem;
+      font-family: monospace;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      margin: 0 1px;
+    }
+
+    .post-counter {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .content {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px 80px;
+    }
+
+    .source-section {
+      display: none;
+    }
+
+    .source-section.active {
+      display: block;
+    }
+
+    /* Article/post styling */
+    article.post {
+      background: var(--bg-card);
+      border: 2px solid transparent;
+      border-radius: 10px;
+      padding: 20px;
+      margin: 16px 0;
+      transition: border-color 0.15s ease;
+      scroll-margin-top: 160px;
+    }
+
+    article.post.focused {
+      border-color: var(--focus-ring);
+    }
+
+    article.post h3 {
+      margin: 8px 0;
+      font-size: 1.125rem;
+    }
+
+    article.post h3 a {
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    article.post h3 a:hover {
+      color: var(--accent);
+    }
+
+    article.post p {
+      margin-bottom: 10px;
+    }
+
+    article.post small {
+      color: var(--text-muted);
+    }
+
+    .post-author {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    img.avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    article.post a {
+      color: var(--link);
+      text-decoration: none;
+    }
+
+    article.post a:hover {
+      text-decoration: underline;
+    }
+
+    article.post img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 6px;
+      margin: 8px 0;
+    }
+
+    .youtube-embed {
+      position: relative;
+      width: 100%;
+      max-width: 720px;
+      margin: 12px 0;
+    }
+
+    .youtube-embed iframe {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border: none;
+      border-radius: 6px;
+    }
+
+    article.post video {
+      max-width: 100%;
+      border-radius: 6px;
+    }
+
+    article.post.thread {
+      border-left: 3px solid var(--link);
+    }
+
+    article.post blockquote {
+      border-left: 3px solid var(--border);
+      padding: 8px 12px;
+      margin: 8px 0;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.03);
+      border-radius: 0 6px 6px 0;
+    }
+
+    article.post h4 {
+      margin: 12px 0 8px;
+      font-size: 0.9375rem;
+      color: var(--text-muted);
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 16px 0;
+    }
+
+    .content > p {
+      padding: 12px 0;
+      color: var(--text-muted);
+    }
+
+    .content > h2 {
+      padding: 16px 0 8px;
+      font-size: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+
+    footer {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+    }
+
+    footer a { color: var(--link); }
+
+    @media (max-width: 600px) {
+      header { padding: 16px 12px 12px; }
+      header h1 { font-size: 1.0625rem; }
+      .content { padding: 0 12px 60px; }
+      article.post { padding: 14px; margin: 10px 0; }
+      .nav-hint { display: none; }
+      .source-tabs { gap: 6px; }
+      .source-tab { padding: 6px 12px; font-size: 0.8125rem; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Feed Update</h1>
+    <p class="meta">
+      <span id="run-timestamp" data-utc="${runDate.toISOString()}"></span>
+      · ${totalPosts} items from ${orderedSources.length} source${orderedSources.length === 1 ? '' : 's'}
+    </p>
+    <div class="source-tabs">
+      ${tabs}
+    </div>
+    <div class="digest-nav">
+      ${prevLink}
+      <span class="nav-hint">
+        <kbd>j</kbd>/<kbd>k</kbd> navigate
+        <kbd>o</kbd> open
+        <kbd>[</kbd>/<kbd>]</kbd> sources
+      </span>
+      ${nextLink}
+    </div>
+  </header>
+
+  <div class="content" id="content">
+    ${sections}
+  </div>
+
+  <footer>
+    <p>Powered by <a href="/">Slowfeed</a></p>
+  </footer>
+
+  <script>
+  (function() {
+    // Format timestamps
+    var tsEl = document.getElementById('run-timestamp');
+    if (tsEl && tsEl.dataset.utc) {
+      var date = new Date(tsEl.dataset.utc);
+      tsEl.textContent = date.toLocaleString();
+    }
+
+    document.querySelectorAll('.nav-arrow[data-utc]').forEach(function(el) {
+      var date = new Date(el.dataset.utc);
+      var timeSpan = el.querySelector('.nav-time');
+      if (timeSpan) {
+        timeSpan.textContent = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      }
+    });
+
+    // YouTube embeds
+    document.querySelectorAll('.youtube-embed[data-video-id]').forEach(function(el) {
+      var videoId = el.getAttribute('data-video-id');
+      el.innerHTML = '<iframe src="https://www.youtube.com/embed/' + videoId +
+        '?rel=0" allowfullscreen loading="lazy"></iframe>';
+    });
+
+    // Tab switching
+    var tabs = document.querySelectorAll('.source-tab');
+    var sections = document.querySelectorAll('.source-section');
+    var sources = Array.from(tabs).map(function(t) { return t.dataset.source; });
+    var currentSourceIndex = 0;
+
+    function switchToSource(source) {
+      tabs.forEach(function(t) {
+        t.classList.toggle('active', t.dataset.source === source);
+      });
+      sections.forEach(function(s) {
+        s.classList.toggle('active', s.dataset.source === source);
+      });
+      currentSourceIndex = sources.indexOf(source);
+      currentPostIndex = -1;
+      updateCounter();
+    }
+
+    tabs.forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        switchToSource(tab.dataset.source);
+      });
+    });
+
+    // Keyboard navigation
+    var currentPostIndex = -1;
+
+    function getCurrentPosts() {
+      var activeSection = document.querySelector('.source-section.active');
+      return activeSection ? Array.from(activeSection.querySelectorAll('article.post')) : [];
+    }
+
+    function updateCounter() {
+      // No global counter for run page
+    }
+
+    function focusPost(index) {
+      var posts = getCurrentPosts();
+      if (index < 0 || index >= posts.length) return;
+
+      // Remove previous focus
+      posts.forEach(function(p) { p.classList.remove('focused'); });
+
+      currentPostIndex = index;
+      posts[currentPostIndex].classList.add('focused');
+      posts[currentPostIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    var gPending = false;
+
+    document.addEventListener('keydown', function(e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      var key = e.key;
+      var posts = getCurrentPosts();
+
+      if (gPending) {
+        gPending = false;
+        if (key === 'g') {
+          e.preventDefault();
+          focusPost(0);
+          return;
+        }
+      }
+
+      switch (key) {
+        case 'j':
+          e.preventDefault();
+          focusPost(currentPostIndex < 0 ? 0 : Math.min(currentPostIndex + 1, posts.length - 1));
+          break;
+
+        case 'k':
+          e.preventDefault();
+          if (currentPostIndex > 0) focusPost(currentPostIndex - 1);
+          break;
+
+        case 'o':
+        case 'Enter':
+          e.preventDefault();
+          if (currentPostIndex >= 0 && currentPostIndex < posts.length) {
+            var url = posts[currentPostIndex].getAttribute('data-url');
+            if (url) window.open(url, '_blank');
+          }
+          break;
+
+        case 'G':
+          e.preventDefault();
+          focusPost(posts.length - 1);
+          break;
+
+        case 'g':
+          gPending = true;
+          setTimeout(function() { gPending = false; }, 500);
+          break;
+
+        case '[':
+          e.preventDefault();
+          if (currentSourceIndex > 0) {
+            switchToSource(sources[currentSourceIndex - 1]);
+          }
+          break;
+
+        case ']':
+          e.preventDefault();
+          if (currentSourceIndex < sources.length - 1) {
+            switchToSource(sources[currentSourceIndex + 1]);
+          }
+          break;
+      }
+    });
+
+    // Click to focus
+    document.querySelectorAll('article.post').forEach(function(post) {
+      post.addEventListener('click', function(e) {
+        if (e.target.tagName === 'A' || e.target.closest('a')) return;
+        var posts = getCurrentPosts();
+        var idx = posts.indexOf(post);
+        if (idx >= 0) focusPost(idx);
       });
     });
   })();

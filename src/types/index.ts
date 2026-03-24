@@ -23,6 +23,27 @@ export interface ScheduleInput {
   enabled?: boolean;
 }
 
+// Poll run types - track individual scheduled refreshes
+export interface PollRun {
+  id: number;
+  schedule_id: number | null;
+  schedule_name: string | null;
+  sources: SourceType[];
+  started_at: Date;
+  completed_at: Date | null;
+  status: 'running' | 'completed' | 'failed';
+}
+
+export interface PollRunRow {
+  id: number;
+  schedule_id: number | null;
+  schedule_name: string | null;
+  sources: string[];
+  started_at: Date;
+  completed_at: Date | null;
+  status: string;
+}
+
 // Digest types
 export interface DigestPost {
   postId: string;
@@ -57,6 +78,7 @@ export interface DigestItem {
   id: string;                    // e.g., 'reddit_1710172800000'
   source: SourceType;
   schedule_id: number | null;
+  poll_run_id: number | null;
   title: string;
   content: string;               // HTML with all posts
   post_count: number;
@@ -88,6 +110,7 @@ export interface DigestItemRow {
   id: string;
   source: string;
   schedule_id: number | null;
+  poll_run_id: number | null;
   title: string;
   content: string;
   post_count: number;
