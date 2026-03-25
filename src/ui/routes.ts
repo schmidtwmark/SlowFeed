@@ -1573,20 +1573,17 @@ function buildPollRunPageHtml(
   nextRun: RunNav | null
 ): string {
   const runDate = new Date(run.started_at);
-  const totalPosts = digests.reduce((sum, d) => sum + d.post_count, 0);
 
-  // Build source tabs
+  // Build source dropdown options
   const sourcesWithContent = digests.map(d => d.source);
   const sourceOrder = ['reddit', 'bluesky', 'youtube', 'discord'];
   const orderedSources = sourceOrder.filter(s => sourcesWithContent.includes(s));
 
-  const tabs = orderedSources.map((source, idx) => {
+  const sourceOptions = orderedSources.map((source, idx) => {
     const digest = digests.find(d => d.source === source);
     const displayName = source.charAt(0).toUpperCase() + source.slice(1);
     const count = digest?.post_count || 0;
-    return `<button class="source-tab ${source}${idx === 0 ? ' active' : ''}" data-source="${source}">
-      ${displayName} <span class="tab-count">${count}</span>
-    </button>`;
+    return `<option value="${source}"${idx === 0 ? ' selected' : ''}>${displayName} (${count})</option>`;
   }).join('');
 
   // Build content sections for each source
@@ -1638,7 +1635,7 @@ function buildPollRunPageHtml(
     header {
       max-width: 900px;
       margin: 0 auto;
-      padding: 24px 20px 16px;
+      padding: 12px 20px;
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
@@ -1646,58 +1643,38 @@ function buildPollRunPageHtml(
       z-index: 100;
     }
 
-    header h1 {
-      font-size: 1.25rem;
-      margin-bottom: 4px;
-    }
-
-    .meta {
-      color: var(--text-muted);
-      font-size: 0.8125rem;
-      margin-bottom: 12px;
-    }
-
-    .source-tabs {
+    .header-row {
       display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-bottom: 12px;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
     }
 
-    .source-tab {
-      padding: 8px 16px;
-      border: 2px solid transparent;
+    .source-select {
+      padding: 8px 12px;
+      border: none;
       border-radius: 6px;
       font-size: 0.875rem;
       font-weight: 600;
       cursor: pointer;
-      transition: opacity 0.2s, border-color 0.2s;
       color: white;
-      opacity: 0.6;
       outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='white' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 28px;
     }
 
-    .source-tab:hover {
-      opacity: 0.8;
-    }
+    .source-select.reddit { background-color: #ff4500; }
+    .source-select.bluesky { background-color: #0085ff; }
+    .source-select.youtube { background-color: #ff0000; }
+    .source-select.discord { background-color: #5865f2; }
 
-    .source-tab.active {
-      opacity: 1;
-      border-color: var(--text);
-    }
-
-    .source-tab.reddit { background: #ff4500; }
-    .source-tab.bluesky { background: #0085ff; }
-    .source-tab.youtube { background: #ff0000; }
-    .source-tab.discord { background: #5865f2; }
-
-    .tab-count {
-      display: inline-block;
-      padding: 2px 6px;
-      background: rgba(0,0,0,0.3);
-      border-radius: 10px;
-      font-size: 0.75rem;
-      margin-left: 4px;
+    .timestamp {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
     }
 
     .digest-nav {
@@ -2069,25 +2046,22 @@ function buildPollRunPageHtml(
     footer a { color: var(--link); }
 
     @media (max-width: 600px) {
-      header { padding: 16px 12px 12px; }
-      header h1 { font-size: 1.0625rem; }
+      header { padding: 10px 12px; }
       .content { padding: 0 12px 60px; }
       article.post { padding: 14px; margin: 10px 0; }
       .nav-hint { display: none; }
-      .source-tabs { gap: 6px; }
-      .source-tab { padding: 6px 12px; font-size: 0.8125rem; }
+      .source-select { font-size: 0.8125rem; padding: 6px 10px; padding-right: 24px; }
+      .timestamp { font-size: 0.75rem; }
     }
   </style>
 </head>
 <body>
   <header>
-    <h1>Feed Update</h1>
-    <p class="meta">
-      <span id="run-timestamp" data-utc="${runDate.toISOString()}"></span>
-      · ${totalPosts} items from ${orderedSources.length} source${orderedSources.length === 1 ? '' : 's'}
-    </p>
-    <div class="source-tabs">
-      ${tabs}
+    <div class="header-row">
+      <select class="source-select ${orderedSources[0]}" id="source-select">
+        ${sourceOptions}
+      </select>
+      <span class="timestamp" id="run-timestamp" data-utc="${runDate.toISOString()}"></span>
     </div>
     <div class="digest-nav">
       ${prevLink}
@@ -2110,18 +2084,38 @@ function buildPollRunPageHtml(
 
   <script>
   (function() {
+    // Format time as "Today at 7:00PM" or "3/22/26 at 4:00PM"
+    function formatFriendlyTime(date) {
+      var now = new Date();
+      var isToday = date.toDateString() === now.toDateString();
+      var yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      var isYesterday = date.toDateString() === yesterday.toDateString();
+
+      var timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+      if (isToday) {
+        return 'Today at ' + timeStr;
+      } else if (isYesterday) {
+        return 'Yesterday at ' + timeStr;
+      } else {
+        var dateStr = (date.getMonth() + 1) + '/' + date.getDate() + '/' + String(date.getFullYear()).slice(2);
+        return dateStr + ' at ' + timeStr;
+      }
+    }
+
     // Format timestamps
     var tsEl = document.getElementById('run-timestamp');
     if (tsEl && tsEl.dataset.utc) {
       var date = new Date(tsEl.dataset.utc);
-      tsEl.textContent = date.toLocaleString();
+      tsEl.textContent = formatFriendlyTime(date);
     }
 
     document.querySelectorAll('.nav-arrow[data-utc]').forEach(function(el) {
       var date = new Date(el.dataset.utc);
       var timeSpan = el.querySelector('.nav-time');
       if (timeSpan) {
-        timeSpan.textContent = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        timeSpan.textContent = formatFriendlyTime(date);
       }
     });
 
@@ -2231,10 +2225,10 @@ function buildPollRunPageHtml(
     }
     initGalleries();
 
-    // Tab switching with scroll position preservation
-    var tabs = document.querySelectorAll('.source-tab');
+    // Source switching with scroll position preservation
+    var sourceSelect = document.getElementById('source-select');
     var sections = document.querySelectorAll('.source-section');
-    var sources = Array.from(tabs).map(function(t) { return t.dataset.source; });
+    var sources = Array.from(sourceSelect.options).map(function(o) { return o.value; });
     var currentSourceIndex = 0;
     var scrollPositions = {};
 
@@ -2245,9 +2239,10 @@ function buildPollRunPageHtml(
         scrollPositions[currentSource] = window.scrollY;
       }
 
-      tabs.forEach(function(t) {
-        t.classList.toggle('active', t.dataset.source === source);
-      });
+      // Update dropdown selection and color
+      sourceSelect.value = source;
+      sourceSelect.className = 'source-select ' + source;
+
       sections.forEach(function(s) {
         s.classList.toggle('active', s.dataset.source === source);
       });
@@ -2264,10 +2259,8 @@ function buildPollRunPageHtml(
       }
     }
 
-    tabs.forEach(function(tab) {
-      tab.addEventListener('click', function() {
-        switchToSource(tab.dataset.source);
-      });
+    sourceSelect.addEventListener('change', function() {
+      switchToSource(sourceSelect.value);
     });
 
     // Keyboard navigation
