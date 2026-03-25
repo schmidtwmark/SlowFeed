@@ -197,6 +197,7 @@ interface RedditPostJson {
   galleryImageUrls: string[];
   videoUrl: string | null;
   videoAudioUrl: string | null;
+  previewUrl: string | null;
 }
 
 async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> {
@@ -221,6 +222,13 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
           data: {
             selftext_html?: string;
             selftext?: string;
+            thumbnail?: string;
+            preview?: {
+              images?: Array<{
+                source?: { url?: string; width?: number; height?: number };
+                resolutions?: Array<{ url?: string; width?: number; height?: number }>;
+              }>;
+            };
             media_metadata?: Record<string, {
               status: string;
               s?: { u?: string; gif?: string };
@@ -247,6 +255,11 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
                 reddit_video?: {
                   fallback_url?: string;
                 };
+              };
+              preview?: {
+                images?: Array<{
+                  source?: { url?: string };
+                }>;
               };
               media_metadata?: Record<string, {
                 status: string;
@@ -317,7 +330,17 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
       videoAudioUrl = audioUrl;
     }
 
-    return { selftextHtml, galleryImageUrls, videoUrl, videoAudioUrl };
+    // Extract preview URL (for videos and other content)
+    let previewUrl: string | null = null;
+    const previewImages = postData.preview?.images || crosspost?.preview?.images;
+    if (previewImages && previewImages.length > 0) {
+      const sourceUrl = previewImages[0]?.source?.url;
+      if (sourceUrl) {
+        previewUrl = sourceUrl.replace(/&amp;/g, '&');
+      }
+    }
+
+    return { selftextHtml, galleryImageUrls, videoUrl, videoAudioUrl, previewUrl };
   } catch (err) {
     logger.debug(`Failed to fetch post JSON for ${permalink}: ${(err as Error).message}`);
     return null;
@@ -457,37 +480,60 @@ export async function pollReddit(): Promise<DigestPost[]> {
       }
 
       // For video posts, embed Reddit's player (supports audio)
-      if (post.isVideo && postJson?.videoUrl) {
+      if (post.isVideo) {
         // Extract post ID for Reddit embed
         const postIdMatch = post.permalink.match(/\/comments\/([a-z0-9]+)\//i);
         const embedPostId = postIdMatch ? postIdMatch[1] : null;
+        // Use preview from JSON if available, fall back to post preview
+        const videoPreview = postJson?.previewUrl || post.previewUrl;
 
         if (embedPostId) {
           content += `<div class="reddit-video" data-post-id="${escapeHtml(embedPostId)}">`;
           content += `<div class="video-container">`;
           // Show preview initially, replaced with embed on click
-          if (post.previewUrl) {
-            content += `<img src="${escapeHtml(post.previewUrl)}" alt="Video preview" class="video-preview" loading="lazy">`;
+          if (videoPreview) {
+            content += `<img src="${escapeHtml(videoPreview)}" alt="Video preview" class="video-preview" loading="lazy">`;
+          } else {
+            // No preview available, show placeholder
+            content += `<div class="video-placeholder" style="aspect-ratio: 16/9; background: #1a1a2e; display: flex; align-items: center; justify-content: center;"><span style="color: #666;">Video</span></div>`;
           }
           content += `<button class="video-play-btn" data-embed-url="https://www.redditmedia.com/r/${escapeHtml(post.subreddit)}/comments/${escapeHtml(embedPostId)}/?embed=true&amp;autoplay=true">▶</button>`;
           content += `</div>`;
           content += `</div>`;
         } else {
           // Fallback to link if we can't extract the post ID
-          content += `<div style="margin: 12px 0; text-align: center;">`;
-          content += `<a href="${escapeHtml(post.permalink)}" style="color: #6db3f2; font-weight: 500;">▶ Watch Video on Reddit</a>`;
-          content += `</div>`;
+          if (videoPreview) {
+            content += `<a href="${escapeHtml(post.permalink)}" style="display: block; position: relative;">`;
+            content += `<img src="${escapeHtml(videoPreview)}" alt="Video preview" style="max-width: 100%; border-radius: 8px; opacity: 0.8;">`;
+            content += `<span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255,69,0,0.9); color: white; padding: 12px 24px; border-radius: 8px; font-weight: 500;">▶ Watch on Reddit</span>`;
+            content += `</a>`;
+          } else {
+            content += `<div style="margin: 12px 0; text-align: center;">`;
+            content += `<a href="${escapeHtml(post.permalink)}" style="color: #6db3f2; font-weight: 500;">▶ Watch Video on Reddit</a>`;
+            content += `</div>`;
+          }
         }
-      } else if (post.isVideo) {
-        // No video URL from JSON, show link
-        content += `<div style="margin: 12px 0; text-align: center;">`;
-        content += `<a href="${escapeHtml(post.permalink)}" style="color: #6db3f2; font-weight: 500;">▶ Watch Video on Reddit</a>`;
-        content += `</div>`;
       }
 
-      // Selftext - show inline from JSON data (works even without comments enabled)
+      // Selftext - show inline from JSON data, truncated if too long
       if (postJson?.selftextHtml) {
-        content += `<div style="margin: 12px 0; line-height: 1.6;">${postJson.selftextHtml}</div>`;
+        let selftextContent = postJson.selftextHtml;
+        // Truncate very long text posts (over ~2000 chars of visible text)
+        const textOnly = selftextContent.replace(/<[^>]+>/g, '');
+        if (textOnly.length > 2000) {
+          // Find a good truncation point (end of paragraph or sentence)
+          const truncateAt = textOnly.lastIndexOf('.', 1800);
+          const cutPoint = truncateAt > 1000 ? truncateAt + 1 : 1800;
+          // We need to truncate the HTML, not just the text - approximate by ratio
+          const ratio = cutPoint / textOnly.length;
+          const htmlCutPoint = Math.floor(selftextContent.length * ratio);
+          // Find a safe HTML cut point (after a closing tag)
+          let safeCut = selftextContent.lastIndexOf('>', htmlCutPoint);
+          if (safeCut < htmlCutPoint * 0.7) safeCut = htmlCutPoint;
+          selftextContent = selftextContent.substring(0, safeCut + 1);
+          selftextContent += `<p class="read-more"><a href="${escapeHtml(post.permalink)}">... continue reading on Reddit →</a></p>`;
+        }
+        content += `<div class="selftext" style="margin: 12px 0; line-height: 1.6;">${selftextContent}</div>`;
       }
 
       // Fetch comments if enabled

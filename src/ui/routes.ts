@@ -1098,24 +1098,46 @@ function buildDigestPageHtml(
       color: var(--text-muted);
     }
 
+    /* Content overflow prevention */
+    article.post,
+    .thread-post,
+    blockquote {
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      word-break: break-word;
+      overflow-x: hidden;
+    }
+
+    article.post img,
+    article.post video,
+    article.post iframe {
+      max-width: 100%;
+    }
+
     /* Image gallery */
     .image-gallery {
       position: relative;
       margin: 12px 0;
+      touch-action: pan-y pinch-zoom;
     }
 
     .gallery-container {
       position: relative;
       overflow: hidden;
       border-radius: 8px;
+      background: rgba(0,0,0,0.2);
+      min-height: 200px;
     }
 
     .gallery-slide {
       display: none;
+      min-height: 200px;
     }
 
     .gallery-slide.active {
-      display: block;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .gallery-slide img {
@@ -1123,6 +1145,11 @@ function buildDigestPageHtml(
       height: auto;
       display: block;
       border-radius: 8px;
+      background: rgba(0,0,0,0.3);
+    }
+
+    .gallery-slide img.loading {
+      opacity: 0.5;
     }
 
     .gallery-nav {
@@ -1131,11 +1158,13 @@ function buildDigestPageHtml(
       justify-content: center;
       gap: 16px;
       margin-top: 8px;
+      position: relative;
+      z-index: 10;
     }
 
     .gallery-btn {
-      width: 36px;
-      height: 36px;
+      width: 44px;
+      height: 44px;
       border: none;
       border-radius: 50%;
       background: var(--bg-card);
@@ -1146,6 +1175,7 @@ function buildDigestPageHtml(
       display: flex;
       align-items: center;
       justify-content: center;
+      -webkit-tap-highlight-color: transparent;
     }
 
     .gallery-btn:hover {
@@ -1321,11 +1351,24 @@ function buildDigestPageHtml(
       });
     });
 
-    // --- Image gallery navigation ---
+    // --- Image gallery navigation with swipe support ---
     document.querySelectorAll('.image-gallery').forEach(function(gallery) {
       var slides = gallery.querySelectorAll('.gallery-slide');
       var counter = gallery.querySelector('.gallery-counter');
+      var container = gallery.querySelector('.gallery-container');
       var currentIdx = 0;
+
+      function preloadAdjacent(index) {
+        [-1, 1].forEach(function(offset) {
+          var adjIndex = index + offset;
+          if (adjIndex < 0) adjIndex = slides.length - 1;
+          if (adjIndex >= slides.length) adjIndex = 0;
+          var img = slides[adjIndex].querySelector('img');
+          if (img && img.dataset.src && !img.src) {
+            img.src = img.dataset.src;
+          }
+        });
+      }
 
       function showSlide(index) {
         if (index < 0) index = slides.length - 1;
@@ -1337,6 +1380,7 @@ function buildDigestPageHtml(
         if (counter) {
           counter.textContent = (index + 1) + ' / ' + slides.length;
         }
+        preloadAdjacent(index);
       }
 
       gallery.showSlide = showSlide;
@@ -1353,6 +1397,34 @@ function buildDigestPageHtml(
           }
         });
       });
+
+      // Touch swipe support
+      if (container) {
+        var touchStartX = 0;
+        var touchStartY = 0;
+
+        container.addEventListener('touchstart', function(e) {
+          touchStartX = e.changedTouches[0].screenX;
+          touchStartY = e.changedTouches[0].screenY;
+        }, { passive: true });
+
+        container.addEventListener('touchend', function(e) {
+          var touchEndX = e.changedTouches[0].screenX;
+          var touchEndY = e.changedTouches[0].screenY;
+          var diffX = touchStartX - touchEndX;
+          var diffY = Math.abs(touchStartY - touchEndY);
+
+          if (Math.abs(diffX) > 50 && Math.abs(diffX) > diffY) {
+            if (diffX > 0) {
+              showSlide(currentIdx + 1);
+            } else {
+              showSlide(currentIdx - 1);
+            }
+          }
+        }, { passive: true });
+      }
+
+      preloadAdjacent(0);
     });
 
     // --- Vim-style keyboard navigation ---
@@ -1820,24 +1892,46 @@ function buildPollRunPageHtml(
       color: var(--text-muted);
     }
 
+    /* Content overflow prevention */
+    article.post,
+    .thread-post,
+    blockquote {
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+      word-break: break-word;
+      overflow-x: hidden;
+    }
+
+    article.post img,
+    article.post video,
+    article.post iframe {
+      max-width: 100%;
+    }
+
     /* Image gallery */
     .image-gallery {
       position: relative;
       margin: 12px 0;
+      touch-action: pan-y pinch-zoom;
     }
 
     .gallery-container {
       position: relative;
       overflow: hidden;
       border-radius: 8px;
+      background: rgba(0,0,0,0.2);
+      min-height: 200px;
     }
 
     .gallery-slide {
       display: none;
+      min-height: 200px;
     }
 
     .gallery-slide.active {
-      display: block;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .gallery-slide img {
@@ -1845,6 +1939,11 @@ function buildPollRunPageHtml(
       height: auto;
       display: block;
       border-radius: 8px;
+      background: rgba(0,0,0,0.3);
+    }
+
+    .gallery-slide img.loading {
+      opacity: 0.5;
     }
 
     .gallery-nav {
@@ -1853,11 +1952,13 @@ function buildPollRunPageHtml(
       justify-content: center;
       gap: 16px;
       margin-top: 8px;
+      position: relative;
+      z-index: 10;
     }
 
     .gallery-btn {
-      width: 36px;
-      height: 36px;
+      width: 44px;
+      height: 44px;
       border: none;
       border-radius: 50%;
       background: var(--bg-card);
@@ -1868,6 +1969,7 @@ function buildPollRunPageHtml(
       display: flex;
       align-items: center;
       justify-content: center;
+      -webkit-tap-highlight-color: transparent;
     }
 
     .gallery-btn:hover {
@@ -2043,12 +2145,26 @@ function buildPollRunPageHtml(
       });
     });
 
-    // Image gallery navigation
+    // Image gallery navigation with swipe support
     function initGalleries() {
       document.querySelectorAll('.image-gallery').forEach(function(gallery) {
         var slides = gallery.querySelectorAll('.gallery-slide');
         var counter = gallery.querySelector('.gallery-counter');
+        var container = gallery.querySelector('.gallery-container');
         var currentIndex = 0;
+
+        function preloadAdjacent(index) {
+          // Preload prev and next images
+          [-1, 1].forEach(function(offset) {
+            var adjIndex = index + offset;
+            if (adjIndex < 0) adjIndex = slides.length - 1;
+            if (adjIndex >= slides.length) adjIndex = 0;
+            var img = slides[adjIndex].querySelector('img');
+            if (img && img.dataset.src && !img.src) {
+              img.src = img.dataset.src;
+            }
+          });
+        }
 
         function showSlide(index) {
           if (index < 0) index = slides.length - 1;
@@ -2060,13 +2176,15 @@ function buildPollRunPageHtml(
           if (counter) {
             counter.textContent = (index + 1) + ' / ' + slides.length;
           }
+          preloadAdjacent(index);
         }
 
-        // Store showSlide function on gallery for keyboard access
+        // Store functions on gallery for keyboard access
         gallery.showSlide = showSlide;
         gallery.getCurrentIndex = function() { return currentIndex; };
         gallery.getSlideCount = function() { return slides.length; };
 
+        // Button navigation
         gallery.querySelectorAll('.gallery-btn').forEach(function(btn) {
           btn.addEventListener('click', function(e) {
             e.preventDefault();
@@ -2078,17 +2196,55 @@ function buildPollRunPageHtml(
             }
           });
         });
+
+        // Touch swipe support
+        if (container) {
+          var touchStartX = 0;
+          var touchStartY = 0;
+          var touchEndX = 0;
+
+          container.addEventListener('touchstart', function(e) {
+            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
+          }, { passive: true });
+
+          container.addEventListener('touchend', function(e) {
+            touchEndX = e.changedTouches[0].screenX;
+            var touchEndY = e.changedTouches[0].screenY;
+            var diffX = touchStartX - touchEndX;
+            var diffY = Math.abs(touchStartY - touchEndY);
+
+            // Only trigger if horizontal swipe is significant and more horizontal than vertical
+            if (Math.abs(diffX) > 50 && Math.abs(diffX) > diffY) {
+              if (diffX > 0) {
+                showSlide(currentIndex + 1); // Swipe left = next
+              } else {
+                showSlide(currentIndex - 1); // Swipe right = prev
+              }
+            }
+          }, { passive: true });
+        }
+
+        // Preload first adjacent images
+        preloadAdjacent(0);
       });
     }
     initGalleries();
 
-    // Tab switching
+    // Tab switching with scroll position preservation
     var tabs = document.querySelectorAll('.source-tab');
     var sections = document.querySelectorAll('.source-section');
     var sources = Array.from(tabs).map(function(t) { return t.dataset.source; });
     var currentSourceIndex = 0;
+    var scrollPositions = {};
 
     function switchToSource(source) {
+      // Save current scroll position for current source
+      var currentSource = sources[currentSourceIndex];
+      if (currentSource) {
+        scrollPositions[currentSource] = window.scrollY;
+      }
+
       tabs.forEach(function(t) {
         t.classList.toggle('active', t.dataset.source === source);
       });
@@ -2098,6 +2254,14 @@ function buildPollRunPageHtml(
       currentSourceIndex = sources.indexOf(source);
       currentPostIndex = -1;
       updateCounter();
+
+      // Restore scroll position for new source (or scroll to top)
+      var savedScroll = scrollPositions[source];
+      if (savedScroll !== undefined) {
+        window.scrollTo(0, savedScroll);
+      } else {
+        window.scrollTo(0, 0);
+      }
     }
 
     tabs.forEach(function(tab) {

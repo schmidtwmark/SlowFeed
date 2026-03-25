@@ -78,7 +78,51 @@ function renderQuotedPost(quotedPost: AppBskyFeedDefs.PostView): string {
   return html;
 }
 
-function extractPostContent(post: AppBskyFeedDefs.PostView): string {
+/**
+ * Extract quoted post info from an embed (if any)
+ * Returns the quoted PostView or null if not a quote post
+ */
+function extractQuotedPost(embed: AppBskyFeedDefs.PostView['embed']): AppBskyFeedDefs.PostView | null {
+  if (!embed) return null;
+
+  // Direct quote post
+  if (AppBskyEmbedRecord.isView(embed)) {
+    const recordEmbed = embed.record;
+    if (AppBskyEmbedRecord.isViewRecord(recordEmbed)) {
+      return {
+        uri: recordEmbed.uri,
+        cid: recordEmbed.cid,
+        author: recordEmbed.author,
+        record: recordEmbed.value,
+        embed: recordEmbed.embeds?.[0],
+        indexedAt: recordEmbed.indexedAt,
+      };
+    }
+  }
+
+  // Quote with media
+  if (AppBskyEmbedRecordWithMedia.isView(embed)) {
+    const recordEmbed = embed.record.record;
+    if (AppBskyEmbedRecord.isViewRecord(recordEmbed)) {
+      return {
+        uri: recordEmbed.uri,
+        cid: recordEmbed.cid,
+        author: recordEmbed.author,
+        record: recordEmbed.value,
+        embed: recordEmbed.embeds?.[0],
+        indexedAt: recordEmbed.indexedAt,
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract post content for display
+ * @param skipQuoteInline - if true, don't render quote posts inline (they'll be shown as separate thread posts)
+ */
+function extractPostContent(post: AppBskyFeedDefs.PostView, skipQuoteInline: boolean = false): string {
   let content = '';
   const record = post.record as { text?: string };
 
@@ -135,8 +179,8 @@ function extractPostContent(post: AppBskyFeedDefs.PostView): string {
       content += `</div>`;
     }
 
-    // Quote posts (record embed) - show full quoted content
-    if (AppBskyEmbedRecord.isView(embed)) {
+    // Quote posts (record embed) - render inline only if not skipping
+    if (AppBskyEmbedRecord.isView(embed) && !skipQuoteInline) {
       const recordEmbed = embed.record;
       if (AppBskyEmbedRecord.isViewRecord(recordEmbed)) {
         // Create a mock PostView for the quoted record
@@ -198,8 +242,8 @@ function extractPostContent(post: AppBskyFeedDefs.PostView): string {
         content += `</div>`;
       }
 
-      // Then render the quoted post
-      if (AppBskyEmbedRecord.isViewRecord(recordEmbed)) {
+      // Then render the quoted post inline only if not skipping
+      if (AppBskyEmbedRecord.isViewRecord(recordEmbed) && !skipQuoteInline) {
         const quotedPost: AppBskyFeedDefs.PostView = {
           uri: recordEmbed.uri,
           cid: recordEmbed.cid,
@@ -307,9 +351,17 @@ function renderReplyContext(post: AppBskyFeedDefs.PostView): string {
 
 /**
  * Convert a PostView to a DigestPost
+ * @param skipQuoteInline - if true, don't render quote posts inline (they'll be separate thread posts)
  */
-function postViewToDigest(post: AppBskyFeedDefs.PostView, rootUri?: string, parentUri?: string, repostedBy?: string, replyContext?: string): DigestPost {
-  let content = extractPostContent(post);
+function postViewToDigest(
+  post: AppBskyFeedDefs.PostView,
+  rootUri?: string,
+  parentUri?: string,
+  repostedBy?: string,
+  replyContext?: string,
+  skipQuoteInline: boolean = false
+): DigestPost {
+  let content = extractPostContent(post, skipQuoteInline);
 
   // Append reply context (parent posts rendered as quote cards)
   if (replyContext) {
@@ -394,10 +446,32 @@ export async function pollBluesky(): Promise<DigestPost[]> {
 
       // Detect reply thread info
       const record = post.record as { reply?: { root?: { uri?: string }; parent?: { uri?: string } } };
-      const rootUri = record.reply?.root?.uri || undefined;
-      const parentUri = record.reply?.parent?.uri || undefined;
+      let rootUri = record.reply?.root?.uri || undefined;
+      let parentUri = record.reply?.parent?.uri || undefined;
 
-      if (rootUri) {
+      // Check if this post quotes another post (not a reply, but embedding a quote)
+      const quotedPost = extractQuotedPost(post.embed);
+      const hasQuote = quotedPost !== null && !rootUri; // Only treat as quote thread if not already a reply
+
+      if (hasQuote && quotedPost) {
+        // Quote post detected - add quoted post first, then the quoting post
+        // This creates a thread where the quoted content appears first
+        const quotedUri = quotedPost.uri;
+
+        // Add the quoted post as the root of the thread (if not already added)
+        if (!addedUris.has(quotedUri)) {
+          addedUris.add(quotedUri);
+          // Quoted post has no rootUri/parentUri - it's the thread root
+          digestPosts.push(postViewToDigest(quotedPost));
+        }
+
+        // Add the quoting post with rootUri/parentUri pointing to the quoted post
+        if (!addedUris.has(post.uri)) {
+          addedUris.add(post.uri);
+          // Skip inline quote rendering since the quoted content is now a separate thread item
+          digestPosts.push(postViewToDigest(post, quotedUri, quotedUri, repostedBy, undefined, true));
+        }
+      } else if (rootUri) {
         // This post is a reply — fetch ancestors for context
         const ancestors = await fetchThreadAncestors(bskyAgent, post.uri);
 
@@ -435,7 +509,7 @@ export async function pollBluesky(): Promise<DigestPost[]> {
           }
         }
       } else {
-        // Standalone post (not a reply)
+        // Standalone post (not a reply, not a quote)
         if (!addedUris.has(post.uri)) {
           addedUris.add(post.uri);
           digestPosts.push(postViewToDigest(post, rootUri, parentUri, repostedBy));
