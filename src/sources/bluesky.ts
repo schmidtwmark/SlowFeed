@@ -1,4 +1,4 @@
-import { BskyAgent, AppBskyFeedDefs, AppBskyEmbedImages, AppBskyEmbedExternal } from '@atproto/api';
+import { BskyAgent, AppBskyFeedDefs, AppBskyEmbedImages, AppBskyEmbedExternal, AppBskyEmbedRecord, AppBskyEmbedRecordWithMedia } from '@atproto/api';
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
 import type { DigestPost } from '../types/index.js';
@@ -38,6 +38,46 @@ async function getAgent(): Promise<BskyAgent | null> {
   }
 }
 
+/**
+ * Render a quoted post as a blockquote card
+ */
+function renderQuotedPost(quotedPost: AppBskyFeedDefs.PostView): string {
+  let html = `<blockquote class="quote-post" style="border-left: 3px solid #0085ff; margin: 12px 0; padding: 8px 12px; background: rgba(0, 133, 255, 0.08); border-radius: 0 8px 8px 0;">`;
+
+  // Author line with avatar
+  const avatarHtml = quotedPost.author.avatar
+    ? `<img src="${escapeHtml(quotedPost.author.avatar)}" alt="" width="20" height="20" style="border-radius: 50%; vertical-align: middle; margin-right: 4px;">`
+    : '';
+  html += `<p style="margin: 0 0 6px 0;">${avatarHtml}<a href="https://bsky.app/profile/${escapeHtml(quotedPost.author.handle)}" style="font-weight: bold; color: #0085ff;">@${escapeHtml(quotedPost.author.handle)}</a></p>`;
+
+  // Post text
+  const quotedRecord = quotedPost.record as { text?: string };
+  if (quotedRecord.text) {
+    html += `<p style="margin: 0 0 6px 0;">${escapeHtml(quotedRecord.text)}</p>`;
+  }
+
+  // Images in the quoted post
+  const quotedEmbed = quotedPost.embed;
+  if (quotedEmbed && AppBskyEmbedImages.isView(quotedEmbed)) {
+    for (const image of quotedEmbed.images) {
+      const imageUrl = image.fullsize || image.thumb;
+      html += `<p style="margin: 4px 0;"><img src="${imageUrl}" alt="${escapeHtml(image.alt || '')}" style="max-width: 100%; border-radius: 8px;"></p>`;
+    }
+  }
+
+  // External link in quoted post
+  if (quotedEmbed && AppBskyEmbedExternal.isView(quotedEmbed)) {
+    const ext = quotedEmbed.external;
+    if (ext.thumb) {
+      html += `<p style="margin: 4px 0;"><img src="${ext.thumb}" alt="" style="max-width: 100%; border-radius: 4px;"></p>`;
+    }
+    html += `<p style="margin: 4px 0;"><a href="${escapeHtml(ext.uri)}" style="color: #0085ff;">${escapeHtml(ext.title || ext.uri)}</a></p>`;
+  }
+
+  html += `</blockquote>`;
+  return html;
+}
+
 function extractPostContent(post: AppBskyFeedDefs.PostView): string {
   let content = '';
   const record = post.record as { text?: string };
@@ -51,11 +91,33 @@ function extractPostContent(post: AppBskyFeedDefs.PostView): string {
   const embed = post.embed;
 
   if (embed) {
-    // Images - use fullsize for better quality
+    // Images - use fullsize for better quality, create gallery if multiple
     if (AppBskyEmbedImages.isView(embed)) {
-      for (const image of embed.images) {
-        const imageUrl = image.fullsize || image.thumb;
-        content += `<p><img src="${imageUrl}" alt="${escapeHtml(image.alt || '')}" style="max-width: 100%; border-radius: 8px;"></p>`;
+      if (embed.images.length > 1) {
+        // Multiple images - create gallery
+        const galleryId = `bsky-gallery-${post.cid.slice(0, 8)}`;
+        content += `<div class="image-gallery" data-gallery-id="${galleryId}">`;
+        content += `<div class="gallery-container">`;
+        for (let i = 0; i < embed.images.length; i++) {
+          const image = embed.images[i];
+          const imageUrl = image.fullsize || image.thumb;
+          content += `<div class="gallery-slide${i === 0 ? ' active' : ''}" data-index="${i}">`;
+          content += `<img src="${imageUrl}" alt="${escapeHtml(image.alt || '')} (${i + 1}/${embed.images.length})" loading="lazy">`;
+          content += `</div>`;
+        }
+        content += `</div>`;
+        content += `<div class="gallery-nav">`;
+        content += `<button class="gallery-btn prev" data-dir="prev">‹</button>`;
+        content += `<span class="gallery-counter">1 / ${embed.images.length}</span>`;
+        content += `<button class="gallery-btn next" data-dir="next">›</button>`;
+        content += `</div>`;
+        content += `</div>`;
+      } else {
+        // Single image
+        for (const image of embed.images) {
+          const imageUrl = image.fullsize || image.thumb;
+          content += `<p><img src="${imageUrl}" alt="${escapeHtml(image.alt || '')}" style="max-width: 100%; border-radius: 8px;"></p>`;
+        }
       }
     }
 
@@ -73,16 +135,81 @@ function extractPostContent(post: AppBskyFeedDefs.PostView): string {
       content += `</div>`;
     }
 
-    // Quote posts - styled blockquote
-    if (AppBskyFeedDefs.isPostView(embed.record)) {
-      const quotedPost = embed.record;
-      const quotedRecord = quotedPost.record as { text?: string };
-      content += `<blockquote style="border-left: 3px solid #0085ff; margin: 12px 0; padding: 8px 12px; background: #f5f5f5;">`;
-      content += `<p style="margin: 0 0 8px 0;"><a href="https://bsky.app/profile/${quotedPost.author.handle}" style="font-weight: bold; color: #0066cc;">@${quotedPost.author.handle}</a></p>`;
-      if (quotedRecord.text) {
-        content += `<p style="margin: 0;">${escapeHtml(quotedRecord.text)}</p>`;
+    // Quote posts (record embed) - show full quoted content
+    if (AppBskyEmbedRecord.isView(embed)) {
+      const recordEmbed = embed.record;
+      if (AppBskyEmbedRecord.isViewRecord(recordEmbed)) {
+        // Create a mock PostView for the quoted record
+        const quotedPost: AppBskyFeedDefs.PostView = {
+          uri: recordEmbed.uri,
+          cid: recordEmbed.cid,
+          author: recordEmbed.author,
+          record: recordEmbed.value,
+          embed: recordEmbed.embeds?.[0],
+          indexedAt: recordEmbed.indexedAt,
+        };
+        content += renderQuotedPost(quotedPost);
       }
-      content += `</blockquote>`;
+    }
+
+    // Record with media (images/video + quote) - handle both parts
+    if (AppBskyEmbedRecordWithMedia.isView(embed)) {
+      const mediaEmbed = embed.media;
+      const recordEmbed = embed.record.record;
+
+      // First render the media (images or external)
+      if (AppBskyEmbedImages.isView(mediaEmbed)) {
+        if (mediaEmbed.images.length > 1) {
+          const galleryId = `bsky-gallery-${post.cid.slice(0, 8)}`;
+          content += `<div class="image-gallery" data-gallery-id="${galleryId}">`;
+          content += `<div class="gallery-container">`;
+          for (let i = 0; i < mediaEmbed.images.length; i++) {
+            const image = mediaEmbed.images[i];
+            const imageUrl = image.fullsize || image.thumb;
+            content += `<div class="gallery-slide${i === 0 ? ' active' : ''}" data-index="${i}">`;
+            content += `<img src="${imageUrl}" alt="${escapeHtml(image.alt || '')} (${i + 1}/${mediaEmbed.images.length})" loading="lazy">`;
+            content += `</div>`;
+          }
+          content += `</div>`;
+          content += `<div class="gallery-nav">`;
+          content += `<button class="gallery-btn prev" data-dir="prev">‹</button>`;
+          content += `<span class="gallery-counter">1 / ${mediaEmbed.images.length}</span>`;
+          content += `<button class="gallery-btn next" data-dir="next">›</button>`;
+          content += `</div>`;
+          content += `</div>`;
+        } else {
+          for (const image of mediaEmbed.images) {
+            const imageUrl = image.fullsize || image.thumb;
+            content += `<p><img src="${imageUrl}" alt="${escapeHtml(image.alt || '')}" style="max-width: 100%; border-radius: 8px;"></p>`;
+          }
+        }
+      }
+
+      if (AppBskyEmbedExternal.isView(mediaEmbed)) {
+        const ext = mediaEmbed.external;
+        content += `<div style="border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; background: #f9f9f9;">`;
+        if (ext.thumb) {
+          content += `<img src="${ext.thumb}" alt="" style="max-width: 100%; border-radius: 4px; margin-bottom: 8px;">`;
+        }
+        content += `<p style="margin: 0 0 4px 0;"><a href="${escapeHtml(ext.uri)}" style="font-weight: bold; color: #0066cc;">${escapeHtml(ext.title || ext.uri)}</a></p>`;
+        if (ext.description) {
+          content += `<p style="margin: 0; font-size: 14px; color: #666;">${escapeHtml(ext.description)}</p>`;
+        }
+        content += `</div>`;
+      }
+
+      // Then render the quoted post
+      if (AppBskyEmbedRecord.isViewRecord(recordEmbed)) {
+        const quotedPost: AppBskyFeedDefs.PostView = {
+          uri: recordEmbed.uri,
+          cid: recordEmbed.cid,
+          author: recordEmbed.author,
+          record: recordEmbed.value,
+          embed: recordEmbed.embeds?.[0],
+          indexedAt: recordEmbed.indexedAt,
+        };
+        content += renderQuotedPost(quotedPost);
+      }
     }
   }
 

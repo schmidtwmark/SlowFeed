@@ -427,11 +427,26 @@ export async function pollReddit(): Promise<DigestPost[]> {
       // Fetch JSON data for rich content (galleries, videos, selftext)
       const postJson = await fetchPostJson(post.permalink);
 
-      // For gallery posts, show all images inline
+      // For gallery posts, create a navigable gallery
       if (post.isGallery && postJson && postJson.galleryImageUrls.length > 0) {
-        for (const imageUrl of postJson.galleryImageUrls) {
-          content += `<p><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(post.title)}" style="max-width: 100%; border-radius: 8px;"></p>`;
+        const galleryId = `gallery-${post.id}`;
+        content += `<div class="image-gallery" data-gallery-id="${galleryId}">`;
+        content += `<div class="gallery-container">`;
+        for (let i = 0; i < postJson.galleryImageUrls.length; i++) {
+          const imageUrl = postJson.galleryImageUrls[i];
+          content += `<div class="gallery-slide${i === 0 ? ' active' : ''}" data-index="${i}">`;
+          content += `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(post.title)} (${i + 1}/${postJson.galleryImageUrls.length})" loading="lazy">`;
+          content += `</div>`;
         }
+        content += `</div>`;
+        if (postJson.galleryImageUrls.length > 1) {
+          content += `<div class="gallery-nav">`;
+          content += `<button class="gallery-btn prev" data-dir="prev">‹</button>`;
+          content += `<span class="gallery-counter">1 / ${postJson.galleryImageUrls.length}</span>`;
+          content += `<button class="gallery-btn next" data-dir="next">›</button>`;
+          content += `</div>`;
+        }
+        content += `</div>`;
       } else if (post.isImage) {
         // For single image posts, embed the image
         const imageUrl = post.url;
@@ -441,16 +456,32 @@ export async function pollReddit(): Promise<DigestPost[]> {
         content += `<p><img src="${escapeHtml(post.previewUrl)}" alt="Preview" style="max-width: 100%; border-radius: 8px;"></p>`;
       }
 
-      // For video posts, show preview with link to Reddit (Reddit videos have separate audio tracks that don't work inline)
-      if (post.isVideo) {
-        content += `<div style="margin: 12px 0; position: relative;">`;
-        // Show preview image if available
-        if (post.previewUrl) {
-          content += `<img src="${escapeHtml(post.previewUrl)}" alt="Video preview" style="max-width: 100%; border-radius: 8px; opacity: 0.9;">`;
+      // For video posts, embed Reddit's player (supports audio)
+      if (post.isVideo && postJson?.videoUrl) {
+        // Extract post ID for Reddit embed
+        const postIdMatch = post.permalink.match(/\/comments\/([a-z0-9]+)\//i);
+        const embedPostId = postIdMatch ? postIdMatch[1] : null;
+
+        if (embedPostId) {
+          content += `<div class="reddit-video" data-post-id="${escapeHtml(embedPostId)}">`;
+          content += `<div class="video-container">`;
+          // Show preview initially, replaced with embed on click
+          if (post.previewUrl) {
+            content += `<img src="${escapeHtml(post.previewUrl)}" alt="Video preview" class="video-preview" loading="lazy">`;
+          }
+          content += `<button class="video-play-btn" data-embed-url="https://www.redditmedia.com/r/${escapeHtml(post.subreddit)}/comments/${escapeHtml(embedPostId)}/?embed=true&amp;autoplay=true">▶</button>`;
+          content += `</div>`;
+          content += `</div>`;
+        } else {
+          // Fallback to link if we can't extract the post ID
+          content += `<div style="margin: 12px 0; text-align: center;">`;
+          content += `<a href="${escapeHtml(post.permalink)}" style="color: #6db3f2; font-weight: 500;">▶ Watch Video on Reddit</a>`;
+          content += `</div>`;
         }
-        content += `<div style="padding: 12px; background: #1a1a2e; border-radius: 8px; text-align: center; margin-top: ${post.previewUrl ? '-40px' : '0'}; position: relative;">`;
+      } else if (post.isVideo) {
+        // No video URL from JSON, show link
+        content += `<div style="margin: 12px 0; text-align: center;">`;
         content += `<a href="${escapeHtml(post.permalink)}" style="color: #6db3f2; font-weight: 500;">▶ Watch Video on Reddit</a>`;
-        content += `</div>`;
         content += `</div>`;
       }
 

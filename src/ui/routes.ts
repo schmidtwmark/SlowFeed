@@ -1062,6 +1062,19 @@ function buildDigestPageHtml(
       border-left: 3px solid var(--link);
     }
 
+    /* Thread indentation */
+    .thread-post {
+      margin: 8px 0;
+    }
+
+    .thread-overflow {
+      margin-top: 12px;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 6px;
+      font-style: italic;
+    }
+
     /* Blockquotes (Bluesky quote posts) */
     article.post blockquote {
       border-left: 3px solid var(--border);
@@ -1072,11 +1085,134 @@ function buildDigestPageHtml(
       border-radius: 0 6px 6px 0;
     }
 
+    article.post blockquote.quote-post {
+      border-left-color: #0085ff;
+      background: rgba(0, 133, 255, 0.08);
+      color: var(--text);
+    }
+
     /* Comment sections */
     article.post h4 {
       margin: 12px 0 8px;
       font-size: 0.9375rem;
       color: var(--text-muted);
+    }
+
+    /* Image gallery */
+    .image-gallery {
+      position: relative;
+      margin: 12px 0;
+    }
+
+    .gallery-container {
+      position: relative;
+      overflow: hidden;
+      border-radius: 8px;
+    }
+
+    .gallery-slide {
+      display: none;
+    }
+
+    .gallery-slide.active {
+      display: block;
+    }
+
+    .gallery-slide img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+    }
+
+    .gallery-nav {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-top: 8px;
+    }
+
+    .gallery-btn {
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 50%;
+      background: var(--bg-card);
+      color: var(--text);
+      font-size: 1.25rem;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .gallery-btn:hover {
+      background: var(--border);
+    }
+
+    .gallery-btn:active {
+      transform: scale(0.95);
+    }
+
+    .gallery-counter {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      min-width: 60px;
+      text-align: center;
+    }
+
+    /* Reddit video */
+    .reddit-video {
+      position: relative;
+      margin: 12px 0;
+    }
+
+    .video-container {
+      position: relative;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .video-container .video-preview {
+      width: 100%;
+      height: auto;
+      display: block;
+      opacity: 0.8;
+    }
+
+    .video-play-btn {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 72px;
+      height: 72px;
+      border: none;
+      border-radius: 50%;
+      background: rgba(255, 69, 0, 0.9);
+      color: white;
+      font-size: 2rem;
+      cursor: pointer;
+      transition: transform 0.2s, background 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-left: 4px;
+    }
+
+    .video-play-btn:hover {
+      transform: translate(-50%, -50%) scale(1.1);
+      background: rgba(255, 69, 0, 1);
+    }
+
+    .video-container iframe {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border: none;
+      display: block;
     }
 
     /* Horizontal rules within content (not between posts) */
@@ -1133,8 +1269,7 @@ function buildDigestPageHtml(
       <p class="nav-hint">
         <kbd>j</kbd>/<kbd>k</kbd> navigate
         <kbd>o</kbd> open
-        <kbd>gg</kbd> top
-        <kbd>G</kbd> bottom
+        <kbd>[</kbd>/<kbd>]</kbd> gallery
       </p>
       ${nextLink}
     </div>
@@ -1173,19 +1308,51 @@ function buildDigestPageHtml(
         '?rel=0" allowfullscreen loading="lazy"></iframe>';
     });
 
-    // --- Reddit: convert reddit video links to embedded players ---
-    document.querySelectorAll('article.post[data-source="reddit"] a[href*="v.redd.it"]').forEach(function(a) {
-      // The parent reddit post URL is on the article
-      var article = a.closest('article.post');
-      if (!article) return;
-      var redditUrl = article.getAttribute('data-url');
-      if (redditUrl) {
-        var container = document.createElement('div');
-        container.className = 'youtube-embed';
-        container.innerHTML = '<iframe src="https://www.redditmedia.com/mediaembed/lq?responsive=true&is_hierarchical=false" ' +
-          'sandbox="allow-scripts allow-same-origin allow-popups" allowfullscreen loading="lazy"></iframe>';
-        // Fallback: just leave the link if embed doesn't work
+    // --- Reddit video embeds - click to load ---
+    document.querySelectorAll('.video-play-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var embedUrl = btn.getAttribute('data-embed-url');
+        var container = btn.closest('.video-container');
+        if (container && embedUrl) {
+          container.innerHTML = '<iframe src="' + embedUrl + '" allowfullscreen loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>';
+        }
+      });
+    });
+
+    // --- Image gallery navigation ---
+    document.querySelectorAll('.image-gallery').forEach(function(gallery) {
+      var slides = gallery.querySelectorAll('.gallery-slide');
+      var counter = gallery.querySelector('.gallery-counter');
+      var currentIdx = 0;
+
+      function showSlide(index) {
+        if (index < 0) index = slides.length - 1;
+        if (index >= slides.length) index = 0;
+        slides.forEach(function(s, i) {
+          s.classList.toggle('active', i === index);
+        });
+        currentIdx = index;
+        if (counter) {
+          counter.textContent = (index + 1) + ' / ' + slides.length;
+        }
       }
+
+      gallery.showSlide = showSlide;
+      gallery.getCurrentIndex = function() { return currentIdx; };
+
+      gallery.querySelectorAll('.gallery-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (btn.dataset.dir === 'prev') {
+            showSlide(currentIdx - 1);
+          } else {
+            showSlide(currentIdx + 1);
+          }
+        });
+      });
     });
 
     // --- Vim-style keyboard navigation ---
@@ -1260,6 +1427,30 @@ function buildDigestPageHtml(
         case 'g':
           gPending = true;
           setTimeout(function() { gPending = false; }, 500);
+          break;
+
+        case '[':
+        case 'h':
+          // Navigate gallery left
+          e.preventDefault();
+          if (currentIndex >= 0 && currentIndex < posts.length) {
+            var gallery = posts[currentIndex].querySelector('.image-gallery');
+            if (gallery && gallery.showSlide) {
+              gallery.showSlide(gallery.getCurrentIndex() - 1);
+            }
+          }
+          break;
+
+        case ']':
+        case 'l':
+          // Navigate gallery right
+          e.preventDefault();
+          if (currentIndex >= 0 && currentIndex < posts.length) {
+            var gallery = posts[currentIndex].querySelector('.image-gallery');
+            if (gallery && gallery.showSlide) {
+              gallery.showSlide(gallery.getCurrentIndex() + 1);
+            }
+          }
           break;
       }
     });
@@ -1403,14 +1594,15 @@ function buildPollRunPageHtml(
 
     .source-tab {
       padding: 8px 16px;
-      border: none;
+      border: 2px solid transparent;
       border-radius: 6px;
       font-size: 0.875rem;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: opacity 0.2s, border-color 0.2s;
       color: white;
       opacity: 0.6;
+      outline: none;
     }
 
     .source-tab:hover {
@@ -1419,7 +1611,7 @@ function buildPollRunPageHtml(
 
     .source-tab.active {
       opacity: 1;
-      box-shadow: 0 0 0 2px var(--text);
+      border-color: var(--text);
     }
 
     .source-tab.reddit { background: #ff4500; }
@@ -1594,6 +1786,19 @@ function buildPollRunPageHtml(
       border-left: 3px solid var(--link);
     }
 
+    /* Thread indentation */
+    .thread-post {
+      margin: 8px 0;
+    }
+
+    .thread-overflow {
+      margin-top: 12px;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 6px;
+      font-style: italic;
+    }
+
     article.post blockquote {
       border-left: 3px solid var(--border);
       padding: 8px 12px;
@@ -1603,10 +1808,133 @@ function buildPollRunPageHtml(
       border-radius: 0 6px 6px 0;
     }
 
+    article.post blockquote.quote-post {
+      border-left-color: #0085ff;
+      background: rgba(0, 133, 255, 0.08);
+      color: var(--text);
+    }
+
     article.post h4 {
       margin: 12px 0 8px;
       font-size: 0.9375rem;
       color: var(--text-muted);
+    }
+
+    /* Image gallery */
+    .image-gallery {
+      position: relative;
+      margin: 12px 0;
+    }
+
+    .gallery-container {
+      position: relative;
+      overflow: hidden;
+      border-radius: 8px;
+    }
+
+    .gallery-slide {
+      display: none;
+    }
+
+    .gallery-slide.active {
+      display: block;
+    }
+
+    .gallery-slide img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+    }
+
+    .gallery-nav {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-top: 8px;
+    }
+
+    .gallery-btn {
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-radius: 50%;
+      background: var(--bg-card);
+      color: var(--text);
+      font-size: 1.25rem;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .gallery-btn:hover {
+      background: var(--border);
+    }
+
+    .gallery-btn:active {
+      transform: scale(0.95);
+    }
+
+    .gallery-counter {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      min-width: 60px;
+      text-align: center;
+    }
+
+    /* Reddit video */
+    .reddit-video {
+      position: relative;
+      margin: 12px 0;
+    }
+
+    .video-container {
+      position: relative;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .video-container .video-preview {
+      width: 100%;
+      height: auto;
+      display: block;
+      opacity: 0.8;
+    }
+
+    .video-play-btn {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 72px;
+      height: 72px;
+      border: none;
+      border-radius: 50%;
+      background: rgba(255, 69, 0, 0.9);
+      color: white;
+      font-size: 2rem;
+      cursor: pointer;
+      transition: transform 0.2s, background 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-left: 4px;
+    }
+
+    .video-play-btn:hover {
+      transform: translate(-50%, -50%) scale(1.1);
+      background: rgba(255, 69, 0, 1);
+    }
+
+    .video-container iframe {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border: none;
+      display: block;
     }
 
     hr {
@@ -1701,6 +2029,58 @@ function buildPollRunPageHtml(
       el.innerHTML = '<iframe src="https://www.youtube.com/embed/' + videoId +
         '?rel=0" allowfullscreen loading="lazy"></iframe>';
     });
+
+    // Reddit video embeds - click to load
+    document.querySelectorAll('.video-play-btn').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var embedUrl = btn.getAttribute('data-embed-url');
+        var container = btn.closest('.video-container');
+        if (container && embedUrl) {
+          container.innerHTML = '<iframe src="' + embedUrl + '" allowfullscreen loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>';
+        }
+      });
+    });
+
+    // Image gallery navigation
+    function initGalleries() {
+      document.querySelectorAll('.image-gallery').forEach(function(gallery) {
+        var slides = gallery.querySelectorAll('.gallery-slide');
+        var counter = gallery.querySelector('.gallery-counter');
+        var currentIndex = 0;
+
+        function showSlide(index) {
+          if (index < 0) index = slides.length - 1;
+          if (index >= slides.length) index = 0;
+          slides.forEach(function(s, i) {
+            s.classList.toggle('active', i === index);
+          });
+          currentIndex = index;
+          if (counter) {
+            counter.textContent = (index + 1) + ' / ' + slides.length;
+          }
+        }
+
+        // Store showSlide function on gallery for keyboard access
+        gallery.showSlide = showSlide;
+        gallery.getCurrentIndex = function() { return currentIndex; };
+        gallery.getSlideCount = function() { return slides.length; };
+
+        gallery.querySelectorAll('.gallery-btn').forEach(function(btn) {
+          btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (btn.dataset.dir === 'prev') {
+              showSlide(currentIndex - 1);
+            } else {
+              showSlide(currentIndex + 1);
+            }
+          });
+        });
+      });
+    }
+    initGalleries();
 
     // Tab switching
     var tabs = document.querySelectorAll('.source-tab');
@@ -1799,6 +2179,15 @@ function buildPollRunPageHtml(
 
         case '[':
           e.preventDefault();
+          // Check if focused post has a gallery
+          if (currentPostIndex >= 0 && currentPostIndex < posts.length) {
+            var gallery = posts[currentPostIndex].querySelector('.image-gallery');
+            if (gallery && gallery.showSlide) {
+              gallery.showSlide(gallery.getCurrentIndex() - 1);
+              return;
+            }
+          }
+          // Otherwise switch sources
           if (currentSourceIndex > 0) {
             switchToSource(sources[currentSourceIndex - 1]);
           }
@@ -1806,8 +2195,39 @@ function buildPollRunPageHtml(
 
         case ']':
           e.preventDefault();
+          // Check if focused post has a gallery
+          if (currentPostIndex >= 0 && currentPostIndex < posts.length) {
+            var gallery = posts[currentPostIndex].querySelector('.image-gallery');
+            if (gallery && gallery.showSlide) {
+              gallery.showSlide(gallery.getCurrentIndex() + 1);
+              return;
+            }
+          }
+          // Otherwise switch sources
           if (currentSourceIndex < sources.length - 1) {
             switchToSource(sources[currentSourceIndex + 1]);
+          }
+          break;
+
+        case 'h':
+          // Navigate gallery left (vim style)
+          e.preventDefault();
+          if (currentPostIndex >= 0 && currentPostIndex < posts.length) {
+            var gallery = posts[currentPostIndex].querySelector('.image-gallery');
+            if (gallery && gallery.showSlide) {
+              gallery.showSlide(gallery.getCurrentIndex() - 1);
+            }
+          }
+          break;
+
+        case 'l':
+          // Navigate gallery right (vim style)
+          e.preventDefault();
+          if (currentPostIndex >= 0 && currentPostIndex < posts.length) {
+            var gallery = posts[currentPostIndex].querySelector('.image-gallery');
+            if (gallery && gallery.showSlide) {
+              gallery.showSlide(gallery.getCurrentIndex() + 1);
+            }
           }
           break;
       }

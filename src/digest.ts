@@ -67,9 +67,13 @@ function renderAvatar(avatarUrl: string | undefined, alt: string): string {
 
 /**
  * Format a Bluesky post for the digest
+ * @param indentLevel - nesting level for thread indentation (0 = root)
  */
-function formatBlueskyPost(post: DigestPost): string {
+function formatBlueskyPost(post: DigestPost, indentLevel: number = 0): string {
   const parts: string[] = [];
+  const indent = indentLevel > 0 ? `style="margin-left: ${Math.min(indentLevel * 24, 72)}px; padding-left: 12px; border-left: 2px solid var(--border, #2a2a4a);"` : '';
+
+  parts.push(`<div class="thread-post" ${indent}>`);
 
   // Repost attribution
   if (post.metadata?.repostedBy) {
@@ -88,13 +92,71 @@ function formatBlueskyPost(post: DigestPost): string {
     parts.push(post.content);
   }
 
+  parts.push(`</div>`);
+
   return parts.join('\n');
+}
+
+const MAX_THREAD_ITEMS = 5;
+
+/**
+ * Calculate indent levels for posts in a thread based on their reply relationships.
+ * Returns a map of postId -> indentLevel
+ */
+function calculateThreadIndents(posts: DigestPost[]): Map<string, number> {
+  const indents = new Map<string, number>();
+  const uriToPostId = new Map<string, string>();
+
+  // Build URI -> postId lookup
+  for (const post of posts) {
+    const raw = post.rawJson as { uri?: string } | undefined;
+    if (raw?.uri) {
+      uriToPostId.set(raw.uri, post.postId);
+    }
+  }
+
+  // First pass: assign base indent of 0 to root posts
+  for (const post of posts) {
+    if (!post.metadata?.parentUri) {
+      indents.set(post.postId, 0);
+    }
+  }
+
+  // Multiple passes to resolve reply chains
+  let changed = true;
+  let iterations = 0;
+  while (changed && iterations < 10) {
+    changed = false;
+    iterations++;
+    for (const post of posts) {
+      if (indents.has(post.postId)) continue;
+
+      const parentUri = post.metadata?.parentUri;
+      if (parentUri) {
+        const parentPostId = uriToPostId.get(parentUri);
+        if (parentPostId && indents.has(parentPostId)) {
+          indents.set(post.postId, (indents.get(parentPostId) || 0) + 1);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  // Assign default indent of 0 to any remaining posts
+  for (const post of posts) {
+    if (!indents.has(post.postId)) {
+      indents.set(post.postId, 0);
+    }
+  }
+
+  return indents;
 }
 
 /**
  * Group Bluesky posts into threads and format them.
  * Posts that are replies to each other get grouped under a single thread.
  * Overall order is chronological (oldest first), based on each thread/post's earliest timestamp.
+ * Threads are limited to MAX_THREAD_ITEMS with overflow indication.
  */
 function formatBlueskyPosts(posts: DigestPost[]): string {
   // Group posts by thread root URI
@@ -140,17 +202,29 @@ function formatBlueskyPosts(posts: DigestPost[]): string {
     // Sort thread internally (chronological)
     allInThread.sort((a, b) => a.publishedAt.getTime() - b.publishedAt.getTime());
 
+    // Calculate indent levels
+    const indents = calculateThreadIndents(allInThread);
+
     groups.push({
       earliestTime: allInThread[0].publishedAt.getTime(),
       render: () => {
         const parts: string[] = [];
         const lastPost = allInThread[allInThread.length - 1];
+        const totalCount = allInThread.length;
+        const overflow = totalCount > MAX_THREAD_ITEMS;
+        const displayPosts = overflow ? allInThread.slice(0, MAX_THREAD_ITEMS) : allInThread;
+
         parts.push(`<article class="post thread" data-source="bluesky" data-url="${escapeHtml(lastPost.url)}">`);
-        if (allInThread.length > 1) {
-          parts.push(`<p><strong>Thread (${allInThread.length} posts):</strong></p>`);
+        if (totalCount > 1) {
+          parts.push(`<p><strong>Thread (${totalCount} posts):</strong></p>`);
         }
-        for (const post of allInThread) {
-          parts.push(formatBlueskyPost(post));
+        for (const post of displayPosts) {
+          const indent = indents.get(post.postId) || 0;
+          parts.push(formatBlueskyPost(post, indent));
+        }
+        if (overflow) {
+          const remaining = totalCount - MAX_THREAD_ITEMS;
+          parts.push(`<p class="thread-overflow"><a href="${escapeHtml(lastPost.url)}">+ ${remaining} more post${remaining === 1 ? '' : 's'} →</a></p>`);
         }
         parts.push(`<p><a href="${escapeHtml(lastPost.url)}">View on Bluesky →</a></p>`);
         parts.push('</article>');
@@ -167,7 +241,7 @@ function formatBlueskyPosts(posts: DigestPost[]): string {
       render: () => {
         const parts: string[] = [];
         parts.push(`<article class="post" data-source="bluesky" data-url="${escapeHtml(post.url)}">`);
-        parts.push(formatBlueskyPost(post));
+        parts.push(formatBlueskyPost(post, 0));
         parts.push(`<p><a href="${escapeHtml(post.url)}">View on Bluesky →</a></p>`);
         parts.push('</article>');
         return parts.join('\n');
@@ -319,13 +393,23 @@ function formatDiscordPosts(posts: DigestPost[]): string {
 
     for (const thread of threads) {
       const firstPost = thread[0];
+      const lastPost = thread[thread.length - 1];
       const appUrl = firstPost.url.replace('https://discord.com/', 'discord://discord.com/');
-      parts.push(`<article class="post${thread.length > 1 ? ' thread' : ''}" data-source="discord" data-url="${escapeHtml(appUrl)}">`);
-      if (thread.length > 1) {
-        parts.push(`<p><strong>Thread (${thread.length} messages):</strong></p>`);
+      const totalCount = thread.length;
+      const overflow = totalCount > MAX_THREAD_ITEMS;
+      const displayPosts = overflow ? thread.slice(0, MAX_THREAD_ITEMS) : thread;
+
+      parts.push(`<article class="post${totalCount > 1 ? ' thread' : ''}" data-source="discord" data-url="${escapeHtml(appUrl)}">`);
+      if (totalCount > 1) {
+        parts.push(`<p><strong>Thread (${totalCount} messages):</strong></p>`);
       }
-      for (const post of thread) {
+      for (const post of displayPosts) {
         parts.push(formatDiscordMessage(post));
+      }
+      if (overflow) {
+        const remaining = totalCount - MAX_THREAD_ITEMS;
+        const lastAppUrl = lastPost.url.replace('https://discord.com/', 'discord://discord.com/');
+        parts.push(`<p class="thread-overflow"><a href="${escapeHtml(lastAppUrl)}">+ ${remaining} more message${remaining === 1 ? '' : 's'} →</a></p>`);
       }
       parts.push('</article>');
     }
