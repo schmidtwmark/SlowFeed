@@ -465,8 +465,6 @@ async function loadRedditSettings() {
       cookiesEl.placeholder = 'Paste your Reddit cookies here for personalized feed';
     }
     document.getElementById('reddit_top_n').value = config.reddit_top_n || 30;
-    document.getElementById('reddit_include_comments').checked = config.reddit_include_comments !== false;
-    document.getElementById('reddit_comment_depth').value = config.reddit_comment_depth || 3;
   } catch (err) {
     console.error('Failed to load Reddit settings:', err);
   }
@@ -579,8 +577,6 @@ async function saveRedditSettings(form) {
     const data = {
       reddit_enabled: form.reddit_enabled.checked,
       reddit_top_n: parseInt(form.reddit_top_n.value, 10),
-      reddit_include_comments: form.reddit_include_comments.checked,
-      reddit_comment_depth: parseInt(form.reddit_comment_depth.value, 10),
     };
 
     // Only send cookies if user entered new ones (don't overwrite with empty)

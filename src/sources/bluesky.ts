@@ -146,7 +146,7 @@ function extractPostContent(post: AppBskyFeedDefs.PostView, skipQuoteInline: boo
           const image = embed.images[i];
           const imageUrl = image.fullsize || image.thumb;
           content += `<div class="gallery-slide${i === 0 ? ' active' : ''}" data-index="${i}">`;
-          content += `<img src="${imageUrl}" alt="${escapeHtml(image.alt || '')} (${i + 1}/${embed.images.length})" loading="lazy">`;
+          content += `<img src="${imageUrl}" alt="${escapeHtml(image.alt || '')} (${i + 1}/${embed.images.length})">`;
           content += `</div>`;
         }
         content += `</div>`;
@@ -211,7 +211,7 @@ function extractPostContent(post: AppBskyFeedDefs.PostView, skipQuoteInline: boo
             const image = mediaEmbed.images[i];
             const imageUrl = image.fullsize || image.thumb;
             content += `<div class="gallery-slide${i === 0 ? ' active' : ''}" data-index="${i}">`;
-            content += `<img src="${imageUrl}" alt="${escapeHtml(image.alt || '')} (${i + 1}/${mediaEmbed.images.length})" loading="lazy">`;
+            content += `<img src="${imageUrl}" alt="${escapeHtml(image.alt || '')} (${i + 1}/${mediaEmbed.images.length})">`;
             content += `</div>`;
           }
           content += `</div>`;

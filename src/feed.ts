@@ -39,30 +39,9 @@ async function getPollRuns(): Promise<PollRunWithDigests[]> {
   return rows;
 }
 
-function formatPollRunTitle(run: PollRunWithDigests): string {
-  const date = new Date(run.started_at);
-  const dateStr = date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-  const timeStr = date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-
-  // Build source list
-  const sourceNames = run.sources.map(s => {
-    switch (s) {
-      case 'reddit': return 'Reddit';
-      case 'bluesky': return 'Bluesky';
-      case 'youtube': return 'YouTube';
-      case 'discord': return 'Discord';
-      default: return s;
-    }
-  });
-
-  return `${sourceNames.join(', ')} - ${dateStr} at ${timeStr}`;
+function formatPollRunTitle(): string {
+  // Just use a simple title - the RSS reader shows the date from metadata
+  return 'SlowFeed Digest';
 }
 
 function buildFeed(runs: PollRunWithDigests[], format: 'rss' | 'atom', baseUrl: string): string {
@@ -81,7 +60,7 @@ function buildFeed(runs: PollRunWithDigests[], format: 'rss' | 'atom', baseUrl: 
 
   for (const run of runs) {
     const runUrl = `${baseUrl}/run/${run.id}`;
-    const title = formatPollRunTitle(run);
+    const title = formatPollRunTitle();
 
     feed.addItem({
       title,

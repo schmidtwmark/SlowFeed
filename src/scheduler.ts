@@ -17,6 +17,10 @@ import type { PollSchedule, PollRun, SourceType, DigestPost } from './types/inde
 const scheduleJobs: Map<number, cron.ScheduledTask> = new Map();
 let pruneJob: cron.ScheduledTask | null = null;
 
+// Lock to prevent concurrent poll runs
+let pollRunLock = false;
+let pendingPollSchedule: PollSchedule | null = null;
+
 // Track poll status for the UI
 interface PollStatus {
   source: string;
@@ -107,6 +111,15 @@ function getNotificationPollFn(source: SourceType): (() => Promise<DigestPost[]>
 
 // Run a scheduled poll for specific sources
 async function runScheduledPoll(schedule: PollSchedule): Promise<PollRun | null> {
+  // Check if a poll is already running - skip to avoid duplicate poll runs
+  if (pollRunLock) {
+    logger.info(`Skipping poll "${schedule.name}" - another poll is already running`);
+    return null;
+  }
+
+  // Acquire lock
+  pollRunLock = true;
+
   const status = scheduleStatus.get(schedule.id);
   if (status) {
     status.isRunning = true;
@@ -190,6 +203,8 @@ async function runScheduledPoll(schedule: PollSchedule): Promise<PollRun | null>
     if (status) {
       status.isRunning = false;
     }
+    // Release lock
+    pollRunLock = false;
   }
 }
 

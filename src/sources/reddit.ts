@@ -458,7 +458,7 @@ export async function pollReddit(): Promise<DigestPost[]> {
         for (let i = 0; i < postJson.galleryImageUrls.length; i++) {
           const imageUrl = postJson.galleryImageUrls[i];
           content += `<div class="gallery-slide${i === 0 ? ' active' : ''}" data-index="${i}">`;
-          content += `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(post.title)} (${i + 1}/${postJson.galleryImageUrls.length})" loading="lazy">`;
+          content += `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(post.title)} (${i + 1}/${postJson.galleryImageUrls.length})">`;
           content += `</div>`;
         }
         content += `</div>`;
@@ -479,26 +479,17 @@ export async function pollReddit(): Promise<DigestPost[]> {
         content += `<p><img src="${escapeHtml(post.previewUrl)}" alt="Preview" style="max-width: 100%; border-radius: 8px;"></p>`;
       }
 
-      // For video posts, embed Reddit's player (supports audio)
+      // For video posts, embed Reddit's player directly (no click-to-load to avoid layout shifts)
       if (post.isVideo) {
         // Extract post ID for Reddit embed
         const postIdMatch = post.permalink.match(/\/comments\/([a-z0-9]+)\//i);
         const embedPostId = postIdMatch ? postIdMatch[1] : null;
-        // Use preview from JSON if available, fall back to post preview
         const videoPreview = postJson?.previewUrl || post.previewUrl;
 
         if (embedPostId) {
-          content += `<div class="reddit-video" data-post-id="${escapeHtml(embedPostId)}">`;
-          content += `<div class="video-container">`;
-          // Show preview initially, replaced with embed on click
-          if (videoPreview) {
-            content += `<img src="${escapeHtml(videoPreview)}" alt="Video preview" class="video-preview" loading="lazy">`;
-          } else {
-            // No preview available, show placeholder
-            content += `<div class="video-placeholder" style="aspect-ratio: 16/9; background: #1a1a2e; display: flex; align-items: center; justify-content: center;"><span style="color: #666;">Video</span></div>`;
-          }
-          content += `<button class="video-play-btn" data-embed-url="https://www.redditmedia.com/r/${escapeHtml(post.subreddit)}/comments/${escapeHtml(embedPostId)}/?embed=true&amp;autoplay=true">▶</button>`;
-          content += `</div>`;
+          const embedUrl = `https://www.redditmedia.com/r/${escapeHtml(post.subreddit)}/comments/${escapeHtml(embedPostId)}/?embed=true`;
+          content += `<div class="reddit-video">`;
+          content += `<iframe src="${embedUrl}" allowfullscreen loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>`;
           content += `</div>`;
         } else {
           // Fallback to link if we can't extract the post ID

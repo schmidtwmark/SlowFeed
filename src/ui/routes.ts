@@ -1126,18 +1126,14 @@ function buildDigestPageHtml(
       overflow: hidden;
       border-radius: 8px;
       background: rgba(0,0,0,0.2);
-      min-height: 200px;
     }
 
     .gallery-slide {
       display: none;
-      min-height: 200px;
     }
 
     .gallery-slide.active {
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: block;
     }
 
     .gallery-slide img {
@@ -1145,11 +1141,6 @@ function buildDigestPageHtml(
       height: auto;
       display: block;
       border-radius: 8px;
-      background: rgba(0,0,0,0.3);
-    }
-
-    .gallery-slide img.loading {
-      opacity: 0.5;
     }
 
     .gallery-nav {
@@ -1195,50 +1186,13 @@ function buildDigestPageHtml(
 
     /* Reddit video */
     .reddit-video {
-      position: relative;
       margin: 12px 0;
-    }
-
-    .video-container {
-      position: relative;
       border-radius: 8px;
       overflow: hidden;
       background: #000;
     }
 
-    .video-container .video-preview {
-      width: 100%;
-      height: auto;
-      display: block;
-      opacity: 0.8;
-    }
-
-    .video-play-btn {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 72px;
-      height: 72px;
-      border: none;
-      border-radius: 50%;
-      background: rgba(255, 69, 0, 0.9);
-      color: white;
-      font-size: 2rem;
-      cursor: pointer;
-      transition: transform 0.2s, background 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding-left: 4px;
-    }
-
-    .video-play-btn:hover {
-      transform: translate(-50%, -50%) scale(1.1);
-      background: rgba(255, 69, 0, 1);
-    }
-
-    .video-container iframe {
+    .reddit-video iframe {
       width: 100%;
       aspect-ratio: 16 / 9;
       border: none;
@@ -1338,18 +1292,6 @@ function buildDigestPageHtml(
         '?rel=0" allowfullscreen loading="lazy"></iframe>';
     });
 
-    // --- Reddit video embeds - click to load ---
-    document.querySelectorAll('.video-play-btn').forEach(function(btn) {
-      btn.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        var embedUrl = btn.getAttribute('data-embed-url');
-        var container = btn.closest('.video-container');
-        if (container && embedUrl) {
-          container.innerHTML = '<iframe src="' + embedUrl + '" allowfullscreen loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>';
-        }
-      });
-    });
 
     // --- Image gallery navigation with swipe support ---
     document.querySelectorAll('.image-gallery').forEach(function(gallery) {
@@ -1357,15 +1299,27 @@ function buildDigestPageHtml(
       var counter = gallery.querySelector('.gallery-counter');
       var container = gallery.querySelector('.gallery-container');
       var currentIdx = 0;
+      var containerHeight = 0;
 
-      function preloadAdjacent(index) {
-        [-1, 1].forEach(function(offset) {
-          var adjIndex = index + offset;
-          if (adjIndex < 0) adjIndex = slides.length - 1;
-          if (adjIndex >= slides.length) adjIndex = 0;
-          var img = slides[adjIndex].querySelector('img');
-          if (img && img.dataset.src && !img.src) {
-            img.src = img.dataset.src;
+      // Preload ALL images immediately and lock container height
+      function preloadAllImages() {
+        var firstImg = slides[0] && slides[0].querySelector('img');
+        if (firstImg && firstImg.complete && firstImg.naturalHeight > 0) {
+          containerHeight = firstImg.offsetHeight;
+          container.style.minHeight = containerHeight + 'px';
+        } else if (firstImg) {
+          firstImg.onload = function() {
+            containerHeight = firstImg.offsetHeight;
+            container.style.minHeight = containerHeight + 'px';
+          };
+        }
+
+        // Preload all other images by creating Image objects
+        slides.forEach(function(slide) {
+          var img = slide.querySelector('img');
+          if (img && img.src) {
+            var preloader = new Image();
+            preloader.src = img.src;
           }
         });
       }
@@ -1380,7 +1334,6 @@ function buildDigestPageHtml(
         if (counter) {
           counter.textContent = (index + 1) + ' / ' + slides.length;
         }
-        preloadAdjacent(index);
       }
 
       gallery.showSlide = showSlide;
@@ -1424,7 +1377,7 @@ function buildDigestPageHtml(
         }, { passive: true });
       }
 
-      preloadAdjacent(0);
+      preloadAllImages();
     });
 
     // --- Vim-style keyboard navigation ---
@@ -1654,6 +1607,7 @@ function buildPollRunPageHtml(
       padding: 8px 12px;
       border: none;
       border-radius: 6px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 0.875rem;
       font-weight: 600;
       cursor: pointer;
@@ -1897,18 +1851,14 @@ function buildPollRunPageHtml(
       overflow: hidden;
       border-radius: 8px;
       background: rgba(0,0,0,0.2);
-      min-height: 200px;
     }
 
     .gallery-slide {
       display: none;
-      min-height: 200px;
     }
 
     .gallery-slide.active {
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: block;
     }
 
     .gallery-slide img {
@@ -1916,11 +1866,6 @@ function buildPollRunPageHtml(
       height: auto;
       display: block;
       border-radius: 8px;
-      background: rgba(0,0,0,0.3);
-    }
-
-    .gallery-slide img.loading {
-      opacity: 0.5;
     }
 
     .gallery-nav {
@@ -1966,50 +1911,13 @@ function buildPollRunPageHtml(
 
     /* Reddit video */
     .reddit-video {
-      position: relative;
       margin: 12px 0;
-    }
-
-    .video-container {
-      position: relative;
       border-radius: 8px;
       overflow: hidden;
       background: #000;
     }
 
-    .video-container .video-preview {
-      width: 100%;
-      height: auto;
-      display: block;
-      opacity: 0.8;
-    }
-
-    .video-play-btn {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 72px;
-      height: 72px;
-      border: none;
-      border-radius: 50%;
-      background: rgba(255, 69, 0, 0.9);
-      color: white;
-      font-size: 2rem;
-      cursor: pointer;
-      transition: transform 0.2s, background 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding-left: 4px;
-    }
-
-    .video-play-btn:hover {
-      transform: translate(-50%, -50%) scale(1.1);
-      background: rgba(255, 69, 0, 1);
-    }
-
-    .video-container iframe {
+    .reddit-video iframe {
       width: 100%;
       aspect-ratio: 16 / 9;
       border: none;
@@ -2126,18 +2034,6 @@ function buildPollRunPageHtml(
         '?rel=0" allowfullscreen loading="lazy"></iframe>';
     });
 
-    // Reddit video embeds - click to load
-    document.querySelectorAll('.video-play-btn').forEach(function(btn) {
-      btn.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        var embedUrl = btn.getAttribute('data-embed-url');
-        var container = btn.closest('.video-container');
-        if (container && embedUrl) {
-          container.innerHTML = '<iframe src="' + embedUrl + '" allowfullscreen loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>';
-        }
-      });
-    });
 
     // Image gallery navigation with swipe support
     function initGalleries() {
@@ -2146,16 +2042,27 @@ function buildPollRunPageHtml(
         var counter = gallery.querySelector('.gallery-counter');
         var container = gallery.querySelector('.gallery-container');
         var currentIndex = 0;
+        var containerHeight = 0;
 
-        function preloadAdjacent(index) {
-          // Preload prev and next images
-          [-1, 1].forEach(function(offset) {
-            var adjIndex = index + offset;
-            if (adjIndex < 0) adjIndex = slides.length - 1;
-            if (adjIndex >= slides.length) adjIndex = 0;
-            var img = slides[adjIndex].querySelector('img');
-            if (img && img.dataset.src && !img.src) {
-              img.src = img.dataset.src;
+        // Preload ALL images immediately and lock container height
+        function preloadAllImages() {
+          var firstImg = slides[0] && slides[0].querySelector('img');
+          if (firstImg && firstImg.complete && firstImg.naturalHeight > 0) {
+            containerHeight = firstImg.offsetHeight;
+            container.style.minHeight = containerHeight + 'px';
+          } else if (firstImg) {
+            firstImg.onload = function() {
+              containerHeight = firstImg.offsetHeight;
+              container.style.minHeight = containerHeight + 'px';
+            };
+          }
+
+          // Preload all other images by creating Image objects
+          slides.forEach(function(slide) {
+            var img = slide.querySelector('img');
+            if (img && img.src) {
+              var preloader = new Image();
+              preloader.src = img.src;
             }
           });
         }
@@ -2170,7 +2077,6 @@ function buildPollRunPageHtml(
           if (counter) {
             counter.textContent = (index + 1) + ' / ' + slides.length;
           }
-          preloadAdjacent(index);
         }
 
         // Store functions on gallery for keyboard access
@@ -2195,7 +2101,6 @@ function buildPollRunPageHtml(
         if (container) {
           var touchStartX = 0;
           var touchStartY = 0;
-          var touchEndX = 0;
 
           container.addEventListener('touchstart', function(e) {
             touchStartX = e.changedTouches[0].screenX;
@@ -2203,7 +2108,7 @@ function buildPollRunPageHtml(
           }, { passive: true });
 
           container.addEventListener('touchend', function(e) {
-            touchEndX = e.changedTouches[0].screenX;
+            var touchEndX = e.changedTouches[0].screenX;
             var touchEndY = e.changedTouches[0].screenY;
             var diffX = touchStartX - touchEndX;
             var diffY = Math.abs(touchStartY - touchEndY);
@@ -2219,8 +2124,7 @@ function buildPollRunPageHtml(
           }, { passive: true });
         }
 
-        // Preload first adjacent images
-        preloadAdjacent(0);
+        preloadAllImages();
       });
     }
     initGalleries();
