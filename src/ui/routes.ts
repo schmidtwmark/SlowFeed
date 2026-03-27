@@ -1194,7 +1194,7 @@ function buildDigestPageHtml(
 
     .reddit-video iframe {
       width: 100%;
-      aspect-ratio: 16 / 9;
+      min-height: 600px;
       border: none;
       display: block;
     }
@@ -1603,11 +1603,15 @@ function buildPollRunPageHtml(
       margin-bottom: 10px;
     }
 
+    .source-select,
+    .source-select option {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
     .source-select {
       padding: 8px 12px;
       border: none;
       border-radius: 6px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 0.875rem;
       font-weight: 600;
       cursor: pointer;
@@ -1619,6 +1623,12 @@ function buildPollRunPageHtml(
       background-repeat: no-repeat;
       background-position: right 10px center;
       padding-right: 28px;
+    }
+
+    .source-select option {
+      font-weight: normal;
+      color: black;
+      background: white;
     }
 
     .source-select.reddit { background-color: #ff4500; }
@@ -1919,7 +1929,7 @@ function buildPollRunPageHtml(
 
     .reddit-video iframe {
       width: 100%;
-      aspect-ratio: 16 / 9;
+      min-height: 600px;
       border: none;
       display: block;
     }
