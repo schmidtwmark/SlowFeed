@@ -1194,7 +1194,6 @@ function buildDigestPageHtml(
 
     .reddit-video iframe {
       width: 100%;
-      height: 400px;
       border: none;
       display: block;
     }
@@ -1290,23 +1289,6 @@ function buildDigestPageHtml(
       var videoId = el.getAttribute('data-video-id');
       el.innerHTML = '<iframe src="https://www.youtube.com/embed/' + videoId +
         '?rel=0" allowfullscreen loading="lazy"></iframe>';
-    });
-
-    // --- Reddit embed auto-resize ---
-    window.addEventListener('message', function(e) {
-      if (e.origin !== 'https://www.redditmedia.com') return;
-      try {
-        var data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-        if (data.type === 'resize' && data.data && data.data.height) {
-          // Find the iframe that sent this message
-          var iframes = document.querySelectorAll('.reddit-video iframe');
-          iframes.forEach(function(iframe) {
-            if (iframe.contentWindow === e.source) {
-              iframe.style.height = data.data.height + 'px';
-            }
-          });
-        }
-      } catch (err) {}
     });
 
     // --- Image gallery navigation with swipe support ---
@@ -1945,7 +1927,6 @@ function buildPollRunPageHtml(
 
     .reddit-video iframe {
       width: 100%;
-      height: 400px;
       border: none;
       display: block;
     }
@@ -2058,22 +2039,6 @@ function buildPollRunPageHtml(
       var videoId = el.getAttribute('data-video-id');
       el.innerHTML = '<iframe src="https://www.youtube.com/embed/' + videoId +
         '?rel=0" allowfullscreen loading="lazy"></iframe>';
-    });
-
-    // Reddit embed auto-resize
-    window.addEventListener('message', function(e) {
-      if (e.origin !== 'https://www.redditmedia.com') return;
-      try {
-        var data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-        if (data.type === 'resize' && data.data && data.data.height) {
-          var iframes = document.querySelectorAll('.reddit-video iframe');
-          iframes.forEach(function(iframe) {
-            if (iframe.contentWindow === e.source) {
-              iframe.style.height = data.data.height + 'px';
-            }
-          });
-        }
-      } catch (err) {}
     });
 
     // Image gallery navigation with swipe support

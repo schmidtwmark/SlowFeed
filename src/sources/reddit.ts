@@ -487,9 +487,9 @@ export async function pollReddit(): Promise<DigestPost[]> {
         const videoPreview = postJson?.previewUrl || post.previewUrl;
 
         if (embedPostId) {
-          const embedUrl = `https://www.redditmedia.com/r/${escapeHtml(post.subreddit)}/comments/${escapeHtml(embedPostId)}/?embed=true`;
+          const embedUrl = `https://www.redditmedia.com/r/${escapeHtml(post.subreddit)}/comments/${escapeHtml(embedPostId)}/?embed=true&showmedia=true`;
           content += `<div class="reddit-video">`;
-          content += `<iframe src="${embedUrl}" allowfullscreen loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>`;
+          content += `<iframe src="${embedUrl}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-popups"></iframe>`;
           content += `</div>`;
         } else {
           // Fallback to link if we can't extract the post ID
