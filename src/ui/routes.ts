@@ -1027,9 +1027,12 @@ function buildDigestPageHtml(
     /* Images */
     article.post img {
       max-width: 100%;
+      max-height: 80vh;
+      width: auto;
       height: auto;
       border-radius: 6px;
       margin: 8px 0;
+      object-fit: contain;
     }
 
     /* YouTube embeds */
@@ -1137,10 +1140,13 @@ function buildDigestPageHtml(
     }
 
     .gallery-slide img {
-      width: 100%;
+      max-width: 100%;
+      max-height: 80vh;
+      width: auto;
       height: auto;
       display: block;
       border-radius: 8px;
+      object-fit: contain;
     }
 
     .gallery-nav {
@@ -1870,10 +1876,13 @@ function buildPollRunPageHtml(
     }
 
     .gallery-slide img {
-      width: 100%;
+      max-width: 100%;
+      max-height: 80vh;
+      width: auto;
       height: auto;
       display: block;
       border-radius: 8px;
+      object-fit: contain;
     }
 
     .gallery-nav {
