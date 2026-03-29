@@ -9,7 +9,8 @@ import { testDiscordConnection, fetchGuilds, fetchChannels, pollDiscord } from '
 import { pollReddit } from '../sources/reddit.js';
 import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
-import type { ScheduleInput } from '../types/index.js';
+import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, getDigestPosts } from '../digest.js';
+import type { ScheduleInput, SourceType } from '../types/index.js';
 import {
   hasPasskeys,
   startRegistration,
@@ -257,6 +258,104 @@ export function createUiRouter(): Router {
     } catch (err) {
       logger.error('Error renaming passkey:', err);
       res.status(500).json({ error: 'Failed to rename passkey' });
+    }
+  });
+
+  // ========================================
+  // Native App API Endpoints
+  // ========================================
+
+  // List all digests with optional source filter
+  router.get('/api/digests', async (req, res) => {
+    try {
+      const source = req.query.source as SourceType | undefined;
+      const digests = await getDigestItems(source);
+
+      // Return without HTML content for listing (lighter payload)
+      const digestList = digests.map(d => ({
+        id: d.id,
+        source: d.source,
+        title: d.title,
+        postCount: d.post_count,
+        publishedAt: d.published_at,
+        readAt: d.read_at,
+      }));
+
+      res.json(digestList);
+    } catch (err) {
+      logger.error('Error fetching digests:', err);
+      res.status(500).json({ error: 'Failed to fetch digests' });
+    }
+  });
+
+  // Get single digest with full content
+  router.get('/api/digests/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const digest = await getDigestById(id);
+
+      if (!digest) {
+        res.status(404).json({ error: 'Digest not found' });
+        return;
+      }
+
+      // Get the individual posts linked to this digest
+      const posts = await getDigestPosts(id);
+
+      res.json({
+        ...digest,
+        posts,
+      });
+    } catch (err) {
+      logger.error('Error fetching digest:', err);
+      res.status(500).json({ error: 'Failed to fetch digest' });
+    }
+  });
+
+  // Mark digest as read
+  router.post('/api/digests/:id/read', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updated = await markDigestAsRead(id);
+
+      if (updated) {
+        res.json({ success: true });
+      } else {
+        // May already be read or not found - still return success
+        res.json({ success: true, alreadyRead: true });
+      }
+    } catch (err) {
+      logger.error('Error marking digest as read:', err);
+      res.status(500).json({ error: 'Failed to mark digest as read' });
+    }
+  });
+
+  // Mark digest as unread
+  router.delete('/api/digests/:id/read', async (req, res) => {
+    try {
+      const { id } = req.params;
+      await markDigestAsUnread(id);
+      res.json({ success: true });
+    } catch (err) {
+      logger.error('Error marking digest as unread:', err);
+      res.status(500).json({ error: 'Failed to mark digest as unread' });
+    }
+  });
+
+  // Get available sources and their enabled status
+  router.get('/api/sources', async (_req, res) => {
+    try {
+      const config = await loadConfig();
+      const sources = [
+        { id: 'reddit', name: 'Reddit', enabled: config.reddit_enabled },
+        { id: 'bluesky', name: 'Bluesky', enabled: config.bluesky_enabled },
+        { id: 'youtube', name: 'YouTube', enabled: config.youtube_enabled },
+        { id: 'discord', name: 'Discord', enabled: config.discord_enabled },
+      ];
+      res.json(sources);
+    } catch (err) {
+      logger.error('Error fetching sources:', err);
+      res.status(500).json({ error: 'Failed to fetch sources' });
     }
   });
 

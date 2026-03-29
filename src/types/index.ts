@@ -85,6 +85,7 @@ export interface DigestItem {
   post_ids: string[];
   published_at: Date;
   created_at: Date;
+  read_at: Date | null;          // When the digest was marked as read
 }
 
 export interface DigestItemInput {
@@ -117,4 +118,5 @@ export interface DigestItemRow {
   post_ids: string[];
   published_at: Date;
   created_at: Date;
+  read_at: Date | null;
 }

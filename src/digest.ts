@@ -589,6 +589,7 @@ export async function createDigest(
     post_ids: postIds,
     published_at: new Date(),
     created_at: new Date(),
+    read_at: null,
   };
 }
 
@@ -597,7 +598,7 @@ export async function createDigest(
  */
 export async function getDigestItems(source?: SourceType): Promise<DigestItem[]> {
   let sql = `
-    SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, published_at, created_at
+    SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, published_at, created_at, read_at
     FROM digest_items
   `;
   const params: string[] = [];
@@ -622,7 +623,73 @@ export async function getDigestItems(source?: SourceType): Promise<DigestItem[]>
     post_ids: row.post_ids,
     published_at: row.published_at,
     created_at: row.created_at,
+    read_at: row.read_at,
   }));
+}
+
+/**
+ * Get a single digest by ID
+ */
+export async function getDigestById(id: string): Promise<DigestItem | null> {
+  const { rows } = await query<DigestItemRow>(
+    `SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, published_at, created_at, read_at
+     FROM digest_items WHERE id = $1`,
+    [id]
+  );
+
+  if (rows.length === 0) return null;
+
+  const row = rows[0];
+  return {
+    id: row.id,
+    source: row.source as SourceType,
+    schedule_id: row.schedule_id,
+    poll_run_id: row.poll_run_id,
+    title: row.title,
+    content: row.content,
+    post_count: row.post_count,
+    post_ids: row.post_ids,
+    published_at: row.published_at,
+    created_at: row.created_at,
+    read_at: row.read_at,
+  };
+}
+
+/**
+ * Mark a digest as read
+ */
+export async function markDigestAsRead(id: string): Promise<boolean> {
+  const result = await query(
+    `UPDATE digest_items SET read_at = NOW() WHERE id = $1 AND read_at IS NULL`,
+    [id]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Mark a digest as unread
+ */
+export async function markDigestAsUnread(id: string): Promise<boolean> {
+  const result = await query(
+    `UPDATE digest_items SET read_at = NULL WHERE id = $1`,
+    [id]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Get posts for a digest by looking up seen_posts linked to it
+ */
+export async function getDigestPosts(digestId: string): Promise<{
+  postId: string;
+  source: string;
+  title: string | null;
+}[]> {
+  const { rows } = await query<{ post_id: string; source: string; title: string | null }>(
+    `SELECT post_id, source, title FROM seen_posts WHERE digest_id = $1 ORDER BY added_at`,
+    [digestId]
+  );
+  return rows.map(r => ({ postId: r.post_id, source: r.source, title: r.title }));
 }
 
 /**
