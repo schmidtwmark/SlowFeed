@@ -48,6 +48,7 @@ final class AppState {
     var currentDigest: Digest?
     var selectedSource: SourceType?
     var currentDigestIndex: Int = 0
+    var expandedGroups: Set<String> = []
 
     // Sources
     var sources: [SourceInfo] = []
@@ -174,6 +175,9 @@ final class AppState {
                 if !digests.isEmpty {
                     currentDigestIndex = 0
                 }
+
+                // Auto-expand all groups on initial load
+                expandDigestGroups()
             }
 
             // Load the current digest content
@@ -193,6 +197,7 @@ final class AppState {
             let loadedDigests = try await apiClient.getDigests(source: selectedSource)
             await MainActor.run {
                 digests = loadedDigests
+                expandDigestGroups()
             }
         } catch {
             await MainActor.run {
@@ -224,6 +229,7 @@ final class AppState {
                         source: existing.source,
                         title: existing.title,
                         postCount: existing.postCount,
+                        pollRunId: existing.pollRunId,
                         publishedAt: existing.publishedAt,
                         readAt: Date()
                     )
@@ -305,5 +311,21 @@ final class AppState {
     func triggerPoll(source: SourceType? = nil) async throws {
         try await apiClient.triggerPoll(source: source)
         await refreshDigests()
+    }
+
+    // MARK: - Sidebar Groups
+
+    func expandDigestGroups() {
+        let calendar = Calendar.current
+        for digest in digests {
+            let groupKey: String
+            if let pollRunId = digest.pollRunId {
+                groupKey = "run_\(pollRunId)"
+            } else {
+                let components = calendar.dateComponents([.year, .month, .day, .hour], from: digest.publishedAt)
+                groupKey = "time_\(components.year!)_\(components.month!)_\(components.day!)_\(components.hour!)"
+            }
+            expandedGroups.insert(groupKey)
+        }
     }
 }

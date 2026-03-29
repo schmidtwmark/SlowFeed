@@ -29,14 +29,13 @@ struct MainView: View {
     }
 }
 
-// MARK: - Sidebar (Digest Timeline)
+// MARK: - Sidebar (Digest Timeline grouped by poll run)
 
 struct DigestSidebar: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
         VStack(spacing: 0) {
-            // Digest list
             List(selection: Binding(
                 get: { appState.currentDigest?.id },
                 set: { id in
@@ -47,9 +46,34 @@ struct DigestSidebar: View {
                     }
                 }
             )) {
-                ForEach(appState.digests) { digest in
-                    DigestRow(digest: digest)
-                        .tag(digest.id)
+                ForEach(groupedDigests) { group in
+                    Section(isExpanded: Binding(
+                        get: { appState.expandedGroups.contains(group.id) },
+                        set: { expanded in
+                            if expanded {
+                                appState.expandedGroups.insert(group.id)
+                            } else {
+                                appState.expandedGroups.remove(group.id)
+                            }
+                        }
+                    )) {
+                        ForEach(group.digests) { digest in
+                            DigestRow(digest: digest)
+                                .tag(digest.id)
+                        }
+                    } header: {
+                        HStack {
+                            Text(group.label)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+
+                            Spacer()
+
+                            Text("\(group.totalPosts) posts")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
             .listStyle(.sidebar)
@@ -82,6 +106,69 @@ struct DigestSidebar: View {
         }
         #endif
     }
+
+    // MARK: - Grouping Logic
+
+    private var groupedDigests: [DigestGroup] {
+        let calendar = Calendar.current
+
+        // Group digests by poll run ID, falling back to hour-based grouping
+        var groups: [String: [DigestSummary]] = [:]
+        var groupDates: [String: Date] = [:]
+
+        for digest in appState.digests {
+            let groupKey: String
+            if let pollRunId = digest.pollRunId {
+                groupKey = "run_\(pollRunId)"
+            } else {
+                // Fall back to grouping by hour
+                let components = calendar.dateComponents([.year, .month, .day, .hour], from: digest.publishedAt)
+                groupKey = "time_\(components.year!)_\(components.month!)_\(components.day!)_\(components.hour!)"
+            }
+
+            groups[groupKey, default: []].append(digest)
+            // Use earliest date in group for sorting
+            if let existing = groupDates[groupKey] {
+                groupDates[groupKey] = max(existing, digest.publishedAt)
+            } else {
+                groupDates[groupKey] = digest.publishedAt
+            }
+        }
+
+        return groups.map { key, digests in
+            let date = groupDates[key] ?? Date()
+            return DigestGroup(
+                id: key,
+                date: date,
+                label: formatGroupLabel(date: date),
+                digests: digests.sorted { $0.source.rawValue < $1.source.rawValue },
+                totalPosts: digests.reduce(0) { $0 + $1.postCount }
+            )
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    private func formatGroupLabel(date: Date) -> String {
+        let calendar = Calendar.current
+        let timeStr = date.formatted(date: .omitted, time: .shortened)
+
+        if calendar.isDateInToday(date) {
+            return "Today \(timeStr)"
+        } else if calendar.isDateInYesterday(date) {
+            return "Yesterday \(timeStr)"
+        } else {
+            let dayStr = date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+            return "\(dayStr) \(timeStr)"
+        }
+    }
+}
+
+struct DigestGroup: Identifiable {
+    let id: String
+    let date: Date
+    let label: String
+    let digests: [DigestSummary]
+    let totalPosts: Int
 }
 
 struct DigestRow: View {
@@ -95,27 +182,16 @@ struct DigestRow: View {
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(digest.title)
+                Text(digest.source.displayName)
                     .font(.subheadline)
                     .fontWeight(digest.isRead ? .regular : .semibold)
-                    .lineLimit(2)
 
-                HStack(spacing: 8) {
-                    Text(digest.source.displayName)
-                        .font(.caption)
-                        .foregroundStyle(sourceColor)
-
-                    Text("\(digest.postCount) posts")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    Text(formattedDate)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("\(digest.postCount) posts")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+
+            Spacer()
 
             if !digest.isRead {
                 Circle()
@@ -132,17 +208,6 @@ struct DigestRow: View {
         case .bluesky: return .blue
         case .youtube: return .red
         case .discord: return .purple
-        }
-    }
-
-    private var formattedDate: String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(digest.publishedAt) {
-            return digest.publishedAt.formatted(date: .omitted, time: .shortened)
-        } else if calendar.isDateInYesterday(digest.publishedAt) {
-            return "Yesterday"
-        } else {
-            return digest.publishedAt.formatted(.dateTime.month(.abbreviated).day())
         }
     }
 }

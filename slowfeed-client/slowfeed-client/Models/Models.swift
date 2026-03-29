@@ -45,6 +45,7 @@ struct DigestSummary: Codable, Identifiable, Equatable {
     let source: SourceType
     let title: String
     let postCount: Int
+    let pollRunId: Int?
     let publishedAt: Date
     let readAt: Date?
 
@@ -53,6 +54,7 @@ struct DigestSummary: Codable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, source, title
         case postCount = "postCount"
+        case pollRunId = "pollRunId"
         case publishedAt = "publishedAt"
         case readAt = "readAt"
     }
