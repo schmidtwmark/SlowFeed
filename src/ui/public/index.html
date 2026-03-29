@@ -5,19 +5,40 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Slowfeed</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/@simplewebauthn/browser@11.0.0/dist/bundle/index.umd.min.js"></script>
 </head>
 <body>
   <div id="app">
-    <!-- Login Screen -->
+    <!-- Login/Setup Screen -->
     <div id="login-screen" class="screen">
       <div class="login-container">
         <h1>Slowfeed</h1>
-        <p>Enter your password to continue</p>
-        <form id="login-form">
-          <input type="password" id="password-input" placeholder="Password" required>
-          <button type="submit">Login</button>
-        </form>
+
+        <!-- Setup mode (first time) -->
+        <div id="setup-mode" class="hidden">
+          <p>Welcome! Create a passkey to secure your account.</p>
+          <div class="passkey-setup">
+            <input type="text" id="passkey-name-input" placeholder="Passkey name (optional)" maxlength="50">
+            <button type="button" id="create-passkey-btn" class="passkey-btn">
+              <span class="passkey-icon">🔐</span>
+              Create Passkey
+            </button>
+          </div>
+        </div>
+
+        <!-- Login mode (returning user) -->
+        <div id="login-mode" class="hidden">
+          <p>Sign in with your passkey</p>
+          <div class="passkey-login">
+            <button type="button" id="login-passkey-btn" class="passkey-btn">
+              <span class="passkey-icon">🔑</span>
+              Sign in with Passkey
+            </button>
+          </div>
+        </div>
+
         <p id="login-error" class="error"></p>
+        <p id="login-status" class="status"></p>
       </div>
     </div>
 
@@ -232,16 +253,26 @@
               </div>
               <p class="help-text">This token is required to access your RSS feed. Add <code>?token=&lt;token&gt;</code> to feed URLs.</p>
             </div>
-            <div class="form-group">
-              <label for="ui_password">UI Password</label>
-              <input type="password" id="ui_password" name="ui_password">
-            </div>
             <p class="fieldset-note">To configure polling times, use the <a href="/schedules">Schedules</a> page.</p>
             <div class="form-actions">
               <button type="submit" class="primary-btn">Save Settings</button>
               <span class="section-message" id="general-message"></span>
             </div>
           </form>
+
+          <div class="passkeys-section">
+            <h3>Passkeys</h3>
+            <p class="page-description">Manage your registered passkeys for authentication.</p>
+
+            <div id="passkeys-list" class="passkeys-list">
+              <p class="loading">Loading passkeys...</p>
+            </div>
+
+            <div class="passkey-add-section">
+              <input type="text" id="new-passkey-name" placeholder="New passkey name (optional)" maxlength="50">
+              <button type="button" id="add-passkey-btn" class="secondary-btn">Add Passkey</button>
+            </div>
+          </div>
         </section>
 
         <!-- Settings: Bluesky -->

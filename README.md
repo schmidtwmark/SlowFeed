@@ -10,8 +10,9 @@ A self-hosted RSS feed aggregator that polls Reddit, Bluesky, and YouTube on a c
 - **Notifications**: Bluesky mentions/replies appear at the top of your feed
 - **Deduplication**: SHA-256 hashing ensures you never see the same post twice
 - **Web UI**: Configure sources, view feed preview, trigger manual refreshes
+- **Passkey authentication**: Secure passwordless login using WebAuthn
 - **Docker-ready**: Single `docker-compose up` to run everything
-- **Remote access**: Cloudflare Tunnel support for secure external access
+- **Cloud deployment**: Easy deployment to Railway or other platforms
 
 ## Prerequisites
 
@@ -47,7 +48,7 @@ docker-compose up --build
 
 Open http://localhost:3000 in your browser.
 
-Default password: `changeme` (change this in Settings after logging in)
+On first visit, you'll be prompted to create a passkey for secure authentication. Passkeys use your device's biometrics (Face ID, Touch ID, Windows Hello) or security key for passwordless login.
 
 ### 4. Subscribe to Your Feed
 
@@ -104,7 +105,21 @@ In the Web UI Settings:
 
 ## Configuration
 
-All settings are managed through the Web UI at http://localhost:3000.
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `ENCRYPTION_KEY` | Yes | 32-character string for encrypting tokens |
+| `WEBAUTHN_RP_ID` | No | Domain for passkey binding (default: `localhost`) |
+| `WEBAUTHN_RP_NAME` | No | Display name for passkeys (default: `Slowfeed`) |
+| `WEBAUTHN_ORIGIN` | No | Full origin URL (default: `http://localhost:3000`) |
+| `BASE_URL` | No | Base URL for feed links (default: `http://localhost:3000`) |
+| `PORT` | No | Server port (default: `3000`) |
+
+### Web UI Settings
+
+All other settings are managed through the Web UI.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -115,67 +130,66 @@ All settings are managed through the Web UI at http://localhost:3000.
 | Reddit Comment Depth | 3 | Levels of comments to include |
 | Bluesky Top N | 20 | Number of top-scored posts to keep |
 
-## Remote Access with Cloudflare Tunnel
+## Deployment on Railway
 
-To access Slowfeed from outside your network (e.g., for mobile RSS readers):
+Railway provides an easy way to deploy Slowfeed with a managed PostgreSQL database.
 
-### Automatic Setup
+### 1. Create a Railway Project
+
+1. Go to [railway.app](https://railway.app) and create a new project
+2. Add a PostgreSQL database to your project
+3. Add a new service from your GitHub repository
+
+### 2. Configure Environment Variables
+
+In your Railway service settings, add these environment variables:
 
 ```bash
-./scripts/setup-cloudflare-tunnel.sh
+# Required
+DATABASE_URL=${{Postgres.DATABASE_URL}}    # Railway auto-fills this
+ENCRYPTION_KEY=your-random-32-char-string  # Generate a secure random string
+
+# WebAuthn Configuration (use your Railway domain)
+WEBAUTHN_RP_ID=your-app.up.railway.app     # Your Railway domain (without https://)
+WEBAUTHN_RP_NAME=Slowfeed
+WEBAUTHN_ORIGIN=https://your-app.up.railway.app
+
+# Feed URLs
+BASE_URL=https://your-app.up.railway.app
 ```
 
-### Manual Setup
+**Important**: The `WEBAUTHN_RP_ID` must match your deployment domain exactly (without the protocol). Passkeys are bound to this domain and won't work if it's incorrect.
 
-1. Install cloudflared:
+### 3. Deploy
+
+Railway will automatically build and deploy your app. Once deployed:
+
+1. Visit `https://your-app.up.railway.app`
+2. Create your first passkey to set up authentication
+3. Configure your feed sources in Settings
+
+### 4. Subscribe to Your Feed
+
+Add this URL to your RSS reader:
+```
+https://your-app.up.railway.app/feed.rss?token=YOUR_FEED_TOKEN
+```
+
+Get your feed token from the Dashboard in the Web UI.
+
+### Custom Domain (Optional)
+
+1. In Railway, go to your service Settings → Domains
+2. Add your custom domain (e.g., `slowfeed.example.com`)
+3. Update your DNS records as instructed by Railway
+4. Update your environment variables:
    ```bash
-   # macOS
-   brew install cloudflare/cloudflare/cloudflared
-
-   # Linux
-   curl -L -o cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-   sudo dpkg -i cloudflared.deb
+   WEBAUTHN_RP_ID=slowfeed.example.com
+   WEBAUTHN_ORIGIN=https://slowfeed.example.com
+   BASE_URL=https://slowfeed.example.com
    ```
 
-2. Authenticate:
-   ```bash
-   cloudflared tunnel login
-   ```
-
-3. Create tunnel:
-   ```bash
-   cloudflared tunnel create slowfeed
-   ```
-
-4. Create `~/.cloudflared/config.yml`:
-   ```yaml
-   tunnel: <TUNNEL_ID>
-   credentials-file: /path/to/.cloudflared/<TUNNEL_ID>.json
-
-   ingress:
-     - hostname: slowfeed.yourdomain.com
-       service: http://localhost:3000
-     - service: http_status:404
-   ```
-
-5. Add DNS route:
-   ```bash
-   cloudflared tunnel route dns slowfeed slowfeed.yourdomain.com
-   ```
-
-6. Run as service:
-   ```bash
-   sudo cloudflared service install
-   ```
-
-7. Update `.env`:
-   ```bash
-   BASE_URL=https://slowfeed.yourdomain.com
-   ```
-
-8. Add `https://slowfeed.yourdomain.com/auth/google/callback` to your Google OAuth redirect URIs
-
-Your feed is now available at `https://slowfeed.yourdomain.com/feed.rss`
+**Note**: After changing `WEBAUTHN_RP_ID`, existing passkeys will stop working. You'll need to clear the `passkey_credentials` table and create new passkeys.
 
 ## Development
 
@@ -210,6 +224,7 @@ src/
 ├── dedup.ts              # Deduplication logic
 ├── feed.ts               # RSS/Atom feed generation
 ├── scheduler.ts          # Cron job management
+├── webauthn.ts           # Passkey authentication (WebAuthn)
 ├── oauth.ts              # Token encryption/storage
 ├── logger.ts             # Winston logging
 ├── sources/
@@ -231,14 +246,31 @@ src/
 | `GET /feed.atom` | Atom feed |
 | `GET /feed.rss?source=reddit` | Filtered feed |
 | `GET /health` | Health check |
-| `POST /api/login` | Authenticate |
+| `GET /api/auth/setup-status` | Check if passkeys are configured |
+| `POST /api/auth/register/start` | Start passkey registration |
+| `POST /api/auth/register/finish` | Complete passkey registration |
+| `POST /api/auth/login/start` | Start passkey authentication |
+| `POST /api/auth/login/finish` | Complete passkey authentication |
+| `GET /api/passkeys` | List registered passkeys |
 | `GET /api/config` | Get configuration |
 | `POST /api/config` | Update configuration |
 | `GET /api/stats` | Dashboard statistics |
 | `POST /api/poll` | Trigger manual poll |
-| `GET /auth/google` | Start YouTube OAuth |
 
 ## Troubleshooting
+
+### Passkey not working / "Invalid or expired challenge"
+- Ensure `WEBAUTHN_RP_ID` matches your domain exactly (without `https://`)
+- Ensure `WEBAUTHN_ORIGIN` includes the full URL with protocol (e.g., `https://your-app.up.railway.app`)
+- If you changed domains, existing passkeys won't work. Clear the `passkey_credentials` table and create new ones.
+
+### "No passkeys registered"
+Visit the web UI and create your first passkey. This happens on first-time setup.
+
+### Passkey prompt doesn't appear
+- Make sure you're using HTTPS (passkeys require a secure context)
+- Try a different browser - some older browsers don't support WebAuthn
+- Check that your device supports passkeys (most modern devices do)
 
 ### "YouTube cookies not configured"
 Add your browser cookies in Settings. See the YouTube setup instructions above.

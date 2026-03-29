@@ -10,6 +10,17 @@ import { pollReddit } from '../sources/reddit.js';
 import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
 import type { ScheduleInput } from '../types/index.js';
+import {
+  hasPasskeys,
+  startRegistration,
+  finishRegistration,
+  startAuthentication,
+  finishAuthentication,
+  getCredentials,
+  deleteCredential,
+  renameCredential,
+  getWebAuthnConfig,
+} from '../webauthn.js';
 
 // Simple session store (in production, use a proper session store)
 const sessions = new Map<string, { authenticated: boolean; expires: number }>();
@@ -36,27 +47,128 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
 export function createUiRouter(): Router {
   const router = Router();
 
-  // Login endpoint
-  router.post('/api/login', async (req, res) => {
+  // Check if passkeys are set up (for first-time setup detection)
+  router.get('/api/auth/setup-status', async (_req, res) => {
     try {
-      const { password } = req.body;
-      const config = await loadConfig();
-
-      // Simple password comparison (in production, hash the stored password)
-      if (password === config.ui_password) {
-        const sessionId = generateSessionId();
-        sessions.set(sessionId, {
-          authenticated: true,
-          expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
-        });
-
-        res.json({ sessionId });
-      } else {
-        res.status(401).json({ error: 'Invalid password' });
-      }
+      const setupComplete = await hasPasskeys();
+      res.json({ setupComplete });
     } catch (err) {
-      logger.error('Login error:', err);
-      res.status(500).json({ error: 'Login failed' });
+      logger.error('Error checking setup status:', err);
+      res.status(500).json({ error: 'Failed to check setup status' });
+    }
+  });
+
+  // Start passkey registration
+  router.post('/api/auth/register/start', async (req, res) => {
+    try {
+      // If passkeys already exist, require authentication
+      const passkeyExists = await hasPasskeys();
+      if (passkeyExists) {
+        const sessionId = req.headers['x-session-id'] as string;
+        if (!sessionId || !sessions.has(sessionId)) {
+          res.status(401).json({ error: 'Authentication required to add a new passkey' });
+          return;
+        }
+        const session = sessions.get(sessionId)!;
+        if (!session.authenticated || session.expires <= Date.now()) {
+          sessions.delete(sessionId);
+          res.status(401).json({ error: 'Session expired' });
+          return;
+        }
+      }
+
+      const { options, challengeId } = await startRegistration();
+      res.json({ options, challengeId });
+    } catch (err) {
+      logger.error('Error starting registration:', err);
+      res.status(500).json({ error: 'Failed to start registration' });
+    }
+  });
+
+  // Finish passkey registration
+  router.post('/api/auth/register/finish', async (req, res) => {
+    try {
+      const { challengeId, response, name } = req.body;
+
+      if (!challengeId || !response) {
+        res.status(400).json({ error: 'Missing challengeId or response' });
+        return;
+      }
+
+      // If passkeys already exist, require authentication
+      const passkeyExists = await hasPasskeys();
+      if (passkeyExists) {
+        const sessionId = req.headers['x-session-id'] as string;
+        if (!sessionId || !sessions.has(sessionId)) {
+          res.status(401).json({ error: 'Authentication required' });
+          return;
+        }
+        const session = sessions.get(sessionId)!;
+        if (!session.authenticated || session.expires <= Date.now()) {
+          sessions.delete(sessionId);
+          res.status(401).json({ error: 'Session expired' });
+          return;
+        }
+      }
+
+      await finishRegistration(challengeId, response, name);
+
+      // Create a session for the user
+      const sessionId = generateSessionId();
+      sessions.set(sessionId, {
+        authenticated: true,
+        expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+      });
+
+      res.json({ success: true, sessionId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Registration failed';
+      logger.error('Registration error:', err);
+      res.status(400).json({ error: message });
+    }
+  });
+
+  // Start passkey authentication (login)
+  router.post('/api/auth/login/start', async (_req, res) => {
+    try {
+      const passkeyExists = await hasPasskeys();
+      if (!passkeyExists) {
+        res.status(400).json({ error: 'No passkeys registered. Please set up a passkey first.' });
+        return;
+      }
+
+      const { options, challengeId } = await startAuthentication();
+      res.json({ options, challengeId });
+    } catch (err) {
+      logger.error('Error starting authentication:', err);
+      res.status(500).json({ error: 'Failed to start authentication' });
+    }
+  });
+
+  // Finish passkey authentication (login)
+  router.post('/api/auth/login/finish', async (req, res) => {
+    try {
+      const { challengeId, response } = req.body;
+
+      if (!challengeId || !response) {
+        res.status(400).json({ error: 'Missing challengeId or response' });
+        return;
+      }
+
+      await finishAuthentication(challengeId, response);
+
+      // Create a session
+      const sessionId = generateSessionId();
+      sessions.set(sessionId, {
+        authenticated: true,
+        expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+      });
+
+      res.json({ success: true, sessionId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Authentication failed';
+      logger.error('Authentication error:', err);
+      res.status(401).json({ error: message });
     }
   });
 
@@ -84,23 +196,85 @@ export function createUiRouter(): Router {
     res.json({ authenticated: false });
   });
 
+  // Get WebAuthn configuration (for debugging)
+  router.get('/api/auth/webauthn-config', (_req, res) => {
+    res.json(getWebAuthnConfig());
+  });
+
   // Protected routes below
   router.use('/api', authMiddleware);
+
+  // Passkey management endpoints (protected)
+  router.get('/api/passkeys', async (_req, res) => {
+    try {
+      const credentials = await getCredentials();
+      // Return safe version without public keys
+      const safeCredentials = credentials.map((cred) => ({
+        id: cred.id,
+        name: cred.name,
+        deviceType: cred.deviceType,
+        backedUp: cred.backedUp,
+        createdAt: cred.createdAt,
+        lastUsedAt: cred.lastUsedAt,
+      }));
+      res.json(safeCredentials);
+    } catch (err) {
+      logger.error('Error fetching passkeys:', err);
+      res.status(500).json({ error: 'Failed to fetch passkeys' });
+    }
+  });
+
+  router.delete('/api/passkeys/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const deleted = await deleteCredential(id);
+      if (deleted) {
+        res.json({ success: true });
+      } else {
+        res.status(404).json({ error: 'Passkey not found' });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete passkey';
+      logger.error('Error deleting passkey:', err);
+      res.status(400).json({ error: message });
+    }
+  });
+
+  router.patch('/api/passkeys/:id', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { name } = req.body;
+      if (!name || typeof name !== 'string') {
+        res.status(400).json({ error: 'Name is required' });
+        return;
+      }
+      const updated = await renameCredential(id, name);
+      if (updated) {
+        res.json({ success: true });
+      } else {
+        res.status(404).json({ error: 'Passkey not found' });
+      }
+    } catch (err) {
+      logger.error('Error renaming passkey:', err);
+      res.status(500).json({ error: 'Failed to rename passkey' });
+    }
+  });
 
   // Get configuration
   router.get('/api/config', async (_req, res) => {
     try {
       const config = await loadConfig();
-      // Don't send passwords to the client (but keep feed_token visible)
+      // Don't send secrets to the client (but keep feed_token visible)
       const safeConfig = {
         ...config,
         bluesky_app_password: config.bluesky_app_password ? '••••••••' : '',
         discord_token: config.discord_token ? '••••••••' : '',
         youtube_cookies: config.youtube_cookies ? '••••••••' : '',
         reddit_cookies: config.reddit_cookies ? '••••••••' : '',
-        ui_password: '••••••••',
         // feed_token is intentionally NOT masked - users need to see it
       };
+      // Remove legacy password field if present
+      delete (safeConfig as Record<string, unknown>).ui_password;
       res.json(safeConfig);
     } catch (err) {
       logger.error('Error fetching config:', err);
@@ -145,7 +319,7 @@ export function createUiRouter(): Router {
         'discord_top_n',
         'feed_title',
         'feed_ttl_days',
-        'ui_password',
+        // ui_password removed - using passkeys for authentication now
       ];
 
       for (const key of allowedKeys) {

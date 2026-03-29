@@ -191,32 +191,174 @@ async function loadPageData(pageName) {
 
 // Authentication
 async function checkAuth() {
-  if (!sessionId) {
-    showLoginScreen();
-    return;
+  // First check if we have a valid session
+  if (sessionId) {
+    try {
+      const { authenticated } = await api('/api/auth/status');
+      if (authenticated) {
+        showMainScreen();
+        return;
+      }
+    } catch {
+      // Session invalid, continue to setup/login check
+    }
+    sessionId = null;
+    localStorage.removeItem('sessionId');
   }
 
+  // Check if passkeys are set up
   try {
-    const { authenticated } = await api('/api/auth/status');
-    if (authenticated) {
-      showMainScreen();
+    const response = await fetch('/api/auth/setup-status');
+    const { setupComplete } = await response.json();
+
+    if (setupComplete) {
+      showLoginMode();
     } else {
-      showLoginScreen();
+      showSetupMode();
     }
-  } catch {
+    showLoginScreen();
+  } catch (err) {
+    console.error('Error checking setup status:', err);
     showLoginScreen();
   }
 }
 
-async function login(password) {
-  const data = await api('/api/login', {
-    method: 'POST',
-    body: JSON.stringify({ password }),
-  });
+function showSetupMode() {
+  document.getElementById('setup-mode').classList.remove('hidden');
+  document.getElementById('login-mode').classList.add('hidden');
+}
 
-  sessionId = data.sessionId;
-  localStorage.setItem('sessionId', sessionId);
-  showMainScreen();
+function showLoginMode() {
+  document.getElementById('setup-mode').classList.add('hidden');
+  document.getElementById('login-mode').classList.remove('hidden');
+}
+
+// Passkey Registration (Setup)
+async function createPasskey() {
+  const errorEl = document.getElementById('login-error');
+  const statusEl = document.getElementById('login-status');
+  const nameInput = document.getElementById('passkey-name-input');
+  const btn = document.getElementById('create-passkey-btn');
+
+  errorEl.textContent = '';
+  statusEl.textContent = 'Starting passkey creation...';
+  btn.disabled = true;
+
+  try {
+    // Start registration
+    const startResponse = await fetch('/api/auth/register/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!startResponse.ok) {
+      const data = await startResponse.json();
+      throw new Error(data.error || 'Failed to start registration');
+    }
+
+    const { options, challengeId } = await startResponse.json();
+
+    statusEl.textContent = 'Please follow the prompts to create your passkey...';
+
+    // Use WebAuthn browser API
+    const credential = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: options });
+
+    statusEl.textContent = 'Verifying passkey...';
+
+    // Finish registration
+    const finishResponse = await fetch('/api/auth/register/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        challengeId,
+        response: credential,
+        name: nameInput.value || undefined,
+      }),
+    });
+
+    if (!finishResponse.ok) {
+      const data = await finishResponse.json();
+      throw new Error(data.error || 'Registration failed');
+    }
+
+    const { sessionId: newSessionId } = await finishResponse.json();
+    sessionId = newSessionId;
+    localStorage.setItem('sessionId', sessionId);
+
+    statusEl.textContent = 'Passkey created successfully!';
+    setTimeout(() => showMainScreen(), 500);
+  } catch (err) {
+    console.error('Passkey creation error:', err);
+    errorEl.textContent = err.message || 'Failed to create passkey';
+    statusEl.textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Passkey Authentication (Login)
+async function loginWithPasskey() {
+  const errorEl = document.getElementById('login-error');
+  const statusEl = document.getElementById('login-status');
+  const btn = document.getElementById('login-passkey-btn');
+
+  errorEl.textContent = '';
+  statusEl.textContent = 'Starting authentication...';
+  btn.disabled = true;
+
+  try {
+    // Start authentication
+    const startResponse = await fetch('/api/auth/login/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!startResponse.ok) {
+      const data = await startResponse.json();
+      throw new Error(data.error || 'Failed to start authentication');
+    }
+
+    const { options, challengeId } = await startResponse.json();
+
+    statusEl.textContent = 'Please verify your passkey...';
+
+    // Use WebAuthn browser API
+    const credential = await SimpleWebAuthnBrowser.startAuthentication({ optionsJSON: options });
+
+    statusEl.textContent = 'Verifying...';
+
+    // Finish authentication
+    const finishResponse = await fetch('/api/auth/login/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        challengeId,
+        response: credential,
+      }),
+    });
+
+    if (!finishResponse.ok) {
+      const data = await finishResponse.json();
+      throw new Error(data.error || 'Authentication failed');
+    }
+
+    const { sessionId: newSessionId } = await finishResponse.json();
+    sessionId = newSessionId;
+    localStorage.setItem('sessionId', sessionId);
+
+    statusEl.textContent = 'Authenticated!';
+    setTimeout(() => showMainScreen(), 500);
+  } catch (err) {
+    console.error('Passkey authentication error:', err);
+    if (err.name === 'NotAllowedError') {
+      errorEl.textContent = 'Authentication was cancelled';
+    } else {
+      errorEl.textContent = err.message || 'Failed to authenticate';
+    }
+    statusEl.textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function logout() {
@@ -228,7 +370,7 @@ async function logout() {
 
   sessionId = null;
   localStorage.removeItem('sessionId');
-  showLoginScreen();
+  checkAuth(); // This will show the appropriate login/setup screen
 }
 
 // Dashboard
@@ -414,9 +556,127 @@ async function loadGeneralSettings() {
     document.getElementById('feed_title').value = config.feed_title || '';
     document.getElementById('feed_ttl_days').value = config.feed_ttl_days || 14;
     document.getElementById('feed_token').value = config.feed_token || '';
-    document.getElementById('ui_password').value = config.ui_password || '';
+
+    // Load passkeys
+    await loadPasskeys();
   } catch (err) {
     console.error('Failed to load general settings:', err);
+  }
+}
+
+// Passkey Management
+async function loadPasskeys() {
+  const container = document.getElementById('passkeys-list');
+  if (!container) return;
+
+  try {
+    const passkeys = await api('/api/passkeys');
+    renderPasskeys(passkeys);
+  } catch (err) {
+    container.innerHTML = `<p class="error">Failed to load passkeys: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderPasskeys(passkeys) {
+  const container = document.getElementById('passkeys-list');
+  if (!container) return;
+
+  if (passkeys.length === 0) {
+    container.innerHTML = '<p class="empty-state">No passkeys registered.</p>';
+    return;
+  }
+
+  const canDelete = passkeys.length > 1;
+
+  let html = '';
+  for (const passkey of passkeys) {
+    const createdAt = new Date(passkey.createdAt).toLocaleDateString();
+    const lastUsed = passkey.lastUsedAt
+      ? new Date(passkey.lastUsedAt).toLocaleDateString()
+      : 'Never';
+    const deviceIcon = passkey.deviceType === 'multiDevice' ? '☁️' : '📱';
+    const backedUpBadge = passkey.backedUp ? '<span class="badge backed-up">Synced</span>' : '';
+
+    html += `
+      <div class="passkey-item" data-id="${escapeHtml(passkey.id)}">
+        <div class="passkey-info">
+          <span class="passkey-icon">${deviceIcon}</span>
+          <div class="passkey-details">
+            <span class="passkey-name">${escapeHtml(passkey.name || 'Unnamed Passkey')}</span>
+            ${backedUpBadge}
+            <span class="passkey-meta">Created: ${createdAt} | Last used: ${lastUsed}</span>
+          </div>
+        </div>
+        <div class="passkey-actions">
+          <button class="rename-passkey-btn" onclick="renamePasskey('${escapeHtml(passkey.id)}', '${escapeHtml(passkey.name || '')}')">Rename</button>
+          <button class="delete-passkey-btn danger-btn" onclick="deletePasskey('${escapeHtml(passkey.id)}')" ${!canDelete ? 'disabled title="Cannot delete the last passkey"' : ''}>Delete</button>
+        </div>
+      </div>
+    `;
+  }
+
+  container.innerHTML = html;
+}
+
+async function addPasskey() {
+  const nameInput = document.getElementById('new-passkey-name');
+  const btn = document.getElementById('add-passkey-btn');
+
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+
+  try {
+    // Start registration
+    const startResponse = await api('/api/auth/register/start', { method: 'POST' });
+    const { options, challengeId } = startResponse;
+
+    // Use WebAuthn browser API
+    const credential = await SimpleWebAuthnBrowser.startRegistration({ optionsJSON: options });
+
+    // Finish registration
+    await api('/api/auth/register/finish', {
+      method: 'POST',
+      body: JSON.stringify({
+        challengeId,
+        response: credential,
+        name: nameInput.value || undefined,
+      }),
+    });
+
+    nameInput.value = '';
+    await loadPasskeys();
+  } catch (err) {
+    console.error('Failed to add passkey:', err);
+    alert('Failed to add passkey: ' + (err.message || 'Unknown error'));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Add Passkey';
+  }
+}
+
+async function renamePasskey(id, currentName) {
+  const newName = prompt('Enter new name for this passkey:', currentName);
+  if (newName === null || newName === currentName) return;
+
+  try {
+    await api(`/api/passkeys/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: newName }),
+    });
+    await loadPasskeys();
+  } catch (err) {
+    alert('Failed to rename passkey: ' + (err.message || 'Unknown error'));
+  }
+}
+
+async function deletePasskey(id) {
+  if (!confirm('Are you sure you want to delete this passkey?')) return;
+
+  try {
+    await api(`/api/passkeys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await loadPasskeys();
+  } catch (err) {
+    alert('Failed to delete passkey: ' + (err.message || 'Unknown error'));
   }
 }
 
@@ -494,7 +754,6 @@ async function saveGeneralSettings(form) {
     const data = {
       feed_title: form.feed_title.value,
       feed_ttl_days: parseInt(form.feed_ttl_days.value, 10),
-      ui_password: form.ui_password.value,
     };
 
     await api('/api/config', {
@@ -1292,19 +1551,23 @@ async function runScheduleNow(id) {
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
-  // Login form
-  document.getElementById('login-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const password = document.getElementById('password-input').value;
-    const errorEl = document.getElementById('login-error');
+  // Passkey setup button
+  const createPasskeyBtn = document.getElementById('create-passkey-btn');
+  if (createPasskeyBtn) {
+    createPasskeyBtn.addEventListener('click', createPasskey);
+  }
 
-    try {
-      await login(password);
-      errorEl.textContent = '';
-    } catch (err) {
-      errorEl.textContent = err.message;
-    }
-  });
+  // Passkey login button
+  const loginPasskeyBtn = document.getElementById('login-passkey-btn');
+  if (loginPasskeyBtn) {
+    loginPasskeyBtn.addEventListener('click', loginWithPasskey);
+  }
+
+  // Add passkey button (in settings)
+  const addPasskeyBtn = document.getElementById('add-passkey-btn');
+  if (addPasskeyBtn) {
+    addPasskeyBtn.addEventListener('click', addPasskey);
+  }
 
   // Logout button
   document.getElementById('logout-btn').addEventListener('click', logout);

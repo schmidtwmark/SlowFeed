@@ -1809,3 +1809,208 @@ hr.post-separator {
     padding: 0.125rem 0.25rem;
   }
 }
+
+/* Passkey Authentication Styles */
+.passkey-setup,
+.passkey-login {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.passkey-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  font-size: 1.125rem;
+  background-color: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.passkey-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(233, 69, 96, 0.3);
+}
+
+.passkey-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.passkey-btn .passkey-icon {
+  font-size: 1.25rem;
+}
+
+#passkey-name-input {
+  text-align: center;
+}
+
+.login-container .status {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  min-height: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+/* Passkeys Management Section */
+.passkeys-section {
+  margin-top: 2.5rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--border);
+}
+
+.passkeys-section h3 {
+  margin-bottom: 0.5rem;
+  font-size: 1.25rem;
+  color: var(--accent);
+}
+
+.passkeys-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.passkey-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  gap: 1rem;
+}
+
+.passkey-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.passkey-info .passkey-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.passkey-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.passkey-name {
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.passkey-meta {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.625rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-left: 0.5rem;
+}
+
+.badge.backed-up {
+  background-color: var(--success);
+  color: white;
+}
+
+.passkey-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.passkey-actions button {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+.rename-passkey-btn {
+  background-color: var(--primary);
+}
+
+.delete-passkey-btn {
+  background-color: transparent;
+  border: 1px solid var(--error);
+  color: var(--error);
+}
+
+.delete-passkey-btn:hover:not(:disabled) {
+  background-color: var(--error);
+  color: white;
+}
+
+.delete-passkey-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.passkey-add-section {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+.passkey-add-section input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.passkey-add-section button {
+  flex-shrink: 0;
+}
+
+/* Mobile styles for passkeys */
+@media (max-width: 768px) {
+  .passkey-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .passkey-actions {
+    width: 100%;
+  }
+
+  .passkey-actions button {
+    flex: 1;
+  }
+
+  .passkey-add-section {
+    flex-direction: column;
+  }
+
+  .passkey-add-section input {
+    width: 100%;
+  }
+
+  .passkey-add-section button {
+    width: 100%;
+  }
+}

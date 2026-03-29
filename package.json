@@ -21,6 +21,7 @@
   "license": "MIT",
   "dependencies": {
     "@atproto/api": "^0.13.0",
+    "@simplewebauthn/server": "^13.3.0",
     "bcrypt": "^5.1.1",
     "compression": "^1.8.1",
     "dotenv": "^16.4.5",
