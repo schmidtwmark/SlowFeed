@@ -1,5 +1,14 @@
 import AuthenticationServices
 import Foundation
+import os.log
+
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
+private let logger = Logger(subsystem: "com.markschmidt.slowfeed-client", category: "AuthService")
 
 enum AuthError: LocalizedError {
     case notConfigured
@@ -55,14 +64,25 @@ final class AuthService: NSObject {
 
     func registerPasskey(name: String?) async throws {
         guard let baseURL = apiClient.baseURL else {
+            logger.error("Registration failed: server not configured")
             throw AuthError.notConfigured
         }
 
+        logger.info("Starting passkey registration with server: \(baseURL.absoluteString)")
+
         // 1. Start registration on server
-        let startResponse = try await startRegistration()
+        let startResponse: RegistrationStartResponse
+        do {
+            startResponse = try await startRegistration()
+            logger.info("Registration start response received, challengeId: \(startResponse.challengeId)")
+        } catch {
+            logger.error("Failed to start registration: \(error.localizedDescription)")
+            throw error
+        }
 
         // 2. Get RP ID from server URL
         let rpId = baseURL.host ?? "localhost"
+        logger.info("Using RP ID: \(rpId)")
 
         // 3. Create platform key registration request
         let challenge = Data(base64URLEncoded: startResponse.options.challenge) ?? Data()
@@ -76,32 +96,57 @@ final class AuthService: NSObject {
         )
 
         // 4. Perform the registration
-        let credential = try await performAuthorization(with: registrationRequest)
+        let credential: ASAuthorizationCredential
+        do {
+            credential = try await performAuthorization(with: registrationRequest)
+            logger.info("Authorization completed successfully")
+        } catch {
+            logger.error("Authorization failed: \(String(describing: error))")
+            throw error
+        }
 
         guard let registration = credential as? ASAuthorizationPlatformPublicKeyCredentialRegistration else {
+            logger.error("Invalid credential type received")
             throw AuthError.registrationFailed("Invalid credential type")
         }
 
         // 5. Send response to server
-        try await finishRegistration(
-            challengeId: startResponse.challengeId,
-            credential: registration,
-            name: name
-        )
+        do {
+            try await finishRegistration(
+                challengeId: startResponse.challengeId,
+                credential: registration,
+                name: name
+            )
+            logger.info("Registration completed successfully")
+        } catch {
+            logger.error("Failed to finish registration: \(error.localizedDescription)")
+            throw error
+        }
     }
 
     // MARK: - Passkey Authentication
 
     func authenticateWithPasskey() async throws {
         guard let baseURL = apiClient.baseURL else {
+            logger.error("Authentication failed: server not configured")
             throw AuthError.notConfigured
         }
 
+        logger.info("Starting passkey authentication with server: \(baseURL.absoluteString)")
+
         // 1. Start authentication on server
-        let startResponse = try await startAuthentication()
+        let startResponse: AuthenticationStartResponse
+        do {
+            startResponse = try await startAuthentication()
+            logger.info("Authentication start response received, challengeId: \(startResponse.challengeId)")
+        } catch {
+            logger.error("Failed to start authentication: \(error.localizedDescription)")
+            throw error
+        }
 
         // 2. Get RP ID from server URL
         let rpId = baseURL.host ?? "localhost"
+        logger.info("Using RP ID: \(rpId)")
 
         // 3. Create platform key assertion request
         let challenge = Data(base64URLEncoded: startResponse.options.challenge) ?? Data()
@@ -111,6 +156,7 @@ final class AuthService: NSObject {
 
         // Add allowed credentials if provided
         if let allowCredentials = startResponse.options.allowCredentials {
+            logger.info("Allowing \(allowCredentials.count) credentials")
             assertionRequest.allowedCredentials = allowCredentials.compactMap { cred in
                 guard let credId = Data(base64URLEncoded: cred.id) else { return nil }
                 return ASAuthorizationPlatformPublicKeyCredentialDescriptor(credentialID: credId)
@@ -118,17 +164,31 @@ final class AuthService: NSObject {
         }
 
         // 4. Perform the authentication
-        let credential = try await performAuthorization(with: assertionRequest)
+        let credential: ASAuthorizationCredential
+        do {
+            credential = try await performAuthorization(with: assertionRequest)
+            logger.info("Authorization completed successfully")
+        } catch {
+            logger.error("Authorization failed: \(String(describing: error))")
+            throw error
+        }
 
         guard let assertion = credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion else {
+            logger.error("Invalid credential type received")
             throw AuthError.authenticationFailed("Invalid credential type")
         }
 
         // 5. Send response to server
-        try await finishAuthentication(
-            challengeId: startResponse.challengeId,
-            credential: assertion
-        )
+        do {
+            try await finishAuthentication(
+                challengeId: startResponse.challengeId,
+                credential: assertion
+            )
+            logger.info("Authentication completed successfully")
+        } catch {
+            logger.error("Failed to finish authentication: \(error.localizedDescription)")
+            throw error
+        }
     }
 
     // MARK: - Logout
@@ -154,6 +214,7 @@ final class AuthService: NSObject {
 
             let controller = ASAuthorizationController(authorizationRequests: [request])
             controller.delegate = self
+            controller.presentationContextProvider = self
             controller.performRequests()
         }
     }
@@ -359,6 +420,21 @@ extension AuthService: ASAuthorizationControllerDelegate {
             }
             authContinuation = nil
         }
+    }
+}
+
+// MARK: - ASAuthorizationControllerPresentationContextProviding
+
+extension AuthService: ASAuthorizationControllerPresentationContextProviding {
+    nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        #if os(macOS)
+        return NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first!
+        #else
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow } ?? UIWindow()
+        #endif
     }
 }
 

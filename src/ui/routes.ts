@@ -48,6 +48,23 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
 export function createUiRouter(): Router {
   const router = Router();
 
+  // Apple App Site Association for passkey domain verification
+  router.get('/.well-known/apple-app-site-association', (_req, res) => {
+    const config = getWebAuthnConfig();
+    // Team ID and bundle identifier for the iOS/macOS app
+    const teamId = process.env.APPLE_TEAM_ID || 'C2UW47HS8X';
+    const bundleId = process.env.APPLE_BUNDLE_ID || 'com.markschmidt.slowfeed-client';
+
+    const association = {
+      webcredentials: {
+        apps: [`${teamId}.${bundleId}`]
+      }
+    };
+
+    res.setHeader('Content-Type', 'application/json');
+    res.json(association);
+  });
+
   // Check if passkeys are set up (for first-time setup detection)
   router.get('/api/auth/setup-status', async (_req, res) => {
     try {
