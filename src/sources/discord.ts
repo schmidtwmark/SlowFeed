@@ -168,9 +168,9 @@ function formatMessageContent(message: DiscordMessage): string {
   // Attachments (images, files)
   for (const attachment of message.attachments) {
     if (attachment.content_type?.startsWith('image/')) {
-      html += `<p style="margin: 8px 0;"><img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.filename)}" style="max-width: 100%; border-radius: 8px;"></p>`;
+      html += `<p style="margin: 8px 0;"><img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.filename)}" style="max-width: 100%; max-height: 80vh; border-radius: 8px;"></p>`;
     } else if (attachment.content_type?.startsWith('video/')) {
-      html += `<p style="margin: 8px 0;"><video controls style="max-width: 100%; border-radius: 8px;"><source src="${escapeHtml(attachment.url)}" type="${escapeHtml(attachment.content_type)}"></video></p>`;
+      html += `<p style="margin: 8px 0;"><video controls style="max-width: 100%; max-height: 80vh; border-radius: 8px;"><source src="${escapeHtml(attachment.url)}" type="${escapeHtml(attachment.content_type)}"></video></p>`;
     } else {
       html += `<p style="margin: 8px 0;"><a href="${escapeHtml(attachment.url)}" style="color: #5865f2;">📎 ${escapeHtml(attachment.filename)}</a></p>`;
     }

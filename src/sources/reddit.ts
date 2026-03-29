@@ -479,20 +479,19 @@ export async function pollReddit(): Promise<DigestPost[]> {
         content += `<p><img src="${escapeHtml(post.previewUrl)}" alt="Preview" style="max-width: 100%; border-radius: 8px;"></p>`;
       }
 
-      // For video posts, embed Reddit's player directly (no click-to-load to avoid layout shifts)
+      // For video posts, use native HTML5 video player
       if (post.isVideo) {
-        // Extract post ID for Reddit embed
-        const postIdMatch = post.permalink.match(/\/comments\/([a-z0-9]+)\//i);
-        const embedPostId = postIdMatch ? postIdMatch[1] : null;
+        const videoUrl = postJson?.videoUrl;
         const videoPreview = postJson?.previewUrl || post.previewUrl;
 
-        if (embedPostId) {
-          const embedUrl = `https://www.redditmedia.com/r/${escapeHtml(post.subreddit)}/comments/${escapeHtml(embedPostId)}/?embed=true&showmedia=true`;
+        if (videoUrl) {
           content += `<div class="reddit-video">`;
-          content += `<iframe src="${embedUrl}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-popups"></iframe>`;
+          content += `<video controls playsinline preload="metadata"${videoPreview ? ` poster="${escapeHtml(videoPreview)}"` : ''}>`;
+          content += `<source src="${escapeHtml(videoUrl)}" type="video/mp4">`;
+          content += `</video>`;
           content += `</div>`;
         } else {
-          // Fallback to link if we can't extract the post ID
+          // Fallback to link if we can't get the video URL
           if (videoPreview) {
             content += `<a href="${escapeHtml(post.permalink)}" style="display: block; position: relative;">`;
             content += `<img src="${escapeHtml(videoPreview)}" alt="Video preview" style="max-width: 100%; border-radius: 8px; opacity: 0.8;">`;
