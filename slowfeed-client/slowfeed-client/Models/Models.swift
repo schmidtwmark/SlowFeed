@@ -62,18 +62,17 @@ struct Digest: Codable, Identifiable {
     let id: String
     let source: SourceType
     let title: String
-    let content: String  // HTML content
     let postCount: Int
     let postIds: [String]
     let publishedAt: Date
     let createdAt: Date
     let readAt: Date?
-    let posts: [DigestPostReference]?
+    let posts: [DigestPost]?
 
     var isRead: Bool { readAt != nil }
 
     enum CodingKeys: String, CodingKey {
-        case id, source, title, content, posts
+        case id, source, title, posts
         case postCount = "post_count"
         case postIds = "post_ids"
         case publishedAt = "published_at"
@@ -82,12 +81,31 @@ struct Digest: Codable, Identifiable {
     }
 }
 
-struct DigestPostReference: Codable, Identifiable {
+struct DigestPost: Codable, Identifiable {
     let postId: String
     let source: String
-    let title: String?
+    let title: String
+    let content: String?
+    let url: String
+    let author: String?
+    let publishedAt: Date
+    let isNotification: Bool
+    let metadata: PostMetadata?
 
     var id: String { postId }
+}
+
+struct PostMetadata: Codable {
+    let avatarUrl: String?
+    let score: Int?
+    let subreddit: String?
+    let comments: Int?
+    let thumbnail: String?
+    let channel: String?
+    let duration: String?
+    let guildName: String?
+    let channelName: String?
+    let repostedBy: String?
 }
 
 // MARK: - Source Configuration
@@ -100,7 +118,7 @@ struct SourceInfo: Codable, Identifiable {
 
 // MARK: - Configuration
 
-struct AppConfig: Codable {
+struct AppConfig: Codable, Equatable {
     var blueskyEnabled: Bool
     var blueskyHandle: String
     var blueskyAppPassword: String
@@ -143,6 +161,34 @@ struct AppConfig: Codable {
         case feedTitle = "feed_title"
         case feedTtlDays = "feed_ttl_days"
         case feedToken = "feed_token"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        // Decode with defaults for missing values
+        blueskyEnabled = (try? container.decode(Bool.self, forKey: .blueskyEnabled)) ?? false
+        blueskyHandle = (try? container.decode(String.self, forKey: .blueskyHandle)) ?? ""
+        blueskyAppPassword = (try? container.decode(String.self, forKey: .blueskyAppPassword)) ?? ""
+        blueskyTopN = (try? container.decode(Int.self, forKey: .blueskyTopN)) ?? 20
+
+        youtubeEnabled = (try? container.decode(Bool.self, forKey: .youtubeEnabled)) ?? false
+        youtubeCookies = (try? container.decode(String.self, forKey: .youtubeCookies)) ?? ""
+
+        redditEnabled = (try? container.decode(Bool.self, forKey: .redditEnabled)) ?? false
+        redditCookies = (try? container.decode(String.self, forKey: .redditCookies)) ?? ""
+        redditTopN = (try? container.decode(Int.self, forKey: .redditTopN)) ?? 30
+        redditIncludeComments = (try? container.decode(Bool.self, forKey: .redditIncludeComments)) ?? true
+        redditCommentDepth = (try? container.decode(Int.self, forKey: .redditCommentDepth)) ?? 3
+
+        discordEnabled = (try? container.decode(Bool.self, forKey: .discordEnabled)) ?? false
+        discordToken = (try? container.decode(String.self, forKey: .discordToken)) ?? ""
+        discordChannels = (try? container.decode([String].self, forKey: .discordChannels)) ?? []
+        discordTopN = (try? container.decode(Int.self, forKey: .discordTopN)) ?? 20
+
+        feedTitle = (try? container.decode(String.self, forKey: .feedTitle)) ?? "Slowfeed"
+        feedTtlDays = (try? container.decode(Int.self, forKey: .feedTtlDays)) ?? 14
+        feedToken = (try? container.decode(String.self, forKey: .feedToken)) ?? ""
     }
 }
 

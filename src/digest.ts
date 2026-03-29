@@ -693,6 +693,52 @@ export async function getDigestPosts(digestId: string): Promise<{
 }
 
 /**
+ * Get full post data for a digest by joining seen_posts with feed_items
+ */
+export async function getDigestPostsFull(digestId: string): Promise<{
+  postId: string;
+  source: string;
+  title: string;
+  content: string | null;
+  url: string;
+  author: string | null;
+  publishedAt: Date;
+  isNotification: boolean;
+  metadata: Record<string, unknown> | null;
+}[]> {
+  const { rows } = await query<{
+    post_id: string;
+    source: string;
+    title: string;
+    content: string | null;
+    url: string;
+    author: string | null;
+    published_at: Date;
+    is_notification: boolean;
+    raw_json: Record<string, unknown> | null;
+  }>(
+    `SELECT fi.id as post_id, fi.source, fi.title, fi.content, fi.url, fi.author,
+            fi.published_at, fi.is_notification, fi.raw_json
+     FROM seen_posts sp
+     JOIN feed_items fi ON fi.id = sp.id
+     WHERE sp.digest_id = $1
+     ORDER BY fi.published_at DESC`,
+    [digestId]
+  );
+  return rows.map(r => ({
+    postId: r.post_id,
+    source: r.source,
+    title: r.title,
+    content: r.content,
+    url: r.url,
+    author: r.author,
+    publishedAt: r.published_at,
+    isNotification: r.is_notification,
+    metadata: r.raw_json?.metadata as Record<string, unknown> | null ?? null,
+  }));
+}
+
+/**
  * Prune old digest items
  */
 export async function pruneOldDigests(ttlDays: number): Promise<number> {

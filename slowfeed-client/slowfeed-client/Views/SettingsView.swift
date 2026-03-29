@@ -1,5 +1,11 @@
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
 
@@ -115,58 +121,74 @@ struct GeneralSettingsView: View {
     @State private var feedToken = ""
     @State private var isSaving = false
     @State private var message: String?
+    @State private var hasLoaded = false
 
     var body: some View {
         Form {
-            Section {
-                TextField("Feed Title", text: $feedTitle)
+            if appState.config == nil {
+                Section {
+                    ProgressView("Loading configuration...")
+                }
+            } else {
+                Section {
+                    TextField("Feed Title", text: $feedTitle)
 
-                Stepper("Feed TTL: \(feedTtlDays) days", value: $feedTtlDays, in: 1...90)
-            } header: {
-                Text("Feed Settings")
-            }
+                    Stepper("Feed TTL: \(feedTtlDays) days", value: $feedTtlDays, in: 1...90)
+                } header: {
+                    Text("Feed Settings")
+                }
 
-            Section {
-                HStack {
-                    TextField("Token", text: .constant(feedToken))
-                        .textSelection(.enabled)
-                        #if os(macOS)
-                        .textFieldStyle(.plain)
-                        #endif
+                Section {
+                    HStack {
+                        TextField("Token", text: .constant(feedToken))
+                            .textSelection(.enabled)
+                            #if os(macOS)
+                            .textFieldStyle(.plain)
+                            #endif
 
-                    Button("Copy") {
-                        #if os(macOS)
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(feedToken, forType: .string)
-                        #else
-                        UIPasteboard.general.string = feedToken
-                        #endif
+                        Button("Copy") {
+                            #if os(macOS)
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(feedToken, forType: .string)
+                            #else
+                            UIPasteboard.general.string = feedToken
+                            #endif
+                        }
                     }
+
+                    Text("Add ?token=\(feedToken) to your feed URLs")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Feed Token")
                 }
 
-                Text("Add ?token=\(feedToken) to your feed URLs")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("Feed Token")
-            }
+                Section {
+                    Button("Save") {
+                        save()
+                    }
+                    .disabled(isSaving)
 
-            Section {
-                Button("Save") {
-                    save()
-                }
-                .disabled(isSaving)
-
-                if let message {
-                    Text(message)
-                        .foregroundStyle(message.contains("Error") ? .red : .green)
+                    if let message {
+                        Text(message)
+                            .foregroundStyle(message.contains("Error") ? .red : .green)
+                    }
                 }
             }
         }
         .formStyle(.grouped)
         .navigationTitle("General")
+        .onChange(of: appState.config) { _, newConfig in
+            if newConfig != nil && !hasLoaded {
+                loadConfig()
+                hasLoaded = true
+            }
+        }
         .onAppear {
-            loadConfig()
+            if appState.config != nil {
+                loadConfig()
+                hasLoaded = true
+            }
         }
     }
 
@@ -217,40 +239,56 @@ struct SourceSettingsView: View {
     @State private var commentDepth = 3
     @State private var isSaving = false
     @State private var message: String?
+    @State private var hasLoaded = false
 
     var body: some View {
         Form {
-            Section {
-                Toggle("Enabled", isOn: $enabled)
-            }
-
-            switch source {
-            case .reddit:
-                redditSettings
-            case .bluesky:
-                blueskySettings
-            case .youtube:
-                youtubeSettings
-            case .discord:
-                discordSettings
-            }
-
-            Section {
-                Button("Save") {
-                    save()
+            if appState.config == nil {
+                Section {
+                    ProgressView("Loading configuration...")
                 }
-                .disabled(isSaving)
+            } else {
+                Section {
+                    Toggle("Enabled", isOn: $enabled)
+                }
 
-                if let message {
-                    Text(message)
-                        .foregroundStyle(message.contains("Error") ? .red : .green)
+                switch source {
+                case .reddit:
+                    redditSettings
+                case .bluesky:
+                    blueskySettings
+                case .youtube:
+                    youtubeSettings
+                case .discord:
+                    discordSettings
+                }
+
+                Section {
+                    Button("Save") {
+                        save()
+                    }
+                    .disabled(isSaving)
+
+                    if let message {
+                        Text(message)
+                            .foregroundStyle(message.contains("Error") ? .red : .green)
+                    }
                 }
             }
         }
         .formStyle(.grouped)
         .navigationTitle(source.displayName)
+        .onChange(of: appState.config) { _, newConfig in
+            if newConfig != nil && !hasLoaded {
+                loadConfig()
+                hasLoaded = true
+            }
+        }
         .onAppear {
-            loadConfig()
+            if appState.config != nil {
+                loadConfig()
+                hasLoaded = true
+            }
         }
     }
 

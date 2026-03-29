@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+import os.log
+
+private let logger = Logger(subsystem: "com.markschmidt.slowfeed-client", category: "AppState")
 
 enum AppScreen {
     case serverSetup
@@ -277,12 +280,15 @@ final class AppState {
     // MARK: - Config
 
     func loadConfig() async {
+        logger.info("Loading config from server...")
         do {
             let loadedConfig = try await apiClient.getConfig()
+            logger.info("Config loaded successfully: blueskyEnabled=\(loadedConfig.blueskyEnabled), redditEnabled=\(loadedConfig.redditEnabled), youtubeEnabled=\(loadedConfig.youtubeEnabled), discordEnabled=\(loadedConfig.discordEnabled)")
             await MainActor.run {
                 config = loadedConfig
             }
         } catch {
+            logger.error("Failed to load config: \(error.localizedDescription)")
             await MainActor.run {
                 self.error = error.localizedDescription
             }

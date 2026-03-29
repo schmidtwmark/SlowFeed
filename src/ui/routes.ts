@@ -9,7 +9,7 @@ import { testDiscordConnection, fetchGuilds, fetchChannels, pollDiscord } from '
 import { pollReddit } from '../sources/reddit.js';
 import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
-import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, getDigestPosts } from '../digest.js';
+import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, getDigestPosts, getDigestPostsFull } from '../digest.js';
 import type { ScheduleInput, SourceType } from '../types/index.js';
 import {
   hasPasskeys,
@@ -316,7 +316,18 @@ export function createUiRouter(): Router {
         return;
       }
 
-      // Get the individual posts linked to this digest
+      // If format=json, return full structured post data instead of HTML
+      if (req.query.format === 'json') {
+        const posts = await getDigestPostsFull(id);
+        const { content, ...digestWithoutHtml } = digest;
+        res.json({
+          ...digestWithoutHtml,
+          posts,
+        });
+        return;
+      }
+
+      // Default: return HTML content with minimal post refs
       const posts = await getDigestPosts(id);
 
       res.json({

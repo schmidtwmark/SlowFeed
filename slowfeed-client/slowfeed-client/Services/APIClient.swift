@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let logger = Logger(subsystem: "com.markschmidt.slowfeed-client", category: "APIClient")
 
 enum APIError: LocalizedError {
     case invalidURL
@@ -172,7 +175,7 @@ final class APIClient {
     }
 
     func getDigest(id: String) async throws -> Digest {
-        try await request("/api/digests/\(id)")
+        try await request("/api/digests/\(id)?format=json")
     }
 
     func markAsRead(digestId: String) async throws {
@@ -192,7 +195,50 @@ final class APIClient {
     // MARK: - Config Endpoints
 
     func getConfig() async throws -> AppConfig {
-        try await request("/api/config")
+        guard let baseURL else {
+            throw APIError.invalidURL
+        }
+
+        guard let url = URL(string: "/api/config", relativeTo: baseURL) else {
+            throw APIError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        if let sessionId {
+            request.setValue(sessionId, forHTTPHeaderField: "X-Session-Id")
+        }
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(NSError(domain: "Invalid response", code: 0))
+        }
+
+        if httpResponse.statusCode == 401 {
+            throw APIError.unauthorized
+        }
+
+        if httpResponse.statusCode >= 400 {
+            if let errorResponse = try? decoder.decode(ErrorResponse.self, from: data) {
+                throw APIError.serverError(errorResponse.error)
+            }
+            throw APIError.serverError("Server error: \(httpResponse.statusCode)")
+        }
+
+        // Log the raw response for debugging
+        if let jsonString = String(data: data, encoding: .utf8) {
+            logger.debug("Config response: \(jsonString)")
+        }
+
+        do {
+            return try decoder.decode(AppConfig.self, from: data)
+        } catch {
+            logger.error("Failed to decode config: \(error.localizedDescription)")
+            throw APIError.decodingError(error)
+        }
     }
 
     func updateConfig(_ updates: [String: Any]) async throws {
