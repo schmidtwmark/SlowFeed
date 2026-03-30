@@ -99,6 +99,14 @@ export function getConfig(): Config {
   return cachedConfig;
 }
 
+/**
+ * Set config directly without loading from DB (for CLI/testing)
+ */
+export function setConfig(config: Partial<Config>): void {
+  cachedConfig = { ...DEFAULT_CONFIG, ...config };
+  cacheTimestamp = Date.now();
+}
+
 export async function setConfigValue<K extends keyof Config>(
   key: K,
   value: Config[K]

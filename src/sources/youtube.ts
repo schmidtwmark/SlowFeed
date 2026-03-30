@@ -23,7 +23,9 @@ interface YouTubeVideo {
  * Also handles space-separated format (tabs sometimes get converted to spaces in textareas)
  */
 function parseNetscapeCookies(cookiesTxt: string): string {
-  const lines = cookiesTxt.split('\n');
+  // Handle literal \n and \t (from shell args or env vars) as well as real ones
+  const normalized = cookiesTxt.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+  const lines = normalized.split('\n');
   const cookies: string[] = [];
 
   for (const line of lines) {

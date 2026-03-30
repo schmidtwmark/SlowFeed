@@ -70,14 +70,10 @@ export async function createDigest(
     );
   }
 
-  // Store structured post data (strip rawJson to save space, sanitize for PostgreSQL JSONB)
+  // Store structured post data (strip rawJson to save space)
   const postsJson: DigestPost[] = posts.map(p => {
     const { rawJson, ...rest } = p;
-    // Round-trip through JSON to ensure clean serialization, strip null bytes
-    const cleaned = JSON.stringify(rest, (_, v) =>
-      typeof v === 'number' && !isFinite(v) ? null : v
-    ).replace(/\u0000/g, '');
-    return JSON.parse(cleaned);
+    return rest;
   });
 
   // Generate HTML content from structured data (for legacy web UI / RSS)
@@ -85,16 +81,18 @@ export async function createDigest(
 
   await query(
     `INSERT INTO digest_items (id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW(), NOW())
      ON CONFLICT (id) DO UPDATE SET
        content = $6,
        post_count = $7,
        post_ids = $8,
-       posts_json = $9,
+       posts_json = $9::jsonb,
        poll_run_id = $4`,
     [
       digestId, source, scheduleId ?? null, pollRunId ?? null,
-      title, content, posts.length, postIds, postsJson,
+      title, content.replace(/\u0000/g, ''), posts.length, postIds,
+      // Stringify manually to strip null bytes that PostgreSQL JSONB rejects
+      JSON.stringify(postsJson).replace(/\u0000/g, ''),
     ]
   );
 
@@ -393,7 +391,7 @@ function renderBlueskyPosts(posts: DigestPost[]): string {
     const allInThread = rootPost ? [rootPost, ...threadPosts] : threadPosts;
     if (rootPost) usedStandalone.add(rootPost.postId);
 
-    allInThread.sort((a, b) => a.publishedAt.getTime() - b.publishedAt.getTime());
+    allInThread.sort((a, b) => new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime());
     const indents = calculateThreadIndents(allInThread);
 
     groups.push({
@@ -502,7 +500,7 @@ function groupDiscordThreads(posts: DigestPost[]): DigestPost[][] {
 
   const result: DigestPost[][] = [];
   for (const thread of threads.values()) {
-    thread.sort((a, b) => a.publishedAt.getTime() - b.publishedAt.getTime());
+    thread.sort((a, b) => new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime());
     result.push(thread);
   }
   result.sort((a, b) => a[0].publishedAt.getTime() - b[0].publishedAt.getTime());
