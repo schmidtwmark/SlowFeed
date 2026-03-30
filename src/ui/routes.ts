@@ -319,9 +319,25 @@ export function createUiRouter(): Router {
 
       // If format=json, return structured post data instead of HTML
       if (req.query.format === 'json') {
-        const { content, ...digestWithoutHtml } = digest;
-        const posts = digest.posts_json ?? [];
-        logger.info(`Digest ${id} format=json: posts_json type=${typeof digest.posts_json}, isArray=${Array.isArray(digest.posts_json)}, length=${Array.isArray(digest.posts_json) ? digest.posts_json.length : 'N/A'}, raw=${JSON.stringify(digest.posts_json)?.substring(0, 200)}`);
+        const { content, posts_json, ...digestWithoutHtml } = digest;
+        let posts = posts_json;
+
+        // Fallback for digests created before posts_json was added
+        if (!posts || !Array.isArray(posts) || posts.length === 0) {
+          const minimalPosts = await getDigestPosts(id);
+          posts = minimalPosts.map(p => ({
+            postId: p.postId,
+            source: p.source,
+            title: p.title ?? 'Untitled',
+            content: null,
+            url: '',
+            author: null,
+            publishedAt: digest.published_at,
+            isNotification: false,
+            metadata: null,
+          }));
+        }
+
         res.json({
           ...digestWithoutHtml,
           posts,

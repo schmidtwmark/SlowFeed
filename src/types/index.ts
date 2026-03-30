@@ -93,7 +93,7 @@ export interface DigestPostJson {
   postId: string;
   source: string;
   title: string;
-  content: string;
+  content: string | null;
   url: string;
   author: string | null;
   publishedAt: Date;
