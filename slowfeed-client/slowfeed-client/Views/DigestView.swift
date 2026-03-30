@@ -183,7 +183,7 @@ struct PostView: View {
             Text(post.title)
                 .font(.headline)
 
-            // Content
+            // Content (plain text)
             if let content = post.content, !content.isEmpty {
                 Text(content)
                     .font(.body)
@@ -191,8 +191,31 @@ struct PostView: View {
                     .lineLimit(10)
             }
 
-            // Thumbnail for YouTube
-            if let thumbnail = post.metadata?.thumbnail, let url = URL(string: thumbnail) {
+            // Images
+            if let imageUrls = post.imageUrls, !imageUrls.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(imageUrls, id: \.self) { urlString in
+                            if let url = URL(string: urlString) {
+                                AsyncImage(url: url) { image in
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                } placeholder: {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(.quaternary)
+                                        .frame(width: 200, height: 150)
+                                }
+                                .frame(maxHeight: 300)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // YouTube thumbnail fallback
+            if (post.imageUrls ?? []).isEmpty, let thumbnail = post.metadata?.thumbnail, let url = URL(string: thumbnail) {
                 AsyncImage(url: url) { image in
                     image
                         .resizable()
@@ -286,7 +309,9 @@ struct PostView: View {
                     guildName: nil,
                     channelName: nil,
                     repostedBy: nil
-                )
+                ),
+                imageUrls: [],
+                videoUrls: []
             )
         ]
     ))

@@ -87,12 +87,14 @@ struct DigestPost: Codable, Identifiable {
     let postId: String
     let source: String
     let title: String
-    let content: String?
+    let content: String?       // Plain text (no HTML)
     let url: String
     let author: String?
     let publishedAt: Date
     let isNotification: Bool
     let metadata: PostMetadata?
+    let imageUrls: [String]?
+    let videoUrls: [String]?
 
     var id: String { postId }
 }
