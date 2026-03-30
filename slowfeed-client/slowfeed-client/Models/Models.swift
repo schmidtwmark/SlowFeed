@@ -85,31 +85,75 @@ struct Digest: Codable, Identifiable {
 
 struct DigestPost: Codable, Identifiable {
     let postId: String
-    let source: String
     let title: String
     let content: String?       // Plain text (no HTML)
-    let url: String
+    let url: String?
     let author: String?
-    let publishedAt: Date
-    let isNotification: Bool
+    let publishedAt: Date?
+    let isNotification: Bool?
     let metadata: PostMetadata?
-    let imageUrls: [String]?
-    let videoUrls: [String]?
+    let media: [PostMedia]?
+    let links: [PostLink]?
+    let comments: [PostComment]?
+    let embeds: [PostEmbed]?
 
     var id: String { postId }
 }
 
+struct PostMedia: Codable {
+    let type: String           // "image", "video", "file"
+    let url: String
+    let thumbnailUrl: String?
+    let alt: String?
+    let filename: String?
+    let mimeType: String?
+}
+
+struct PostLink: Codable {
+    let url: String
+    let title: String?
+    let description: String?
+    let imageUrl: String?
+}
+
+struct PostComment: Codable {
+    let author: String
+    let body: String
+    let score: Int
+}
+
+struct PostEmbed: Codable {
+    let type: String           // "quote", "link_card"
+    let title: String?
+    let description: String?
+    let url: String?
+    let imageUrl: String?
+    let author: String?
+    let authorAvatarUrl: String?
+    let text: String?
+}
+
 struct PostMetadata: Codable {
     let avatarUrl: String?
+    // Reddit
     let score: Int?
     let subreddit: String?
-    let comments: Int?
-    let thumbnail: String?
+    let numComments: Int?
+    // YouTube
+    let videoId: String?
     let channel: String?
+    let channelUrl: String?
     let duration: String?
+    let viewCount: String?
+    let publishedText: String?
+    // Discord
     let guildName: String?
     let channelName: String?
+    let replyToMessageId: String?
+    // Bluesky
     let repostedBy: String?
+    let rootUri: String?
+    let parentUri: String?
 }
 
 // MARK: - Source Configuration
