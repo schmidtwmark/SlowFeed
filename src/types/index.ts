@@ -44,34 +44,91 @@ export interface PollRunRow {
   status: string;
 }
 
+// ---- Structured post data (shared between server + native clients) ----
+
+/** A media attachment (image, video, or file) */
+export interface PostMedia {
+  type: 'image' | 'video' | 'file';
+  url: string;
+  thumbnailUrl?: string;    // poster/preview for videos, thumb for files
+  alt?: string;
+  filename?: string;
+  mimeType?: string;
+  width?: number;
+  height?: number;
+}
+
+/** An external link card */
+export interface PostLink {
+  url: string;
+  title?: string;
+  description?: string;
+  imageUrl?: string;
+}
+
+/** A comment on a post (Reddit) */
+export interface PostComment {
+  author: string;
+  body: string;
+  score: number;
+}
+
+/** An embedded object (Discord embeds, quote posts) */
+export interface PostEmbed {
+  type: 'quote' | 'link_card';
+  title?: string;
+  description?: string;
+  url?: string;
+  imageUrl?: string;
+  author?: string;
+  authorAvatarUrl?: string;
+  text?: string;           // body text of quoted post
+}
+
+/** Source-specific metadata */
+export interface PostMetadata {
+  // Common
+  avatarUrl?: string;
+
+  // Reddit
+  score?: number;
+  subreddit?: string;
+  numComments?: number;
+
+  // YouTube
+  videoId?: string;
+  channel?: string;
+  channelUrl?: string;
+  duration?: string;
+  viewCount?: string;
+  publishedText?: string;
+
+  // Discord
+  guildName?: string;
+  channelName?: string;
+  replyToMessageId?: string;
+
+  // Bluesky
+  repostedBy?: string;
+  rootUri?: string;
+  parentUri?: string;
+}
+
 // Digest types
 export interface DigestPost {
   postId: string;
   title: string;
-  content: string;
+  content: string;             // Plain text body (no HTML)
   url: string;
   author: string | null;
   publishedAt: Date;
   isNotification?: boolean;
   rawJson?: unknown;
-  // Source-specific metadata
-  metadata?: {
-    avatarUrl?: string;            // User/channel avatar URL
-    score?: number;
-    subreddit?: string;
-    comments?: number;
-    thumbnail?: string;
-    channel?: string;
-    duration?: string;
-    guildName?: string;
-    channelName?: string;
-    // Discord-specific
-    replyToMessageId?: string; // Discord message ID this replies to
-    // Bluesky-specific
-    repostedBy?: string;       // handle of person who reposted
-    rootUri?: string;          // AT URI of thread root (for reply grouping)
-    parentUri?: string;        // AT URI of direct parent post
-  };
+  metadata?: PostMetadata;
+  media?: PostMedia[];         // Images, videos, files
+  links?: PostLink[];          // External link cards
+  comments?: PostComment[];    // Top comments (Reddit)
+  embeds?: PostEmbed[];        // Quoted posts, Discord embeds
 }
 
 export interface DigestItem {
@@ -80,25 +137,13 @@ export interface DigestItem {
   schedule_id: number | null;
   poll_run_id: number | null;
   title: string;
-  content: string;               // HTML with all posts
+  content: string;               // Legacy HTML - generated on demand now
   post_count: number;
   post_ids: string[];
-  posts_json: DigestPostJson[] | null;  // Structured post data for native clients
+  posts_json: DigestPost[] | null;  // Structured post data
   published_at: Date;
   created_at: Date;
   read_at: Date | null;          // When the digest was marked as read
-}
-
-export interface DigestPostJson {
-  postId: string;
-  source: string;
-  title: string;
-  content: string | null;
-  url: string;
-  author: string | null;
-  publishedAt: Date;
-  isNotification: boolean;
-  metadata: DigestPost['metadata'] | null;
 }
 
 export interface DigestItemInput {

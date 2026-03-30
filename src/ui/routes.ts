@@ -9,8 +9,8 @@ import { testDiscordConnection, fetchGuilds, fetchChannels, pollDiscord } from '
 import { pollReddit } from '../sources/reddit.js';
 import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
-import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, getDigestPosts } from '../digest.js';
-import type { ScheduleInput, SourceType } from '../types/index.js';
+import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, getDigestPosts, renderDigestHtml, stripHtml } from '../digest.js';
+import type { ScheduleInput, SourceType, DigestPost, DigestItemRow } from '../types/index.js';
 import {
   hasPasskeys,
   startRegistration,
@@ -320,23 +320,26 @@ export function createUiRouter(): Router {
       // If format=json, return structured post data instead of HTML
       if (req.query.format === 'json') {
         const { content, posts_json, ...digestWithoutHtml } = digest;
-        let posts = posts_json;
+        let posts: DigestPost[] = posts_json || [];
 
         // Fallback for digests created before posts_json was added
-        if (!posts || !Array.isArray(posts) || posts.length === 0) {
+        if (posts.length === 0) {
           const minimalPosts = await getDigestPosts(id);
           posts = minimalPosts.map(p => ({
             postId: p.postId,
-            source: p.source,
             title: p.title ?? 'Untitled',
-            content: null,
+            content: '',
             url: '',
             author: null,
             publishedAt: digest.published_at,
-            isNotification: false,
-            metadata: null,
           }));
         }
+
+        // Strip any residual HTML from post content (old digests may have HTML)
+        posts = posts.map(p => ({
+          ...p,
+          content: p.content ? stripHtml(p.content) : p.content,
+        }));
 
         res.json({
           ...digestWithoutHtml,
@@ -531,17 +534,19 @@ export function createUiRouter(): Router {
   router.get('/api/digest/:id', async (req, res) => {
     try {
       const { id } = req.params;
-      const { rows } = await query<{ content: string }>(
-        `SELECT content FROM digest_items WHERE id = $1`,
-        [id]
-      );
+      const digest = await getDigestById(id);
 
-      if (rows.length === 0) {
+      if (!digest) {
         res.status(404).json({ error: 'Digest not found' });
         return;
       }
 
-      res.json({ content: rows[0].content });
+      // Render HTML from structured data if available, fall back to stored content
+      const content = digest.posts_json && digest.posts_json.length > 0
+        ? renderDigestHtml(digest.posts_json, digest.source)
+        : digest.content;
+
+      res.json({ content });
     } catch (err) {
       logger.error('Error fetching digest:', err);
       res.status(500).json({ error: 'Failed to fetch digest' });
@@ -1010,15 +1015,8 @@ export function createUiRouter(): Router {
       const run = runRows[0];
 
       // Get all digests for this run
-      const { rows: digestRows } = await query<{
-        id: string;
-        source: string;
-        title: string;
-        content: string;
-        post_count: number;
-        published_at: Date;
-      }>(
-        `SELECT id, source, title, content, post_count, published_at
+      const { rows: digestRows } = await query<DigestItemRow>(
+        `SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at, read_at
          FROM digest_items
          WHERE poll_run_id = $1
          ORDER BY source`,
@@ -1047,7 +1045,16 @@ export function createUiRouter(): Router {
       const prevRun = prevRows[0] || null;
       const nextRun = nextRows[0] || null;
 
-      const html = buildPollRunPageHtml(run, digestRows, prevRun, nextRun);
+      // Render HTML from posts_json where available
+      const digests = digestRows.map(row => {
+        const postsJson = row.posts_json ? (Array.isArray(row.posts_json) ? row.posts_json : JSON.parse(row.posts_json as string)) as DigestPost[] : null;
+        const content = postsJson && postsJson.length > 0
+          ? renderDigestHtml(postsJson, row.source as SourceType)
+          : row.content || '';
+        return { id: row.id, source: row.source, title: row.title, content, post_count: row.post_count, published_at: row.published_at };
+      });
+
+      const html = buildPollRunPageHtml(run, digests, prevRun, nextRun);
       res.set('Content-Type', 'text/html; charset=utf-8');
       res.send(html);
     } catch (err) {
@@ -1061,24 +1068,17 @@ export function createUiRouter(): Router {
     try {
       const { id } = req.params;
 
-      const { rows } = await query<{
-        id: string;
-        source: string;
-        title: string;
-        content: string;
-        published_at: Date;
-      }>(
-        'SELECT id, source, title, content, published_at FROM digest_items WHERE id = $1',
-        [id]
-      );
+      const digest = await getDigestById(id);
 
-      if (rows.length === 0) {
+      if (!digest) {
         res.status(404).send('Digest not found');
         return;
       }
 
-      const digest = rows[0];
-      const content = digest.content || '';
+      // Render HTML from structured data if available, fall back to stored content
+      const content = digest.posts_json && digest.posts_json.length > 0
+        ? renderDigestHtml(digest.posts_json, digest.source)
+        : digest.content || '';
 
       // Get previous (newer) and next (older) digests for navigation
       const { rows: prevRows } = await query<{ id: string; source: string; published_at: Date }>(

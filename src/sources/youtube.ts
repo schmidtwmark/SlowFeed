@@ -321,15 +321,6 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&#x2F;/g, '/');
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 export async function pollYouTube(): Promise<DigestPost[]> {
   const config = getConfig();
 
@@ -368,40 +359,35 @@ export async function pollYouTube(): Promise<DigestPost[]> {
     const digestPosts: DigestPost[] = [];
 
     for (const video of videos) {
-      // Build content
-      let content = '';
+      const media: DigestPost['media'] = [];
 
       if (video.thumbnail) {
-        content += `<p><a href="${escapeHtml(video.url)}"><img src="${escapeHtml(video.thumbnail)}" alt="Thumbnail" style="max-width: 480px;"></a></p>`;
-      }
-
-      const meta: string[] = [];
-      if (video.duration) meta.push(video.duration);
-      if (video.viewCount) meta.push(video.viewCount);
-      if (video.publishedText) meta.push(video.publishedText);
-
-      if (meta.length > 0) {
-        content += `<p>${escapeHtml(meta.join(' • '))}</p>`;
-      }
-
-      if (video.channelUrl) {
-        content += `<p>Channel: <a href="${escapeHtml(video.channelUrl)}">${escapeHtml(video.channel)}</a></p>`;
+        media.push({
+          type: 'video',
+          url: video.url,
+          thumbnailUrl: video.thumbnail,
+          alt: video.title,
+        });
       }
 
       digestPosts.push({
         postId: video.id,
         title: video.title,
-        content,
+        content: '',
         url: video.url,
         author: video.channel,
         publishedAt: new Date(), // YouTube doesn't give exact timestamps in the HTML
         rawJson: video,
         metadata: {
           avatarUrl: video.channelIcon || undefined,
+          videoId: video.id,
           channel: video.channel,
-          duration: video.duration,
-          thumbnail: video.thumbnail,
+          channelUrl: video.channelUrl || undefined,
+          duration: video.duration || undefined,
+          viewCount: video.viewCount || undefined,
+          publishedText: video.publishedText || undefined,
         },
+        media: media.length > 0 ? media : undefined,
       });
     }
 

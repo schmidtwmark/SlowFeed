@@ -1,6 +1,6 @@
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
-import type { DigestPost } from '../types/index.js';
+import type { DigestPost, PostMedia, PostLink, PostComment } from '../types/index.js';
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -384,31 +384,15 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&ndash;/g, '–');
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function formatComments(comments: RedditComment[]): string {
-  if (comments.length === 0) return '';
-
-  let html = '<h4 style="margin: 16px 0 8px 0; font-size: 14px; color: #666;">Top Comments</h4>';
-  for (const comment of comments) {
-    html += `<div style="border-left: 3px solid #ff4500; padding: 8px 12px; margin: 8px 0; background: #fafafa;">`;
-    html += `<div style="font-size: 13px; color: #666; margin-bottom: 4px;">`;
-    html += `<strong style="color: #0066cc;">u/${escapeHtml(comment.author)}</strong>`;
-    if (comment.score !== 0) {
-      html += ` · ${comment.score} points`;
-    }
-    html += `</div>`;
-    html += `<div style="line-height: 1.5;">${escapeHtml(comment.body)}</div>`;
-    html += `</div>`;
-  }
-  return html;
+function stripHtmlToPlainText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 export async function pollReddit(): Promise<DigestPost[]> {
@@ -445,85 +429,55 @@ export async function pollReddit(): Promise<DigestPost[]> {
     const digestPosts: DigestPost[] = [];
 
     for (const post of topPosts) {
+      const media: PostMedia[] = [];
+      const links: PostLink[] = [];
+      let postComments: PostComment[] = [];
       let content = '';
 
       // Fetch JSON data for rich content (galleries, videos, selftext)
       const postJson = await fetchPostJson(post.permalink);
 
-      // For gallery posts, create a navigable gallery
+      // Gallery posts: each image becomes a media entry
       if (post.isGallery && postJson && postJson.galleryImageUrls.length > 0) {
-        const galleryId = `gallery-${post.id}`;
-        content += `<div class="image-gallery" data-gallery-id="${galleryId}">`;
-        content += `<div class="gallery-container">`;
         for (let i = 0; i < postJson.galleryImageUrls.length; i++) {
-          const imageUrl = postJson.galleryImageUrls[i];
-          content += `<div class="gallery-slide${i === 0 ? ' active' : ''}" data-index="${i}">`;
-          content += `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(post.title)} (${i + 1}/${postJson.galleryImageUrls.length})">`;
-          content += `</div>`;
+          media.push({
+            type: 'image',
+            url: postJson.galleryImageUrls[i],
+            alt: `${post.title} (${i + 1}/${postJson.galleryImageUrls.length})`,
+          });
         }
-        content += `</div>`;
-        if (postJson.galleryImageUrls.length > 1) {
-          content += `<div class="gallery-nav">`;
-          content += `<button class="gallery-btn prev" data-dir="prev">‹</button>`;
-          content += `<span class="gallery-counter">1 / ${postJson.galleryImageUrls.length}</span>`;
-          content += `<button class="gallery-btn next" data-dir="next">›</button>`;
-          content += `</div>`;
-        }
-        content += `</div>`;
       } else if (post.isImage) {
-        // For single image posts, embed the image
-        const imageUrl = post.url;
-        content += `<p><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(post.title)}" style="max-width: 100%; border-radius: 8px;"></p>`;
-      } else if (post.previewUrl && !post.isSelf && !post.isVideo) {
-        // Use preview image for link posts if available
-        content += `<p><img src="${escapeHtml(post.previewUrl)}" alt="Preview" style="max-width: 100%; border-radius: 8px;"></p>`;
+        // Single image post
+        media.push({
+          type: 'image',
+          url: post.url,
+          alt: post.title,
+        });
       }
 
-      // For video posts, use native HTML5 video player
+      // Video posts
       if (post.isVideo) {
         const videoUrl = postJson?.videoUrl;
         const videoPreview = postJson?.previewUrl || post.previewUrl;
 
         if (videoUrl) {
-          content += `<div class="reddit-video">`;
-          content += `<video controls playsinline preload="metadata"${videoPreview ? ` poster="${escapeHtml(videoPreview)}"` : ''}>`;
-          content += `<source src="${escapeHtml(videoUrl)}" type="video/mp4">`;
-          content += `</video>`;
-          content += `</div>`;
-        } else {
-          // Fallback to link if we can't get the video URL
-          if (videoPreview) {
-            content += `<a href="${escapeHtml(post.permalink)}" style="display: block; position: relative;">`;
-            content += `<img src="${escapeHtml(videoPreview)}" alt="Video preview" style="max-width: 100%; border-radius: 8px; opacity: 0.8;">`;
-            content += `<span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255,69,0,0.9); color: white; padding: 12px 24px; border-radius: 8px; font-weight: 500;">▶ Watch on Reddit</span>`;
-            content += `</a>`;
-          } else {
-            content += `<div style="margin: 12px 0; text-align: center;">`;
-            content += `<a href="${escapeHtml(post.permalink)}" style="color: #6db3f2; font-weight: 500;">▶ Watch Video on Reddit</a>`;
-            content += `</div>`;
-          }
+          media.push({
+            type: 'video',
+            url: videoUrl,
+            thumbnailUrl: videoPreview || undefined,
+          });
         }
       }
 
-      // Selftext - show inline from JSON data, truncated if too long
+      // Selftext: convert HTML to plain text, truncate if needed
       if (postJson?.selftextHtml) {
-        let selftextContent = postJson.selftextHtml;
-        // Truncate very long text posts (over ~2000 chars of visible text)
-        const textOnly = selftextContent.replace(/<[^>]+>/g, '');
-        if (textOnly.length > 2000) {
-          // Find a good truncation point (end of paragraph or sentence)
-          const truncateAt = textOnly.lastIndexOf('.', 1800);
+        let plainText = stripHtmlToPlainText(decodeHtmlEntities(postJson.selftextHtml));
+        if (plainText.length > 2000) {
+          const truncateAt = plainText.lastIndexOf('.', 1800);
           const cutPoint = truncateAt > 1000 ? truncateAt + 1 : 1800;
-          // We need to truncate the HTML, not just the text - approximate by ratio
-          const ratio = cutPoint / textOnly.length;
-          const htmlCutPoint = Math.floor(selftextContent.length * ratio);
-          // Find a safe HTML cut point (after a closing tag)
-          let safeCut = selftextContent.lastIndexOf('>', htmlCutPoint);
-          if (safeCut < htmlCutPoint * 0.7) safeCut = htmlCutPoint;
-          selftextContent = selftextContent.substring(0, safeCut + 1);
-          selftextContent += `<p class="read-more"><a href="${escapeHtml(post.permalink)}">... continue reading on Reddit →</a></p>`;
+          plainText = plainText.substring(0, cutPoint) + '...';
         }
-        content += `<div class="selftext" style="margin: 12px 0; line-height: 1.6;">${selftextContent}</div>`;
+        content = plainText;
       }
 
       // Fetch comments if enabled
@@ -533,7 +487,11 @@ export async function pollReddit(): Promise<DigestPost[]> {
           config.reddit_comment_depth
         );
 
-        content += formatComments(comments);
+        postComments = comments.map(c => ({
+          author: c.author,
+          body: c.body,
+          score: c.score,
+        }));
 
         // Small delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -542,23 +500,20 @@ export async function pollReddit(): Promise<DigestPost[]> {
         await new Promise(resolve => setTimeout(resolve, 300));
       }
 
-      // Add link for non-self, non-image, non-video, non-gallery posts
+      // Non-self link posts: add to links array
       if (!post.isSelf && !post.isImage && !post.isVideo && !post.isGallery && post.url) {
-        // Show as a link card
-        content += `<div style="border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; background: #f9f9f9;">`;
-        content += `<a href="${escapeHtml(post.url)}" style="color: #0066cc; word-break: break-all;">${escapeHtml(post.url)}</a>`;
-        content += `</div>`;
-      }
-
-      // Truncate very long content
-      if (content.length > 20000) {
-        content = content.substring(0, 20000) + `<p><a href="${post.permalink}">... read more on Reddit</a></p>`;
+        const previewImageUrl = postJson?.previewUrl || post.previewUrl;
+        links.push({
+          url: post.url,
+          title: post.title,
+          imageUrl: previewImageUrl || undefined,
+        });
       }
 
       digestPosts.push({
         postId: post.id,
         title: `r/${post.subreddit}: ${post.title}`,
-        content: content || `<p><a href="${post.permalink}">View on Reddit</a></p>`,
+        content,
         url: post.permalink,
         author: `u/${post.author}`,
         publishedAt: new Date(post.createdUtc * 1000),
@@ -566,8 +521,11 @@ export async function pollReddit(): Promise<DigestPost[]> {
         metadata: {
           score: post.score,
           subreddit: post.subreddit,
-          comments: post.numComments,
+          numComments: post.numComments,
         },
+        ...(media.length > 0 ? { media } : {}),
+        ...(links.length > 0 ? { links } : {}),
+        ...(postComments.length > 0 ? { comments: postComments } : {}),
       });
     }
 

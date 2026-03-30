@@ -1,6 +1,6 @@
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
-import type { DigestPost } from '../types/index.js';
+import type { DigestPost, PostMedia, PostEmbed } from '../types/index.js';
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -148,59 +148,6 @@ export async function testDiscordConnection(): Promise<{ success: boolean; error
   }
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function formatMessageContent(message: DiscordMessage): string {
-  let html = '';
-
-  // Message text content
-  if (message.content) {
-    html += `<p style="line-height: 1.6; margin: 0 0 12px 0;">${escapeHtml(message.content)}</p>`;
-  }
-
-  // Attachments (images, files)
-  for (const attachment of message.attachments) {
-    if (attachment.content_type?.startsWith('image/')) {
-      html += `<p style="margin: 8px 0;"><img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.filename)}" style="max-width: 100%; max-height: 80vh; border-radius: 8px;"></p>`;
-    } else if (attachment.content_type?.startsWith('video/')) {
-      html += `<p style="margin: 8px 0;"><video controls style="max-width: 100%; max-height: 80vh; border-radius: 8px;"><source src="${escapeHtml(attachment.url)}" type="${escapeHtml(attachment.content_type)}"></video></p>`;
-    } else {
-      html += `<p style="margin: 8px 0;"><a href="${escapeHtml(attachment.url)}" style="color: #5865f2;">📎 ${escapeHtml(attachment.filename)}</a></p>`;
-    }
-  }
-
-  // Embeds
-  for (const embed of message.embeds) {
-    html += `<div style="border-left: 4px solid #5865f2; padding: 8px 12px; margin: 8px 0; background: #f0f0f5; border-radius: 4px;">`;
-    if (embed.title) {
-      if (embed.url) {
-        html += `<p style="margin: 0 0 4px 0;"><a href="${escapeHtml(embed.url)}" style="font-weight: bold; color: #5865f2;">${escapeHtml(embed.title)}</a></p>`;
-      } else {
-        html += `<p style="margin: 0 0 4px 0; font-weight: bold;">${escapeHtml(embed.title)}</p>`;
-      }
-    }
-    if (embed.description) {
-      html += `<p style="margin: 0; font-size: 14px; color: #333;">${escapeHtml(embed.description)}</p>`;
-    }
-    if (embed.image?.url) {
-      html += `<p style="margin: 8px 0 0 0;"><img src="${escapeHtml(embed.image.url)}" style="max-width: 100%; border-radius: 4px;"></p>`;
-    }
-    if (embed.thumbnail?.url && !embed.image?.url) {
-      html += `<p style="margin: 8px 0 0 0;"><img src="${escapeHtml(embed.thumbnail.url)}" style="max-width: 200px; border-radius: 4px;"></p>`;
-    }
-    html += `</div>`;
-  }
-
-  return html || '<p style="color: #999;">(empty message)</p>';
-}
-
 function getMessagePreview(message: DiscordMessage): string {
   if (message.content) {
     const preview = message.content.substring(0, 100);
@@ -261,10 +208,37 @@ export async function pollDiscord(): Promise<DigestPost[]> {
           ? `https://cdn.discordapp.com/avatars/${message.author.id}/${message.author.avatar}.png?size=64`
           : undefined;
 
+        // Build media array from attachments
+        const media: PostMedia[] = message.attachments.map(attachment => {
+          let type: PostMedia['type'] = 'file';
+          if (attachment.content_type?.startsWith('image/')) {
+            type = 'image';
+          } else if (attachment.content_type?.startsWith('video/')) {
+            type = 'video';
+          }
+          return {
+            type,
+            url: attachment.url,
+            filename: attachment.filename,
+            mimeType: attachment.content_type,
+          };
+        });
+
+        // Build embeds array from Discord embeds
+        const embeds: PostEmbed[] = message.embeds
+          .filter(embed => embed.title || embed.description || embed.url)
+          .map(embed => ({
+            type: 'link_card' as const,
+            title: embed.title,
+            description: embed.description,
+            url: embed.url,
+            imageUrl: embed.image?.url || embed.thumbnail?.url,
+          }));
+
         digestPosts.push({
           postId: message.id,
           title: `#${channel.channelName} - @${authorName}: ${preview}`,
-          content: formatMessageContent(message),
+          content: message.content || '',
           url: messageUrl,
           author: `@${authorName}`,
           publishedAt: new Date(message.timestamp),
@@ -275,6 +249,8 @@ export async function pollDiscord(): Promise<DigestPost[]> {
             channelName: channel.channelName,
             replyToMessageId: message.message_reference?.message_id,
           },
+          ...(media.length > 0 ? { media } : {}),
+          ...(embeds.length > 0 ? { embeds } : {}),
         });
       }
 

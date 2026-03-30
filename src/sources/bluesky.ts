@@ -1,7 +1,7 @@
 import { BskyAgent, AppBskyFeedDefs, AppBskyEmbedImages, AppBskyEmbedExternal, AppBskyEmbedRecord, AppBskyEmbedRecordWithMedia } from '@atproto/api';
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
-import type { DigestPost } from '../types/index.js';
+import type { DigestPost, PostMedia, PostLink, PostEmbed } from '../types/index.js';
 
 let agent: BskyAgent | null = null;
 let lastLoginTime: number = 0;
@@ -39,43 +39,17 @@ async function getAgent(): Promise<BskyAgent | null> {
 }
 
 /**
- * Render a quoted post as a blockquote card
+ * Extract a PostView into a PostEmbed of type 'quote'
  */
-function renderQuotedPost(quotedPost: AppBskyFeedDefs.PostView): string {
-  let html = `<blockquote class="quote-post" style="border-left: 3px solid #0085ff; margin: 12px 0; padding: 8px 12px; background: rgba(0, 133, 255, 0.08); border-radius: 0 8px 8px 0;">`;
-
-  // Author line with avatar
-  const avatarHtml = quotedPost.author.avatar
-    ? `<img src="${escapeHtml(quotedPost.author.avatar)}" alt="" width="20" height="20" style="border-radius: 50%; vertical-align: middle; margin-right: 4px;">`
-    : '';
-  html += `<p style="margin: 0 0 6px 0;">${avatarHtml}<a href="https://bsky.app/profile/${escapeHtml(quotedPost.author.handle)}" style="font-weight: bold; color: #0085ff;">@${escapeHtml(quotedPost.author.handle)}</a></p>`;
-
-  // Post text
+function postViewToQuoteEmbed(quotedPost: AppBskyFeedDefs.PostView): PostEmbed {
   const quotedRecord = quotedPost.record as { text?: string };
-  if (quotedRecord.text) {
-    html += `<p style="margin: 0 0 6px 0;">${escapeHtml(quotedRecord.text)}</p>`;
-  }
-
-  // Images in the quoted post
-  const quotedEmbed = quotedPost.embed;
-  if (quotedEmbed && AppBskyEmbedImages.isView(quotedEmbed)) {
-    for (const image of quotedEmbed.images) {
-      const imageUrl = image.fullsize || image.thumb;
-      html += `<p style="margin: 4px 0;"><img src="${imageUrl}" alt="${escapeHtml(image.alt || '')}" style="max-width: 100%; border-radius: 8px;"></p>`;
-    }
-  }
-
-  // External link in quoted post
-  if (quotedEmbed && AppBskyEmbedExternal.isView(quotedEmbed)) {
-    const ext = quotedEmbed.external;
-    if (ext.thumb) {
-      html += `<p style="margin: 4px 0;"><img src="${ext.thumb}" alt="" style="max-width: 100%; border-radius: 4px;"></p>`;
-    }
-    html += `<p style="margin: 4px 0;"><a href="${escapeHtml(ext.uri)}" style="color: #0085ff;">${escapeHtml(ext.title || ext.uri)}</a></p>`;
-  }
-
-  html += `</blockquote>`;
-  return html;
+  return {
+    type: 'quote',
+    author: `@${quotedPost.author.handle}`,
+    authorAvatarUrl: quotedPost.author.avatar || undefined,
+    text: quotedRecord.text || undefined,
+    url: getPostUrl(quotedPost),
+  };
 }
 
 /**
@@ -119,154 +93,107 @@ function extractQuotedPost(embed: AppBskyFeedDefs.PostView['embed']): AppBskyFee
 }
 
 /**
- * Extract post content for display
- * @param skipQuoteInline - if true, don't render quote posts inline (they'll be shown as separate thread posts)
+ * Extract images from an image embed view into PostMedia[]
  */
-function extractPostContent(post: AppBskyFeedDefs.PostView, skipQuoteInline: boolean = false): string {
-  let content = '';
-  const record = post.record as { text?: string };
-
-  // Add post text
-  if (record.text) {
-    content += `<p>${escapeHtml(record.text)}</p>`;
-  }
-
-  // Handle embeds
-  const embed = post.embed;
-
-  if (embed) {
-    // Images - use fullsize for better quality, create gallery if multiple
-    if (AppBskyEmbedImages.isView(embed)) {
-      if (embed.images.length > 1) {
-        // Multiple images - create gallery
-        const galleryId = `bsky-gallery-${post.cid.slice(0, 8)}`;
-        content += `<div class="image-gallery" data-gallery-id="${galleryId}">`;
-        content += `<div class="gallery-container">`;
-        for (let i = 0; i < embed.images.length; i++) {
-          const image = embed.images[i];
-          const imageUrl = image.fullsize || image.thumb;
-          content += `<div class="gallery-slide${i === 0 ? ' active' : ''}" data-index="${i}">`;
-          content += `<img src="${imageUrl}" alt="${escapeHtml(image.alt || '')} (${i + 1}/${embed.images.length})">`;
-          content += `</div>`;
-        }
-        content += `</div>`;
-        content += `<div class="gallery-nav">`;
-        content += `<button class="gallery-btn prev" data-dir="prev">‹</button>`;
-        content += `<span class="gallery-counter">1 / ${embed.images.length}</span>`;
-        content += `<button class="gallery-btn next" data-dir="next">›</button>`;
-        content += `</div>`;
-        content += `</div>`;
-      } else {
-        // Single image
-        for (const image of embed.images) {
-          const imageUrl = image.fullsize || image.thumb;
-          content += `<p><img src="${imageUrl}" alt="${escapeHtml(image.alt || '')}" style="max-width: 100%; border-radius: 8px;"></p>`;
-        }
-      }
-    }
-
-    // External links - styled card
-    if (AppBskyEmbedExternal.isView(embed)) {
-      const ext = embed.external;
-      content += `<div style="border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; background: #f9f9f9;">`;
-      if (ext.thumb) {
-        content += `<img src="${ext.thumb}" alt="" style="max-width: 100%; border-radius: 4px; margin-bottom: 8px;">`;
-      }
-      content += `<p style="margin: 0 0 4px 0;"><a href="${escapeHtml(ext.uri)}" style="font-weight: bold; color: #0066cc;">${escapeHtml(ext.title || ext.uri)}</a></p>`;
-      if (ext.description) {
-        content += `<p style="margin: 0; font-size: 14px; color: #666;">${escapeHtml(ext.description)}</p>`;
-      }
-      content += `</div>`;
-    }
-
-    // Quote posts (record embed) - render inline only if not skipping
-    if (AppBskyEmbedRecord.isView(embed) && !skipQuoteInline) {
-      const recordEmbed = embed.record;
-      if (AppBskyEmbedRecord.isViewRecord(recordEmbed)) {
-        // Create a mock PostView for the quoted record
-        const quotedPost: AppBskyFeedDefs.PostView = {
-          uri: recordEmbed.uri,
-          cid: recordEmbed.cid,
-          author: recordEmbed.author,
-          record: recordEmbed.value,
-          embed: recordEmbed.embeds?.[0],
-          indexedAt: recordEmbed.indexedAt,
-        };
-        content += renderQuotedPost(quotedPost);
-      }
-    }
-
-    // Record with media (images/video + quote) - handle both parts
-    if (AppBskyEmbedRecordWithMedia.isView(embed)) {
-      const mediaEmbed = embed.media;
-      const recordEmbed = embed.record.record;
-
-      // First render the media (images or external)
-      if (AppBskyEmbedImages.isView(mediaEmbed)) {
-        if (mediaEmbed.images.length > 1) {
-          const galleryId = `bsky-gallery-${post.cid.slice(0, 8)}`;
-          content += `<div class="image-gallery" data-gallery-id="${galleryId}">`;
-          content += `<div class="gallery-container">`;
-          for (let i = 0; i < mediaEmbed.images.length; i++) {
-            const image = mediaEmbed.images[i];
-            const imageUrl = image.fullsize || image.thumb;
-            content += `<div class="gallery-slide${i === 0 ? ' active' : ''}" data-index="${i}">`;
-            content += `<img src="${imageUrl}" alt="${escapeHtml(image.alt || '')} (${i + 1}/${mediaEmbed.images.length})">`;
-            content += `</div>`;
-          }
-          content += `</div>`;
-          content += `<div class="gallery-nav">`;
-          content += `<button class="gallery-btn prev" data-dir="prev">‹</button>`;
-          content += `<span class="gallery-counter">1 / ${mediaEmbed.images.length}</span>`;
-          content += `<button class="gallery-btn next" data-dir="next">›</button>`;
-          content += `</div>`;
-          content += `</div>`;
-        } else {
-          for (const image of mediaEmbed.images) {
-            const imageUrl = image.fullsize || image.thumb;
-            content += `<p><img src="${imageUrl}" alt="${escapeHtml(image.alt || '')}" style="max-width: 100%; border-radius: 8px;"></p>`;
-          }
-        }
-      }
-
-      if (AppBskyEmbedExternal.isView(mediaEmbed)) {
-        const ext = mediaEmbed.external;
-        content += `<div style="border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin-top: 12px; background: #f9f9f9;">`;
-        if (ext.thumb) {
-          content += `<img src="${ext.thumb}" alt="" style="max-width: 100%; border-radius: 4px; margin-bottom: 8px;">`;
-        }
-        content += `<p style="margin: 0 0 4px 0;"><a href="${escapeHtml(ext.uri)}" style="font-weight: bold; color: #0066cc;">${escapeHtml(ext.title || ext.uri)}</a></p>`;
-        if (ext.description) {
-          content += `<p style="margin: 0; font-size: 14px; color: #666;">${escapeHtml(ext.description)}</p>`;
-        }
-        content += `</div>`;
-      }
-
-      // Then render the quoted post inline only if not skipping
-      if (AppBskyEmbedRecord.isViewRecord(recordEmbed) && !skipQuoteInline) {
-        const quotedPost: AppBskyFeedDefs.PostView = {
-          uri: recordEmbed.uri,
-          cid: recordEmbed.cid,
-          author: recordEmbed.author,
-          record: recordEmbed.value,
-          embed: recordEmbed.embeds?.[0],
-          indexedAt: recordEmbed.indexedAt,
-        };
-        content += renderQuotedPost(quotedPost);
-      }
-    }
-  }
-
-  return content;
+function extractImagesFromEmbed(imageView: AppBskyEmbedImages.View): PostMedia[] {
+  return imageView.images.map((image) => ({
+    type: 'image' as const,
+    url: image.fullsize || image.thumb,
+    thumbnailUrl: image.thumb,
+    alt: image.alt || undefined,
+  }));
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+/**
+ * Extract an external link embed into a PostLink
+ */
+function extractExternalLink(externalView: AppBskyEmbedExternal.View): PostLink {
+  const ext = externalView.external;
+  return {
+    url: ext.uri,
+    title: ext.title || undefined,
+    description: ext.description || undefined,
+    imageUrl: ext.thumb || undefined,
+  };
+}
+
+/**
+ * Extract structured data (media, links, embeds) from a post's embed
+ * @param skipQuoteInline - if true, don't extract quote posts (they'll be separate thread posts)
+ */
+function extractStructuredData(
+  post: AppBskyFeedDefs.PostView,
+  skipQuoteInline: boolean = false
+): { media: PostMedia[]; links: PostLink[]; embeds: PostEmbed[] } {
+  const media: PostMedia[] = [];
+  const links: PostLink[] = [];
+  const embeds: PostEmbed[] = [];
+
+  const embed = post.embed;
+  if (!embed) return { media, links, embeds };
+
+  // Images
+  if (AppBskyEmbedImages.isView(embed)) {
+    media.push(...extractImagesFromEmbed(embed));
+  }
+
+  // External links
+  if (AppBskyEmbedExternal.isView(embed)) {
+    links.push(extractExternalLink(embed));
+  }
+
+  // Quote posts (record embed)
+  if (AppBskyEmbedRecord.isView(embed) && !skipQuoteInline) {
+    const recordEmbed = embed.record;
+    if (AppBskyEmbedRecord.isViewRecord(recordEmbed)) {
+      const quotedPost: AppBskyFeedDefs.PostView = {
+        uri: recordEmbed.uri,
+        cid: recordEmbed.cid,
+        author: recordEmbed.author,
+        record: recordEmbed.value,
+        embed: recordEmbed.embeds?.[0],
+        indexedAt: recordEmbed.indexedAt,
+      };
+      embeds.push(postViewToQuoteEmbed(quotedPost));
+    }
+  }
+
+  // Record with media (images/video + quote)
+  if (AppBskyEmbedRecordWithMedia.isView(embed)) {
+    const mediaEmbed = embed.media;
+    const recordEmbed = embed.record.record;
+
+    // Extract the media part
+    if (AppBskyEmbedImages.isView(mediaEmbed)) {
+      media.push(...extractImagesFromEmbed(mediaEmbed));
+    }
+
+    if (AppBskyEmbedExternal.isView(mediaEmbed)) {
+      links.push(extractExternalLink(mediaEmbed));
+    }
+
+    // Extract the quote part
+    if (AppBskyEmbedRecord.isViewRecord(recordEmbed) && !skipQuoteInline) {
+      const quotedPost: AppBskyFeedDefs.PostView = {
+        uri: recordEmbed.uri,
+        cid: recordEmbed.cid,
+        author: recordEmbed.author,
+        record: recordEmbed.value,
+        embed: recordEmbed.embeds?.[0],
+        indexedAt: recordEmbed.indexedAt,
+      };
+      embeds.push(postViewToQuoteEmbed(quotedPost));
+    }
+  }
+
+  return { media, links, embeds };
+}
+
+/**
+ * Convert ancestor/parent posts into PostEmbed[] entries of type 'quote' for reply context
+ */
+function ancestorsToEmbeds(ancestors: AppBskyFeedDefs.PostView[]): PostEmbed[] {
+  return ancestors.map((ancestor) => postViewToQuoteEmbed(ancestor));
 }
 
 function getPostUrl(post: AppBskyFeedDefs.PostView): string {
@@ -310,71 +237,34 @@ async function fetchThreadAncestors(bskyAgent: BskyAgent, postUri: string): Prom
 }
 
 /**
- * Render a parent/ancestor post as an inline quote card (for reply context)
- */
-function renderReplyContext(post: AppBskyFeedDefs.PostView): string {
-  const record = post.record as { text?: string };
-  let html = `<blockquote style="border-left: 3px solid #0085ff; margin: 12px 0; padding: 8px 12px; background: rgba(0, 133, 255, 0.08); border-radius: 0 8px 8px 0;">`;
-
-  // Author line with avatar
-  const avatarHtml = post.author.avatar
-    ? `<img class="avatar" src="${escapeHtml(post.author.avatar)}" alt="" width="20" height="20" loading="lazy" style="border-radius: 50%; vertical-align: middle; margin-right: 4px;">`
-    : '';
-  html += `<p style="margin: 0 0 6px 0;">${avatarHtml}<a href="https://bsky.app/profile/${escapeHtml(post.author.handle)}" style="font-weight: bold; color: #0085ff;">@${escapeHtml(post.author.handle)}</a></p>`;
-
-  // Post text
-  if (record.text) {
-    html += `<p style="margin: 0 0 6px 0;">${escapeHtml(record.text)}</p>`;
-  }
-
-  // Inline images from the parent
-  const embed = post.embed;
-  if (embed && AppBskyEmbedImages.isView(embed)) {
-    for (const image of embed.images) {
-      const imageUrl = image.fullsize || image.thumb;
-      html += `<p style="margin: 4px 0;"><img src="${imageUrl}" alt="${escapeHtml(image.alt || '')}" style="max-width: 100%; border-radius: 8px;"></p>`;
-    }
-  }
-
-  // External link card from parent
-  if (embed && AppBskyEmbedExternal.isView(embed)) {
-    const ext = embed.external;
-    if (ext.thumb) {
-      html += `<p style="margin: 4px 0;"><img src="${ext.thumb}" alt="" style="max-width: 100%; border-radius: 4px;"></p>`;
-    }
-    html += `<p style="margin: 4px 0;"><a href="${escapeHtml(ext.uri)}" style="color: #0085ff;">${escapeHtml(ext.title || ext.uri)}</a></p>`;
-  }
-
-  html += `</blockquote>`;
-  return html;
-}
-
-/**
- * Convert a PostView to a DigestPost
- * @param skipQuoteInline - if true, don't render quote posts inline (they'll be separate thread posts)
+ * Convert a PostView to a DigestPost with structured data
+ * @param skipQuoteInline - if true, don't extract quote posts inline (they'll be separate thread posts)
+ * @param replyContextAncestors - ancestor posts to include as quote-type embeds for reply context
  */
 function postViewToDigest(
   post: AppBskyFeedDefs.PostView,
   rootUri?: string,
   parentUri?: string,
   repostedBy?: string,
-  replyContext?: string,
+  replyContextAncestors?: AppBskyFeedDefs.PostView[],
   skipQuoteInline: boolean = false
 ): DigestPost {
-  let content = extractPostContent(post, skipQuoteInline);
-
-  // Append reply context (parent posts rendered as quote cards)
-  if (replyContext) {
-    content += replyContext;
-  }
-
+  const record = post.record as { text?: string };
   const url = getPostUrl(post);
   const postId = post.uri.split('/').pop() || post.cid;
 
+  // Extract structured data from embeds
+  const { media, links, embeds } = extractStructuredData(post, skipQuoteInline);
+
+  // Add reply context ancestors as quote-type embeds
+  if (replyContextAncestors && replyContextAncestors.length > 0) {
+    embeds.push(...ancestorsToEmbeds(replyContextAncestors));
+  }
+
   return {
     postId,
-    title: `@${post.author.handle}: ${(post.record as { text?: string }).text?.substring(0, 100) || 'Post'}`,
-    content,
+    title: `@${post.author.handle}: ${record.text?.substring(0, 100) || 'Post'}`,
+    content: record.text || '',
     url,
     author: `@${post.author.handle}`,
     publishedAt: new Date(post.indexedAt),
@@ -385,6 +275,9 @@ function postViewToDigest(
       rootUri,
       parentUri,
     },
+    media: media.length > 0 ? media : undefined,
+    links: links.length > 0 ? links : undefined,
+    embeds: embeds.length > 0 ? embeds : undefined,
   };
 }
 
@@ -477,15 +370,10 @@ export async function pollBluesky(): Promise<DigestPost[]> {
 
         if (isRepost) {
           // For reposts of replies: embed parent context inline (like the app shows it)
-          // Don't add ancestors as separate posts — show them as quote cards within this post
-          let replyContext = '';
-          for (const ancestor of ancestors) {
-            replyContext += renderReplyContext(ancestor);
-          }
-
+          // Don't add ancestors as separate posts — show them as quote embeds within this post
           if (!addedUris.has(post.uri)) {
             addedUris.add(post.uri);
-            digestPosts.push(postViewToDigest(post, rootUri, parentUri, repostedBy, replyContext));
+            digestPosts.push(postViewToDigest(post, rootUri, parentUri, repostedBy, ancestors));
           }
         } else {
           // For non-reposted replies: add ancestors as separate posts for thread grouping
