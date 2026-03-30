@@ -395,7 +395,7 @@ function renderBlueskyPosts(posts: DigestPost[]): string {
     const indents = calculateThreadIndents(allInThread);
 
     groups.push({
-      earliestTime: allInThread[0].publishedAt.getTime(),
+      earliestTime: new Date(allInThread[0].publishedAt).getTime(),
       render: () => {
         const parts: string[] = [];
         const lastPost = allInThread[allInThread.length - 1];
@@ -422,7 +422,7 @@ function renderBlueskyPosts(posts: DigestPost[]): string {
   for (const post of standalone) {
     if (usedStandalone.has(post.postId)) continue;
     groups.push({
-      earliestTime: post.publishedAt.getTime(),
+      earliestTime: new Date(post.publishedAt).getTime(),
       render: () => {
         const parts: string[] = [];
         parts.push(`<article class="post" data-source="bluesky" data-url="${esc(post.url)}">`);
@@ -503,7 +503,7 @@ function groupDiscordThreads(posts: DigestPost[]): DigestPost[][] {
     thread.sort((a, b) => new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime());
     result.push(thread);
   }
-  result.sort((a, b) => a[0].publishedAt.getTime() - b[0].publishedAt.getTime());
+  result.sort((a, b) => new Date(a[0].publishedAt).getTime() - new Date(b[0].publishedAt).getTime());
   return result;
 }
 
