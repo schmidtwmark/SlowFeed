@@ -83,9 +83,22 @@ export interface DigestItem {
   content: string;               // HTML with all posts
   post_count: number;
   post_ids: string[];
+  posts_json: DigestPostJson[] | null;  // Structured post data for native clients
   published_at: Date;
   created_at: Date;
   read_at: Date | null;          // When the digest was marked as read
+}
+
+export interface DigestPostJson {
+  postId: string;
+  source: string;
+  title: string;
+  content: string;
+  url: string;
+  author: string | null;
+  publishedAt: Date;
+  isNotification: boolean;
+  metadata: DigestPost['metadata'] | null;
 }
 
 export interface DigestItemInput {
@@ -116,6 +129,7 @@ export interface DigestItemRow {
   content: string;
   post_count: number;
   post_ids: string[];
+  posts_json: unknown;
   published_at: Date;
   created_at: Date;
   read_at: Date | null;

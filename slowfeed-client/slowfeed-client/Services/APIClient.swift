@@ -175,7 +175,46 @@ final class APIClient {
     }
 
     func getDigest(id: String) async throws -> Digest {
-        try await request("/api/digests/\(id)?format=json")
+        guard let baseURL else { throw APIError.invalidURL }
+        guard let url = URL(string: "/api/digests/\(id)?format=json", relativeTo: baseURL) else {
+            throw APIError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let sessionId {
+            request.setValue(sessionId, forHTTPHeaderField: "X-Session-Id")
+        }
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(NSError(domain: "Invalid response", code: 0))
+        }
+
+        if httpResponse.statusCode == 401 { throw APIError.unauthorized }
+        if httpResponse.statusCode >= 400 {
+            if let errorResponse = try? decoder.decode(ErrorResponse.self, from: data) {
+                throw APIError.serverError(errorResponse.error)
+            }
+            throw APIError.serverError("Server error: \(httpResponse.statusCode)")
+        }
+
+        // Log raw response for debugging
+        if let jsonString = String(data: data, encoding: .utf8) {
+            let preview = jsonString.prefix(2000)
+            logger.info("Digest \(id) response (\(data.count) bytes): \(preview)")
+        }
+
+        do {
+            let digest = try decoder.decode(Digest.self, from: data)
+            logger.info("Decoded digest \(id): postCount=\(digest.postCount), posts=\(digest.posts?.count ?? -1)")
+            return digest
+        } catch {
+            logger.error("Failed to decode digest \(id): \(error)")
+            throw APIError.decodingError(error)
+        }
     }
 
     func markAsRead(digestId: String) async throws {

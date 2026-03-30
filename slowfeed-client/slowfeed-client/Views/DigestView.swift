@@ -71,6 +71,9 @@ struct DigestView: View {
 struct DigestHeader: View {
     let digest: Digest
 
+    @Environment(AppState.self) private var appState
+    @Environment(\.openURL) private var openURL
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -83,6 +86,17 @@ struct DigestHeader: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                Button {
+                    if let url = URL(string: "\(appState.serverURL)/digest/\(digest.id)") {
+                        openURL(url)
+                    }
+                } label: {
+                    Label("Open in Safari", systemImage: "safari")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
 
             Text(digest.title)

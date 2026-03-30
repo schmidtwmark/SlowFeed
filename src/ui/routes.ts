@@ -9,7 +9,7 @@ import { testDiscordConnection, fetchGuilds, fetchChannels, pollDiscord } from '
 import { pollReddit } from '../sources/reddit.js';
 import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
-import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, getDigestPosts, getDigestPostsFull } from '../digest.js';
+import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, getDigestPosts } from '../digest.js';
 import type { ScheduleInput, SourceType } from '../types/index.js';
 import {
   hasPasskeys,
@@ -294,6 +294,7 @@ export function createUiRouter(): Router {
         source: d.source,
         title: d.title,
         postCount: d.post_count,
+        pollRunId: d.poll_run_id,
         publishedAt: d.published_at,
         readAt: d.read_at,
       }));
@@ -316,10 +317,11 @@ export function createUiRouter(): Router {
         return;
       }
 
-      // If format=json, return full structured post data instead of HTML
+      // If format=json, return structured post data instead of HTML
       if (req.query.format === 'json') {
-        const posts = await getDigestPostsFull(id);
         const { content, ...digestWithoutHtml } = digest;
+        const posts = digest.posts_json ?? [];
+        logger.info(`Digest ${id} format=json: posts_json type=${typeof digest.posts_json}, isArray=${Array.isArray(digest.posts_json)}, length=${Array.isArray(digest.posts_json) ? digest.posts_json.length : 'N/A'}, raw=${JSON.stringify(digest.posts_json)?.substring(0, 200)}`);
         res.json({
           ...digestWithoutHtml,
           posts,

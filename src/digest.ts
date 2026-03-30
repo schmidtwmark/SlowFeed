@@ -555,14 +555,30 @@ export async function createDigest(
     );
   }
 
+  // Build structured posts JSON for native clients
+  const postsJson = posts.map(p => ({
+    postId: p.postId,
+    source: source,
+    title: p.title,
+    content: p.content,
+    url: p.url,
+    author: p.author,
+    publishedAt: p.publishedAt,
+    isNotification: p.isNotification ?? false,
+    metadata: p.metadata ?? null,
+  }));
+
+  logger.info(`Digest ${digestId}: storing ${postsJson.length} posts in posts_json (${JSON.stringify(postsJson).length} bytes)`);
+
   // Insert the digest item
   await query(
-    `INSERT INTO digest_items (id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, published_at, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+    `INSERT INTO digest_items (id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
      ON CONFLICT (id) DO UPDATE SET
        content = $6,
        post_count = $7,
        post_ids = $8,
+       posts_json = $9,
        poll_run_id = $4`,
     [
       digestId,
@@ -573,6 +589,7 @@ export async function createDigest(
       content,
       posts.length,
       postIds,
+      JSON.stringify(postsJson),
     ]
   );
 
@@ -587,10 +604,20 @@ export async function createDigest(
     content,
     post_count: posts.length,
     post_ids: postIds,
+    posts_json: postsJson,
     published_at: new Date(),
     created_at: new Date(),
     read_at: null,
   };
+}
+
+function parsePostsJson(raw: unknown): DigestItem['posts_json'] {
+  if (!raw) return null;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+  return null;
 }
 
 /**
@@ -598,7 +625,7 @@ export async function createDigest(
  */
 export async function getDigestItems(source?: SourceType): Promise<DigestItem[]> {
   let sql = `
-    SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, published_at, created_at, read_at
+    SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at, read_at
     FROM digest_items
   `;
   const params: string[] = [];
@@ -621,6 +648,7 @@ export async function getDigestItems(source?: SourceType): Promise<DigestItem[]>
     content: row.content,
     post_count: row.post_count,
     post_ids: row.post_ids,
+    posts_json: parsePostsJson(row.posts_json),
     published_at: row.published_at,
     created_at: row.created_at,
     read_at: row.read_at,
@@ -632,7 +660,7 @@ export async function getDigestItems(source?: SourceType): Promise<DigestItem[]>
  */
 export async function getDigestById(id: string): Promise<DigestItem | null> {
   const { rows } = await query<DigestItemRow>(
-    `SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, published_at, created_at, read_at
+    `SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at, read_at
      FROM digest_items WHERE id = $1`,
     [id]
   );
@@ -649,6 +677,7 @@ export async function getDigestById(id: string): Promise<DigestItem | null> {
     content: row.content,
     post_count: row.post_count,
     post_ids: row.post_ids,
+    posts_json: parsePostsJson(row.posts_json),
     published_at: row.published_at,
     created_at: row.created_at,
     read_at: row.read_at,
@@ -690,52 +719,6 @@ export async function getDigestPosts(digestId: string): Promise<{
     [digestId]
   );
   return rows.map(r => ({ postId: r.post_id, source: r.source, title: r.title }));
-}
-
-/**
- * Get full post data for a digest by joining seen_posts with feed_items
- */
-export async function getDigestPostsFull(digestId: string): Promise<{
-  postId: string;
-  source: string;
-  title: string;
-  content: string | null;
-  url: string;
-  author: string | null;
-  publishedAt: Date;
-  isNotification: boolean;
-  metadata: Record<string, unknown> | null;
-}[]> {
-  const { rows } = await query<{
-    post_id: string;
-    source: string;
-    title: string;
-    content: string | null;
-    url: string;
-    author: string | null;
-    published_at: Date;
-    is_notification: boolean;
-    raw_json: Record<string, unknown> | null;
-  }>(
-    `SELECT fi.id as post_id, fi.source, fi.title, fi.content, fi.url, fi.author,
-            fi.published_at, fi.is_notification, fi.raw_json
-     FROM seen_posts sp
-     JOIN feed_items fi ON fi.id = sp.id
-     WHERE sp.digest_id = $1
-     ORDER BY fi.published_at DESC`,
-    [digestId]
-  );
-  return rows.map(r => ({
-    postId: r.post_id,
-    source: r.source,
-    title: r.title,
-    content: r.content,
-    url: r.url,
-    author: r.author,
-    publishedAt: r.published_at,
-    isNotification: r.is_notification,
-    metadata: r.raw_json?.metadata as Record<string, unknown> | null ?? null,
-  }));
 }
 
 /**
