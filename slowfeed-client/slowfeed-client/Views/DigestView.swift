@@ -4,21 +4,33 @@ struct DigestView: View {
     let digest: Digest
 
     @Environment(AppState.self) private var appState
+    @Environment(\.openURL) private var openURL
     @FocusState private var isFocused: Bool
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                // Header: tappable title opens digest in Safari
                 DigestHeader(digest: digest)
                     .padding()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if let url = URL(string: "\(appState.serverURL)/digest/\(digest.id)") {
+                            openURL(url)
+                        }
+                    }
 
                 Divider()
 
                 if let posts = digest.posts, !posts.isEmpty {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(posts) { post in
-                            PostView(post: post)
-                            Divider()
+                        if digest.source == .bluesky {
+                            BlueskyThreadedView(posts: posts)
+                        } else {
+                            ForEach(posts) { post in
+                                PostView(post: post)
+                                Divider()
+                            }
                         }
                     }
                 } else {
@@ -66,43 +78,29 @@ struct DigestView: View {
 struct DigestHeader: View {
     let digest: Digest
 
-    @Environment(AppState.self) private var appState
-    @Environment(\.openURL) private var openURL
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                SourceBadge(source: digest.source)
-                Spacer()
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(digest.title)
+                    .font(.title2)
+                    .fontWeight(.semibold)
 
-                if digest.isRead {
-                    Label("Read", systemImage: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                HStack(spacing: 12) {
+                    SourceBadge(source: digest.source)
 
-                Button {
-                    if let url = URL(string: "\(appState.serverURL)/digest/\(digest.id)") {
-                        openURL(url)
+                    if digest.isRead {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                } label: {
-                    Label("Open in Safari", systemImage: "safari")
-                        .font(.caption)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             }
 
-            Text(digest.title)
-                .font(.title2)
-                .fontWeight(.semibold)
+            Spacer()
 
-            HStack(spacing: 16) {
-                Label("\(digest.postCount) posts", systemImage: "doc.text")
-                Label(digest.publishedAt.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
+            Text(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -133,6 +131,123 @@ struct SourceBadge: View {
     }
 }
 
+// MARK: - Bluesky Threaded View
+
+struct BlueskyThreadedView: View {
+    let posts: [DigestPost]
+
+    /// Groups posts by rootUri into threads, preserving standalone posts
+    private var groups: [(id: String, posts: [DigestPost])] {
+        var threads: [String: [DigestPost]] = [:]
+        var standalone: [DigestPost] = []
+        var threadOrder: [String] = []
+
+        for post in posts {
+            if let raw = post.metadata?.rootUri {
+                // This post is part of a thread
+                let key = raw
+                if threads[key] == nil {
+                    threads[key] = []
+                    threadOrder.append(key)
+                }
+                threads[key]!.append(post)
+            } else {
+                standalone.append(post)
+            }
+        }
+
+        // Check if any standalone post is actually a thread root
+        // (other posts reference it via rootUri that ends with the standalone's postId)
+        var usedStandalone = Set<String>()
+        for (rootUri, _) in threads {
+            if let root = standalone.first(where: { rootUri.hasSuffix($0.postId) }) {
+                threads[rootUri]!.insert(root, at: 0)
+                usedStandalone.insert(root.postId)
+            }
+        }
+
+        var result: [(id: String, posts: [DigestPost])] = []
+
+        // Add threads in order
+        for key in threadOrder {
+            if let threadPosts = threads[key] {
+                let sorted = threadPosts.sorted {
+                    ($0.publishedAt ?? .distantPast) < ($1.publishedAt ?? .distantPast)
+                }
+                result.append((id: key, posts: sorted))
+            }
+        }
+
+        // Add remaining standalone posts
+        for post in standalone where !usedStandalone.contains(post.postId) {
+            result.append((id: post.postId, posts: [post]))
+        }
+
+        // Sort all groups by earliest post time
+        result.sort {
+            let t0 = $0.posts.first?.publishedAt ?? .distantPast
+            let t1 = $1.posts.first?.publishedAt ?? .distantPast
+            return t0 < t1
+        }
+
+        return result
+    }
+
+    var body: some View {
+        ForEach(groups, id: \.id) { group in
+            if group.posts.count == 1 {
+                PostView(post: group.posts[0])
+                Divider()
+            } else {
+                ThreadGroupView(posts: group.posts)
+                Divider()
+            }
+        }
+    }
+}
+
+/// Renders a group of Bluesky posts as a thread with tree indentation
+struct ThreadGroupView: View {
+    let posts: [DigestPost]
+
+    /// Calculate indent level for each post based on parent chain
+    private func indentLevel(for post: DigestPost) -> Int {
+        guard let parentUri = post.metadata?.parentUri else { return 0 }
+
+        // Find the parent in our posts array
+        if let parent = posts.first(where: { parentUri.hasSuffix($0.postId) }) {
+            return indentLevel(for: parent) + 1
+        }
+        // Parent not in our list — treat as top-level reply
+        return 1
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(posts) { post in
+                let indent = min(indentLevel(for: post), 4)
+                HStack(spacing: 0) {
+                    if indent > 0 {
+                        // Thread line indicators
+                        ForEach(0..<indent, id: \.self) { _ in
+                            Rectangle()
+                                .fill(Color.blue.opacity(0.3))
+                                .frame(width: 2)
+                                .padding(.horizontal, 8)
+                        }
+                    }
+                    PostView(post: post)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if post.id != posts.last?.id {
+                    Divider()
+                        .padding(.leading, CGFloat(indent) * 18)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Post View
 
 struct PostView: View {
@@ -140,10 +255,37 @@ struct PostView: View {
 
     @Environment(\.openURL) private var openURL
 
+    /// True if the title just repeats the author + content
+    private var titleIsDuplicate: Bool {
+        guard let content = post.content, !content.isEmpty else { return false }
+        let titleLower = post.title.lowercased()
+        let contentStart = content.prefix(60).lowercased()
+        return titleLower.contains(contentStart) || contentStart.contains(titleLower)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Author & metadata header
-            HStack {
+            // Repost indicator at top
+            if let repostedBy = post.metadata?.repostedBy {
+                Label("Reposted by \(repostedBy)", systemImage: "arrow.2.squarepath")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Author row with avatar, metadata, and date
+            HStack(spacing: 8) {
+                if let avatarUrl = post.metadata?.avatarUrl, let url = URL(string: avatarUrl) {
+                    AsyncImage(url: url) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .clipShape(Circle())
+                    } placeholder: {
+                        Circle().fill(.quaternary)
+                    }
+                    .frame(width: 28, height: 28)
+                }
+
                 if let author = post.author, !author.isEmpty {
                     Text(author)
                         .font(.subheadline)
@@ -169,20 +311,35 @@ struct PostView: View {
                         .foregroundStyle(.purple)
                 }
 
-                Spacer()
-
                 if post.isNotification == true {
                     Image(systemName: "bell.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+
+                Spacer()
+
+                if let date = post.publishedAt {
+                    Text(date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
             }
 
-            // Title
-            Text(post.title)
-                .font(.headline)
+            // Title - tappable to open post URL, skip if duplicate
+            if !titleIsDuplicate {
+                if let urlString = post.url, let url = URL(string: urlString), !urlString.isEmpty {
+                    Text(post.title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .onTapGesture { openURL(url) }
+                } else {
+                    Text(post.title)
+                        .font(.headline)
+                }
+            }
 
-            // Content (plain text)
+            // Content
             if let content = post.content, !content.isEmpty {
                 Text(content)
                     .font(.body)
@@ -190,7 +347,7 @@ struct PostView: View {
                     .lineLimit(10)
             }
 
-            // Media (images, videos)
+            // Media
             if let media = post.media, !media.isEmpty {
                 MediaView(media: media, postTitle: post.title)
             }
@@ -202,7 +359,7 @@ struct PostView: View {
                 }
             }
 
-            // Embeds (quotes, link cards)
+            // Embeds
             if let embeds = post.embeds, !embeds.isEmpty {
                 ForEach(Array(embeds.enumerated()), id: \.offset) { _, embed in
                     EmbedView(embed: embed)
@@ -214,7 +371,7 @@ struct PostView: View {
                 CommentsView(comments: comments)
             }
 
-            // Bottom metadata row
+            // Bottom metadata row (score, comments, etc.)
             HStack(spacing: 12) {
                 if let score = post.metadata?.score {
                     Label("\(score)", systemImage: "arrow.up")
@@ -231,29 +388,7 @@ struct PostView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if let repostedBy = post.metadata?.repostedBy {
-                    Label("Reposted by \(repostedBy)", systemImage: "arrow.2.squarepath")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
                 Spacer()
-
-                if let date = post.publishedAt {
-                    Text(date.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            // Open link
-            if let urlString = post.url, let url = URL(string: urlString), !urlString.isEmpty {
-                Button { openURL(url) } label: {
-                    Label("Open", systemImage: "arrow.up.right")
-                        .font(.caption)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             }
         }
         .padding()
@@ -270,7 +405,6 @@ struct MediaView: View {
         let images = media.filter { $0.type == "image" }
         let videos = media.filter { $0.type == "video" }
 
-        // Images
         if !images.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -293,7 +427,6 @@ struct MediaView: View {
             }
         }
 
-        // Video thumbnails
         ForEach(videos, id: \.url) { vid in
             if let thumbUrl = vid.thumbnailUrl, let url = URL(string: thumbUrl) {
                 AsyncImage(url: url) { image in
@@ -367,22 +500,75 @@ struct LinkCardView: View {
 struct EmbedView: View {
     let embed: PostEmbed
 
+    @Environment(\.openURL) private var openURL
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        if embed.type == "quote" {
+            quoteView
+        } else {
+            linkCardView
+        }
+    }
+
+    private var quoteView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Author row with avatar
             if let author = embed.author {
-                Text(author)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    if let avatarUrl = embed.authorAvatarUrl, let url = URL(string: avatarUrl) {
+                        AsyncImage(url: url) { image in
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .clipShape(Circle())
+                        } placeholder: {
+                            Circle().fill(.quaternary)
+                        }
+                        .frame(width: 20, height: 20)
+                    }
+                    Text(author)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if let text = embed.text {
                 Text(text)
                     .font(.subheadline)
                     .foregroundStyle(.primary.opacity(0.8))
-                    .lineLimit(5)
+                    .lineLimit(6)
             }
 
+            if let imageUrl = embed.imageUrl, let url = URL(string: imageUrl) {
+                AsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                } placeholder: {
+                    EmptyView()
+                }
+                .frame(maxHeight: 150)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.3))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture {
+            if let urlStr = embed.url, let url = URL(string: urlStr) {
+                openURL(url)
+            }
+        }
+    }
+
+    private var linkCardView: some View {
+        VStack(alignment: .leading, spacing: 4) {
             if let title = embed.title {
                 Text(title)
                     .font(.caption)
@@ -395,17 +581,34 @@ struct EmbedView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
             }
+
+            if let imageUrl = embed.imageUrl, let url = URL(string: imageUrl) {
+                AsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                } placeholder: {
+                    EmptyView()
+                }
+                .frame(maxHeight: 150)
+            }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.3))
         .overlay(
             Rectangle()
-                .fill(embed.type == "quote" ? Color.secondary.opacity(0.4) : Color.purple.opacity(0.4))
+                .fill(Color.purple.opacity(0.4))
                 .frame(width: 3),
             alignment: .leading
         )
         .clipShape(RoundedRectangle(cornerRadius: 6))
+        .onTapGesture {
+            if let urlStr = embed.url, let url = URL(string: urlStr) {
+                openURL(url)
+            }
+        }
     }
 }
 
@@ -470,28 +673,13 @@ struct CommentsView: View {
                 publishedAt: Date(),
                 isNotification: false,
                 metadata: PostMetadata(
-                    avatarUrl: nil,
-                    score: 142,
-                    subreddit: "swift",
-                    numComments: 23,
-                    videoId: nil,
-                    channel: nil,
-                    channelUrl: nil,
-                    duration: nil,
-                    viewCount: nil,
-                    publishedText: nil,
-                    guildName: nil,
-                    channelName: nil,
-                    replyToMessageId: nil,
-                    repostedBy: nil,
-                    rootUri: nil,
-                    parentUri: nil
+                    avatarUrl: nil, score: 142, subreddit: "swift", numComments: 23,
+                    videoId: nil, channel: nil, channelUrl: nil, duration: nil,
+                    viewCount: nil, publishedText: nil, guildName: nil, channelName: nil,
+                    replyToMessageId: nil, repostedBy: nil, rootUri: nil, parentUri: nil
                 ),
-                media: [],
-                links: [],
-                comments: [
-                    PostComment(author: "commenter", body: "Great post!", score: 10)
-                ],
+                media: [], links: [],
+                comments: [PostComment(author: "commenter", body: "Great post!", score: 10)],
                 embeds: []
             )
         ]

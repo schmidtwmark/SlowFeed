@@ -347,22 +347,10 @@ export async function pollBluesky(): Promise<DigestPost[]> {
       const hasQuote = quotedPost !== null && !rootUri; // Only treat as quote thread if not already a reply
 
       if (hasQuote && quotedPost) {
-        // Quote post detected - add quoted post first, then the quoting post
-        // This creates a thread where the quoted content appears first
-        const quotedUri = quotedPost.uri;
-
-        // Add the quoted post as the root of the thread (if not already added)
-        if (!addedUris.has(quotedUri)) {
-          addedUris.add(quotedUri);
-          // Quoted post has no rootUri/parentUri - it's the thread root
-          digestPosts.push(postViewToDigest(quotedPost));
-        }
-
-        // Add the quoting post with rootUri/parentUri pointing to the quoted post
+        // Quote post — keep as a single post with the quoted content as an inline embed
         if (!addedUris.has(post.uri)) {
           addedUris.add(post.uri);
-          // Skip inline quote rendering since the quoted content is now a separate thread item
-          digestPosts.push(postViewToDigest(post, quotedUri, quotedUri, repostedBy, undefined, true));
+          digestPosts.push(postViewToDigest(post, undefined, undefined, repostedBy));
         }
       } else if (rootUri) {
         // This post is a reply — fetch ancestors for context

@@ -13,13 +13,21 @@ struct MainView: View {
             #if os(macOS)
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task {
-                        try? await appState.triggerPoll()
-                    }
+                    Task { await appState.refreshDigests() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .help("Refresh feeds")
+                .disabled(appState.isRefreshing)
+                .help("Refresh digest list")
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    Task { try? await appState.triggerPoll() }
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                }
+                .help("Trigger new poll from sources")
             }
             #endif
         }
