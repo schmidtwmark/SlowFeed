@@ -401,6 +401,8 @@ struct MediaView: View {
     let media: [PostMedia]
     let postTitle: String
 
+    @Environment(\.openURL) private var openURL
+
     var body: some View {
         let images = media.filter { $0.type == "image" }
         let videos = media.filter { $0.type == "video" }
@@ -445,6 +447,11 @@ struct MediaView: View {
                         .aspectRatio(16/9, contentMode: .fit)
                 }
                 .frame(maxHeight: 250)
+                .onTapGesture {
+                    if let url = URL(string: vid.url) {
+                        openURL(url)
+                    }
+                }
             }
         }
     }
@@ -510,34 +517,70 @@ struct EmbedView: View {
         }
     }
 
+    private var providerColor: Color {
+        switch embed.provider {
+        case "Twitter": return .blue
+        case "YouTube": return .red
+        case "Instagram": return .pink
+        case "Bluesky": return .blue
+        case "Reddit": return .orange
+        case "TikTok": return .primary
+        default: return .secondary
+        }
+    }
+
     private var quoteView: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Author row with avatar
-            if let author = embed.author {
-                HStack(spacing: 6) {
-                    if let avatarUrl = embed.authorAvatarUrl, let url = URL(string: avatarUrl) {
-                        AsyncImage(url: url) { image in
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .clipShape(Circle())
-                        } placeholder: {
-                            Circle().fill(.quaternary)
-                        }
-                        .frame(width: 20, height: 20)
+            // Provider + author row
+            HStack(spacing: 6) {
+                if let avatarUrl = embed.authorAvatarUrl, let url = URL(string: avatarUrl) {
+                    AsyncImage(url: url) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .clipShape(Circle())
+                    } placeholder: {
+                        Circle().fill(.quaternary)
                     }
+                    .frame(width: 20, height: 20)
+                }
+
+                if let author = embed.author {
                     Text(author)
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundStyle(.secondary)
                 }
+
+                Spacer()
+
+                if let provider = embed.provider {
+                    Text(provider)
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(providerColor.opacity(0.15))
+                        .foregroundStyle(providerColor)
+                        .clipShape(Capsule())
+                }
+            }
+
+            if let title = embed.title, embed.text != nil {
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.medium)
             }
 
             if let text = embed.text {
                 Text(text)
                     .font(.subheadline)
                     .foregroundStyle(.primary.opacity(0.8))
-                    .lineLimit(6)
+                    .lineLimit(10)
+            } else if let title = embed.title {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
             }
 
             if let imageUrl = embed.imageUrl, let url = URL(string: imageUrl) {
@@ -547,9 +590,11 @@ struct EmbedView: View {
                         .aspectRatio(contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 } placeholder: {
-                    EmptyView()
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(.quaternary)
+                        .aspectRatio(16/9, contentMode: .fit)
                 }
-                .frame(maxHeight: 150)
+                .frame(maxHeight: 300)
             }
         }
         .padding(10)
@@ -557,7 +602,7 @@ struct EmbedView: View {
         .background(.quaternary.opacity(0.3))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                .stroke(providerColor.opacity(0.3), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture {

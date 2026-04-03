@@ -37,11 +37,18 @@ interface DiscordMessage {
     content_type?: string;
   }>;
   embeds: Array<{
+    type?: string;           // 'rich', 'image', 'video', 'link', 'article'
     title?: string;
     description?: string;
     url?: string;
-    image?: { url: string };
-    thumbnail?: { url: string };
+    color?: number;
+    image?: { url: string; width?: number; height?: number };
+    thumbnail?: { url: string; width?: number; height?: number };
+    video?: { url: string; width?: number; height?: number };
+    author?: { name?: string; url?: string; icon_url?: string };
+    provider?: { name?: string; url?: string };
+    footer?: { text?: string; icon_url?: string };
+    fields?: Array<{ name: string; value: string; inline?: boolean }>;
   }>;
   message_reference?: {
     message_id?: string;
@@ -162,6 +169,40 @@ function getMessagePreview(message: DiscordMessage): string {
   return '(empty message)';
 }
 
+/**
+ * Detect the source provider from a Discord embed's provider field or URL patterns
+ */
+function detectProvider(embed: DiscordMessage['embeds'][0]): string | null {
+  const providerName = embed.provider?.name?.toLowerCase();
+  if (providerName) {
+    if (providerName.includes('twitter') || providerName.includes('x')) return 'Twitter';
+    if (providerName.includes('youtube')) return 'YouTube';
+    if (providerName.includes('instagram')) return 'Instagram';
+    if (providerName.includes('bluesky') || providerName.includes('bsky')) return 'Bluesky';
+    if (providerName.includes('reddit')) return 'Reddit';
+    if (providerName.includes('tiktok')) return 'TikTok';
+  }
+
+  // Fall back to URL pattern matching
+  const url = embed.url || '';
+  if (/twitter\.com|x\.com|fxtwitter|vxtwitter|nitter/i.test(url)) return 'Twitter';
+  if (/youtube\.com|youtu\.be/i.test(url)) return 'YouTube';
+  if (/instagram\.com|ddinstagram/i.test(url)) return 'Instagram';
+  if (/bsky\.app|bsky\.social/i.test(url)) return 'Bluesky';
+  if (/reddit\.com|redd\.it/i.test(url)) return 'Reddit';
+  if (/tiktok\.com/i.test(url)) return 'TikTok';
+
+  return null;
+}
+
+/**
+ * Extract YouTube video ID from a URL
+ */
+function extractYouTubeVideoId(url: string): string | null {
+  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+  return match?.[1] || null;
+}
+
 export async function pollDiscord(): Promise<DigestPost[]> {
   const config = getConfig();
 
@@ -224,16 +265,56 @@ export async function pollDiscord(): Promise<DigestPost[]> {
           };
         });
 
-        // Build embeds array from Discord embeds
-        const embeds: PostEmbed[] = message.embeds
-          .filter(embed => embed.title || embed.description || embed.url)
-          .map(embed => ({
-            type: 'link_card' as const,
-            title: embed.title,
-            description: embed.description,
-            url: embed.url,
-            imageUrl: embed.image?.url || embed.thumbnail?.url,
-          }));
+        // Build embeds array from Discord embeds with smart source detection
+        const embeds: PostEmbed[] = [];
+        for (const embed of message.embeds) {
+          if (!embed.title && !embed.description && !embed.url) continue;
+
+          const provider = detectProvider(embed);
+
+          if (provider === 'YouTube' && embed.video) {
+            // YouTube: extract video as PostMedia for inline playback
+            const videoId = extractYouTubeVideoId(embed.url || embed.video.url);
+            if (videoId) {
+              media.push({
+                type: 'video',
+                url: embed.url || embed.video.url,
+                thumbnailUrl: embed.thumbnail?.url || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+              });
+            }
+            // Also add as a link_card for title/description context
+            embeds.push({
+              type: 'link_card',
+              title: embed.title,
+              description: embed.description,
+              url: embed.url,
+              imageUrl: embed.thumbnail?.url,
+              provider: 'YouTube',
+            });
+          } else if (provider === 'Twitter' || provider === 'Bluesky' || provider === 'Instagram') {
+            // Social posts: render as quote embeds to show content inline
+            embeds.push({
+              type: 'quote',
+              author: embed.author?.name,
+              authorAvatarUrl: embed.author?.icon_url,
+              text: embed.description,
+              title: embed.title,
+              url: embed.url,
+              imageUrl: embed.image?.url || embed.thumbnail?.url,
+              provider,
+            });
+          } else {
+            // Generic link card
+            embeds.push({
+              type: 'link_card',
+              title: embed.title,
+              description: embed.description,
+              url: embed.url,
+              imageUrl: embed.image?.url || embed.thumbnail?.url,
+              provider: provider || undefined,
+            });
+          }
+        }
 
         digestPosts.push({
           postId: message.id,

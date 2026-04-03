@@ -241,10 +241,15 @@ function renderEmbeds(post: DigestPost): string {
     if (embed.type === 'quote') {
       const parts: string[] = [];
       parts.push(`<blockquote style="margin: 8px 0; padding: 8px 12px; border-left: 3px solid #ccc; background: rgba(128,128,128,0.1); border-radius: 4px;">`);
+      const headerParts: string[] = [];
       if (embed.author) {
         const avatar = renderAvatar(embed.authorAvatarUrl, embed.author);
-        parts.push(`<p class="post-author">${avatar}<strong>${esc(embed.author)}</strong></p>`);
+        headerParts.push(`${avatar}<strong>${esc(embed.author)}</strong>`);
       }
+      if (embed.provider) {
+        headerParts.push(`<span style="font-size: 12px; padding: 1px 6px; background: rgba(128,128,128,0.2); border-radius: 8px; margin-left: 4px;">${esc(embed.provider)}</span>`);
+      }
+      if (headerParts.length > 0) parts.push(`<p class="post-author">${headerParts.join(' ')}</p>`);
       if (embed.text) parts.push(`<p>${esc(embed.text)}</p>`);
       if (embed.imageUrl) {
         parts.push(`<p><img src="${esc(embed.imageUrl)}" alt="" style="max-width: 100%; border-radius: 4px;"></p>`);
@@ -330,10 +335,12 @@ const MAX_THREAD_ITEMS = 5;
 function calculateThreadIndents(posts: DigestPost[]): Map<string, number> {
   const indents = new Map<string, number>();
 
+  // Posts without a parentUri are roots (indent 0)
   for (const post of posts) {
     if (!post.metadata?.parentUri) indents.set(post.postId, 0);
   }
 
+  // Iteratively resolve child indent levels by matching parentUri to postId
   let changed = true;
   let iterations = 0;
   while (changed && iterations < 10) {
@@ -343,8 +350,10 @@ function calculateThreadIndents(posts: DigestPost[]): Map<string, number> {
       if (indents.has(post.postId)) continue;
       const parentUri = post.metadata?.parentUri;
       if (parentUri) {
-        // Find parent by matching URI pattern
+        // Match parent by postId suffix (postId is the rkey at the end of the at:// URI)
+        // Also try exact rawJson.uri match for freshly-created digests
         const parent = posts.find(p => {
+          if (parentUri.endsWith(`/${p.postId}`)) return true;
           const raw = p.rawJson as { uri?: string } | undefined;
           return raw?.uri === parentUri;
         });
@@ -356,8 +365,11 @@ function calculateThreadIndents(posts: DigestPost[]): Map<string, number> {
     }
   }
 
+  // Any unresolved posts default to indent 1 if they have a parentUri, 0 otherwise
   for (const post of posts) {
-    if (!indents.has(post.postId)) indents.set(post.postId, 0);
+    if (!indents.has(post.postId)) {
+      indents.set(post.postId, post.metadata?.parentUri ? 1 : 0);
+    }
   }
   return indents;
 }
@@ -377,17 +389,16 @@ function renderBlueskyPosts(posts: DigestPost[]): string {
     }
   }
 
-  const standaloneByUri = new Map<string, DigestPost>();
-  for (const post of standalone) {
-    const raw = post.rawJson as { uri?: string } | undefined;
-    if (raw?.uri) standaloneByUri.set(raw.uri, post);
-  }
-
   const usedStandalone = new Set<string>();
   const groups: { earliestTime: number; render: () => string }[] = [];
 
   for (const [rootUri, threadPosts] of threads) {
-    const rootPost = standaloneByUri.get(rootUri);
+    // Find the root post from standalone posts by matching postId suffix or exact rawJson.uri
+    const rootPost = standalone.find(p => {
+      if (rootUri.endsWith(`/${p.postId}`)) return true;
+      const raw = p.rawJson as { uri?: string } | undefined;
+      return raw?.uri === rootUri;
+    });
     const allInThread = rootPost ? [rootPost, ...threadPosts] : threadPosts;
     if (rootPost) usedStandalone.add(rootPost.postId);
 

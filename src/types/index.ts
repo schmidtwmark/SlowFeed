@@ -83,6 +83,7 @@ export interface PostEmbed {
   author?: string;
   authorAvatarUrl?: string;
   text?: string;           // body text of quoted post
+  provider?: string;       // e.g., 'Twitter', 'YouTube', 'Instagram', 'Bluesky'
 }
 
 /** Source-specific metadata */

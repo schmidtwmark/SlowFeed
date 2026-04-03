@@ -131,6 +131,7 @@ struct PostEmbed: Codable {
     let author: String?
     let authorAvatarUrl: String?
     let text: String?
+    let provider: String?      // "Twitter", "YouTube", "Instagram", "Bluesky"
 }
 
 struct PostMetadata: Codable {
