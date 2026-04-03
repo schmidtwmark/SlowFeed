@@ -7,7 +7,11 @@ struct MainView: View {
         NavigationSplitView {
             DigestSidebar()
         } detail: {
-            DigestDetailView()
+            if appState.showingSavedPosts {
+                SavedPostsView()
+            } else {
+                DigestDetailView()
+            }
         }
         .toolbar {
             #if os(macOS)
@@ -227,7 +231,8 @@ struct SourceToolbar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            SourceFilterButton(label: "All", icon: "square.stack.3d.up", isSelected: appState.selectedSource == nil) {
+            SourceFilterButton(label: "All", icon: "square.stack.3d.up", isSelected: appState.selectedSource == nil && !appState.showingSavedPosts) {
+                appState.showingSavedPosts = false
                 Task { await appState.selectSource(nil) }
             }
 
@@ -236,11 +241,16 @@ struct SourceToolbar: View {
                     SourceFilterButton(
                         label: sourceType.displayName,
                         icon: sourceType.iconName,
-                        isSelected: appState.selectedSource == sourceType
+                        isSelected: appState.selectedSource == sourceType && !appState.showingSavedPosts
                     ) {
+                        appState.showingSavedPosts = false
                         Task { await appState.selectSource(sourceType) }
                     }
                 }
+            }
+
+            SourceFilterButton(label: "Saved", icon: "bookmark.fill", isSelected: appState.showingSavedPosts) {
+                appState.showingSavedPosts = true
             }
         }
         .padding(.horizontal, 8)
@@ -278,23 +288,58 @@ struct DigestDetailView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        if appState.isLoading && appState.currentDigest == nil {
-            ProgressView("Loading...")
+        ZStack {
+            if let digest = appState.currentDigest {
+                DigestView(digest: digest)
+                    .id(digest.id)
+            } else if appState.isLoading {
+                ProgressView("Loading...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if appState.digests.isEmpty {
+                ContentUnavailableView(
+                    "No Digests",
+                    systemImage: "doc.text",
+                    description: Text("No digests available. Try refreshing or check your source configuration.")
+                )
+            } else {
+                ContentUnavailableView(
+                    "Select a Digest",
+                    systemImage: "doc.text",
+                    description: Text("Choose a digest from the sidebar")
+                )
+            }
+
+            // Overlay loading indicator when switching digests
+            if appState.digestLoading {
+                VStack {
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.large)
+                        .padding()
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    Spacer()
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let digest = appState.currentDigest {
-            DigestView(digest: digest)
-        } else if appState.digests.isEmpty {
-            ContentUnavailableView(
-                "No Digests",
-                systemImage: "doc.text",
-                description: Text("No digests available. Try refreshing or check your source configuration.")
-            )
-        } else {
-            ContentUnavailableView(
-                "Select a Digest",
-                systemImage: "doc.text",
-                description: Text("Choose a digest from the sidebar")
-            )
+            }
+
+            // Error overlay
+            if let error = appState.digestError {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.largeTitle)
+                        .foregroundStyle(.red)
+                    Text("Failed to load digest")
+                        .font(.headline)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                        .padding(.horizontal)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.ultraThinMaterial)
+            }
         }
     }
 }

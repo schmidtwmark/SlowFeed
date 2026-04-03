@@ -10,6 +10,7 @@ import { pollReddit } from '../sources/reddit.js';
 import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
 import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, getDigestPosts, renderDigestHtml, stripHtml } from '../digest.js';
+import { savePost, unsavePost, getSavedPosts, getSavedPostIds } from '../saved-posts.js';
 import type { ScheduleInput, SourceType, DigestPost, DigestItemRow } from '../types/index.js';
 import {
   hasPasskeys,
@@ -966,6 +967,62 @@ export function createUiRouter(): Router {
     }
   });
 
+  // --- Saved Posts ---
+
+  router.get('/api/saved-posts', async (req, res) => {
+    try {
+      const source = req.query.source as SourceType | undefined;
+      const groups = await getSavedPosts(source);
+      res.json(groups);
+    } catch (err) {
+      logger.error('Error fetching saved posts:', err);
+      res.status(500).json({ error: 'Failed to fetch saved posts' });
+    }
+  });
+
+  router.get('/api/saved-posts/ids', async (_req, res) => {
+    try {
+      const ids = await getSavedPostIds();
+      res.json({ ids });
+    } catch (err) {
+      logger.error('Error fetching saved post IDs:', err);
+      res.status(500).json({ error: 'Failed to fetch saved post IDs' });
+    }
+  });
+
+  router.post('/api/saved-posts', async (req, res) => {
+    try {
+      const { postId, source, digestId, post } = req.body;
+      if (!postId || !source || !post) {
+        res.status(400).json({ error: 'Missing required fields: postId, source, post' });
+        return;
+      }
+      const inserted = await savePost(postId, source, digestId || null, post);
+      if (!inserted) {
+        res.status(409).json({ error: 'Post already saved' });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      logger.error('Error saving post:', err);
+      res.status(500).json({ error: 'Failed to save post' });
+    }
+  });
+
+  router.delete('/api/saved-posts/:postId', async (req, res) => {
+    try {
+      const deleted = await unsavePost(req.params.postId);
+      if (!deleted) {
+        res.status(404).json({ error: 'Saved post not found' });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      logger.error('Error unsaving post:', err);
+      res.status(500).json({ error: 'Failed to unsave post' });
+    }
+  });
+
   // Serve index.html for all UI routes (client-side routing)
   const uiRoutes = [
     '/dashboard',
@@ -977,6 +1034,7 @@ export function createUiRouter(): Router {
     '/settings/reddit',
     '/settings/discord',
     '/feed-preview',
+    '/saved',
     '/logs',
   ];
 

@@ -267,6 +267,40 @@ final class APIClient {
         try await requestVoid("/api/passkeys/\(id)", method: "PATCH", body: body)
     }
 
+    // MARK: - Saved Posts
+
+    func getSavedPosts(source: SourceType? = nil) async throws -> [SavedPostGroup] {
+        var endpoint = "/api/saved-posts"
+        if let source { endpoint += "?source=\(source.rawValue)" }
+        return try await request(endpoint)
+    }
+
+    func getSavedPostIds() async throws -> Set<String> {
+        let response: SavedPostIdsResponse = try await request("/api/saved-posts/ids")
+        return Set(response.ids)
+    }
+
+    struct SavePostBody: Encodable {
+        let postId: String
+        let source: String
+        let digestId: String?
+        let post: DigestPost
+    }
+
+    func savePost(_ post: DigestPost, source: SourceType, digestId: String?) async throws {
+        let body = try encoder.encode(SavePostBody(
+            postId: post.postId,
+            source: source.rawValue,
+            digestId: digestId,
+            post: post
+        ))
+        try await requestVoid("/api/saved-posts", method: "POST", body: body)
+    }
+
+    func unsavePost(postId: String) async throws {
+        try await requestVoid("/api/saved-posts/\(postId)", method: "DELETE")
+    }
+
     // MARK: - Poll Endpoints
 
     func triggerPoll(source: SourceType? = nil) async throws {

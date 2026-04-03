@@ -157,6 +157,19 @@ struct PostMetadata: Codable {
     let parentUri: String?
 }
 
+// MARK: - Saved Posts
+
+struct SavedPostGroup: Codable, Identifiable {
+    let source: SourceType
+    let posts: [DigestPost]
+
+    var id: String { source.rawValue }
+}
+
+struct SavedPostIdsResponse: Codable {
+    let ids: [String]
+}
+
 // MARK: - Source Configuration
 
 struct SourceInfo: Codable, Identifiable {

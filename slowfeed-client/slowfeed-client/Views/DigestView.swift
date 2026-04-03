@@ -1,4 +1,9 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 struct DigestView: View {
     let digest: Digest
@@ -25,10 +30,10 @@ struct DigestView: View {
                 if let posts = digest.posts, !posts.isEmpty {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         if digest.source == .bluesky {
-                            BlueskyThreadedView(posts: posts)
+                            BlueskyThreadedView(posts: posts, source: digest.source, digestId: digest.id)
                         } else {
                             ForEach(posts) { post in
-                                PostView(post: post)
+                                PostView(post: post, source: digest.source, digestId: digest.id)
                                 Divider()
                             }
                         }
@@ -135,6 +140,8 @@ struct SourceBadge: View {
 
 struct BlueskyThreadedView: View {
     let posts: [DigestPost]
+    var source: SourceType = .bluesky
+    var digestId: String?
 
     /// Groups posts by rootUri into threads, preserving standalone posts
     private var groups: [(id: String, posts: [DigestPost])] {
@@ -196,10 +203,10 @@ struct BlueskyThreadedView: View {
     var body: some View {
         ForEach(groups, id: \.id) { group in
             if group.posts.count == 1 {
-                PostView(post: group.posts[0])
+                PostView(post: group.posts[0], source: source, digestId: digestId)
                 Divider()
             } else {
-                ThreadGroupView(posts: group.posts)
+                ThreadGroupView(posts: group.posts, source: source, digestId: digestId)
                 Divider()
             }
         }
@@ -209,6 +216,8 @@ struct BlueskyThreadedView: View {
 /// Renders a group of Bluesky posts as a thread with tree indentation
 struct ThreadGroupView: View {
     let posts: [DigestPost]
+    var source: SourceType = .bluesky
+    var digestId: String?
 
     /// Calculate indent level for each post based on parent chain
     private func indentLevel(for post: DigestPost) -> Int {
@@ -236,7 +245,7 @@ struct ThreadGroupView: View {
                                 .padding(.horizontal, 8)
                         }
                     }
-                    PostView(post: post)
+                    PostView(post: post, source: source, digestId: digestId)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if post.id != posts.last?.id {
@@ -252,8 +261,24 @@ struct ThreadGroupView: View {
 
 struct PostView: View {
     let post: DigestPost
+    var source: SourceType = .reddit
+    var digestId: String?
 
     @Environment(\.openURL) private var openURL
+    @Environment(AppState.self) private var appState
+
+    private var postURL: URL? {
+        guard let urlString = post.url, !urlString.isEmpty else { return nil }
+        return URL(string: urlString)
+    }
+
+    private var firstMedia: PostMedia? {
+        post.media?.first
+    }
+
+    private var hasMedia: Bool {
+        firstMedia != nil
+    }
 
     /// True if the title just repeats the author + content
     private var titleIsDuplicate: Bool {
@@ -326,17 +351,11 @@ struct PostView: View {
                 }
             }
 
-            // Title - tappable to open post URL, skip if duplicate
+            // Title - skip if duplicate
             if !titleIsDuplicate {
-                if let urlString = post.url, let url = URL(string: urlString), !urlString.isEmpty {
-                    Text(post.title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                        .onTapGesture { openURL(url) }
-                } else {
-                    Text(post.title)
-                        .font(.headline)
-                }
+                Text(post.title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
             }
 
             // Content
@@ -392,6 +411,151 @@ struct PostView: View {
             }
         }
         .padding()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let url = postURL { openURL(url) }
+        }
+        .contextMenu {
+            if let url = postURL {
+                Button {
+                    openURL(url)
+                } label: {
+                    Label("Open", systemImage: "safari")
+                }
+
+                Button {
+                    #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                    #else
+                    UIPasteboard.general.string = url.absoluteString
+                    #endif
+                } label: {
+                    Label("Copy Link", systemImage: "doc.on.doc")
+                }
+
+                ShareLink("Share Link", item: url)
+            }
+
+            if hasMedia {
+                Divider()
+
+                Button {
+                    Task { await copyMediaToClipboard() }
+                } label: {
+                    Label("Copy Media", systemImage: "photo.on.rectangle")
+                }
+
+                Button {
+                    Task { await shareMedia() }
+                } label: {
+                    Label("Share Media", systemImage: "square.and.arrow.up")
+                }
+            }
+
+            Divider()
+
+            Button {
+                Task { await appState.toggleSavePost(post, source: source, digestId: digestId) }
+            } label: {
+                if appState.savedPostIds.contains(post.postId) {
+                    Label("Unsave", systemImage: "bookmark.slash")
+                } else {
+                    Label("Save for Later", systemImage: "bookmark")
+                }
+            }
+        }
+    }
+
+    /// Download media and return (data, media item) for the first media attachment
+    private func downloadMedia() async -> (Data, PostMedia)? {
+        guard let media = firstMedia, let url = URL(string: media.url) else { return nil }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            return (data, media)
+        } catch {
+            return nil
+        }
+    }
+
+    /// File extension based on media type and URL
+    private func fileExtension(for media: PostMedia) -> String {
+        // Try URL path extension first
+        let urlExt = URL(string: media.url)?.pathExtension ?? ""
+        if !urlExt.isEmpty { return urlExt }
+        // Fall back based on type
+        switch media.type {
+        case "video": return "mp4"
+        case "image": return "jpg"
+        default: return "bin"
+        }
+    }
+
+    /// Write data to a temp file and return the URL
+    private func writeTempFile(data: Data, media: PostMedia) -> URL {
+        let ext = fileExtension(for: media)
+        let filename = "slowfeed_media_\(UUID().uuidString.prefix(8)).\(ext)"
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        try? data.write(to: tempURL)
+        return tempURL
+    }
+
+    private func copyMediaToClipboard() async {
+        guard let (data, media) = await downloadMedia() else { return }
+        let isImage = media.type == "image"
+        let tempFileURL = writeTempFile(data: data, media: media)
+
+        await MainActor.run {
+            #if os(macOS)
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            if isImage, let image = NSImage(data: data) {
+                pb.writeObjects([image])
+            } else {
+                // Video/file: copy as file URL so it can be pasted into Finder, Messages, etc.
+                pb.writeObjects([tempFileURL as NSURL])
+            }
+            #else
+            if isImage, let image = UIImage(data: data) {
+                UIPasteboard.general.image = image
+            } else {
+                // Video: copy file URL
+                UIPasteboard.general.url = tempFileURL
+            }
+            #endif
+        }
+    }
+
+    private func shareMedia() async {
+        guard let (data, media) = await downloadMedia() else { return }
+        let tempFileURL = writeTempFile(data: data, media: media)
+
+        await MainActor.run {
+            #if os(macOS)
+            let items: [Any]
+            if media.type == "image", let image = NSImage(data: data) {
+                items = [image]
+            } else {
+                items = [tempFileURL]
+            }
+            let picker = NSSharingServicePicker(items: items)
+            if let window = NSApp.keyWindow, let contentView = window.contentView {
+                picker.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
+            }
+            #else
+            let items: [Any]
+            if media.type == "image", let image = UIImage(data: data) {
+                items = [image]
+            } else {
+                items = [tempFileURL]
+            }
+            let activityVC = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootVC = windowScene.windows.first?.rootViewController {
+                rootVC.present(activityVC, animated: true)
+            }
+            #endif
+        }
     }
 }
 

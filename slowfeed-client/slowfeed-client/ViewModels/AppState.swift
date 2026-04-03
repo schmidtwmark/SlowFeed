@@ -53,12 +53,20 @@ final class AppState {
 
     // Digest cache
     private var digestCache: [String: Digest] = [:]
+    private var preloadTask: Task<Void, Never>?
+
+    // Saved posts
+    var savedPostIds: Set<String> = []
+    var savedPostGroups: [SavedPostGroup] = []
+    var showingSavedPosts = false
 
     // Sources
     var sources: [SourceInfo] = []
 
     // Loading states
     var isLoading = false
+    var digestLoading = false
+    var digestError: String?
     var error: String?
 
     // Config
@@ -163,6 +171,9 @@ final class AppState {
                 expandDigestGroups()
             }
 
+            // Load saved post IDs in background
+            Task { await loadSavedPostIds() }
+
             if let firstDigest = digests.first {
                 await loadDigest(id: firstDigest.id)
             }
@@ -197,14 +208,20 @@ final class AppState {
         if let cached = digestCache[id] {
             await MainActor.run {
                 currentDigest = cached
+                digestLoading = false
+                digestError = nil
             }
             // Mark as read in background
             Task { try? await apiClient.markAsRead(digestId: id) }
             await markReadInList(id: id)
+            preloadNearby()
             return
         }
 
-        await MainActor.run { isLoading = true }
+        await MainActor.run {
+            digestLoading = true
+            digestError = nil
+        }
 
         do {
             let digest = try await apiClient.getDigest(id: id)
@@ -212,15 +229,42 @@ final class AppState {
 
             await MainActor.run {
                 currentDigest = digest
-                isLoading = false
+                digestLoading = false
             }
 
             Task { try? await apiClient.markAsRead(digestId: id) }
             await markReadInList(id: id)
+            preloadNearby()
         } catch {
+            logger.error("Failed to load digest \(id): \(error.localizedDescription)")
             await MainActor.run {
-                self.error = error.localizedDescription
-                isLoading = false
+                self.digestError = "\(error)"
+                digestLoading = false
+            }
+        }
+    }
+
+    /// Preload digests adjacent to the current index
+    private func preloadNearby() {
+        preloadTask?.cancel()
+        preloadTask = Task {
+            let indices = [
+                currentDigestIndex - 1,
+                currentDigestIndex + 1,
+                currentDigestIndex - 2,
+                currentDigestIndex + 2,
+            ]
+            for i in indices {
+                guard !Task.isCancelled else { return }
+                guard i >= 0 && i < digests.count else { continue }
+                let digestId = digests[i].id
+                if digestCache[digestId] != nil { continue }
+                do {
+                    let digest = try await apiClient.getDigest(id: digestId)
+                    digestCache[digestId] = digest
+                } catch {
+                    logger.debug("Preload failed for \(digestId): \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -281,6 +325,69 @@ final class AppState {
 
     var canNavigateNext: Bool {
         currentDigestIndex > 0
+    }
+
+    // MARK: - Saved Posts
+
+    func loadSavedPostIds() async {
+        do {
+            let ids = try await apiClient.getSavedPostIds()
+            await MainActor.run { savedPostIds = ids }
+        } catch {
+            logger.error("Failed to load saved post IDs: \(error.localizedDescription)")
+        }
+    }
+
+    func loadSavedPosts() async {
+        do {
+            let groups = try await apiClient.getSavedPosts()
+            await MainActor.run { savedPostGroups = groups }
+        } catch {
+            logger.error("Failed to load saved posts: \(error.localizedDescription)")
+            await MainActor.run { self.error = error.localizedDescription }
+        }
+    }
+
+    func toggleSavePost(_ post: DigestPost, source: SourceType, digestId: String?) async {
+        let postId = post.postId
+        let wasSaved = savedPostIds.contains(postId)
+
+        // Optimistic update
+        await MainActor.run {
+            if wasSaved {
+                savedPostIds.remove(postId)
+            } else {
+                savedPostIds.insert(postId)
+            }
+        }
+
+        do {
+            if wasSaved {
+                try await apiClient.unsavePost(postId: postId)
+                // Remove from local groups
+                await MainActor.run {
+                    for i in savedPostGroups.indices {
+                        savedPostGroups[i] = SavedPostGroup(
+                            source: savedPostGroups[i].source,
+                            posts: savedPostGroups[i].posts.filter { $0.postId != postId }
+                        )
+                    }
+                    savedPostGroups.removeAll { $0.posts.isEmpty }
+                }
+            } else {
+                try await apiClient.savePost(post, source: source, digestId: digestId)
+            }
+        } catch {
+            // Revert optimistic update
+            logger.error("Failed to \(wasSaved ? "unsave" : "save") post: \(error.localizedDescription)")
+            await MainActor.run {
+                if wasSaved {
+                    savedPostIds.insert(postId)
+                } else {
+                    savedPostIds.remove(postId)
+                }
+            }
+        }
     }
 
     // MARK: - Config
