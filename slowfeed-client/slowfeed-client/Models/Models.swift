@@ -104,6 +104,7 @@ struct PostMedia: Codable {
     let type: String           // "image", "video", "file"
     let url: String
     let thumbnailUrl: String?
+    let audioUrl: String?      // separate audio track (Reddit DASH videos)
     let alt: String?
     let filename: String?
     let mimeType: String?
@@ -132,6 +133,7 @@ struct PostEmbed: Codable {
     let authorAvatarUrl: String?
     let text: String?
     let provider: String?      // "Twitter", "YouTube", "Instagram", "Bluesky"
+    let publishedAt: Date?
 }
 
 struct PostMetadata: Codable {

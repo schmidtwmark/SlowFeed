@@ -465,6 +465,7 @@ export async function pollReddit(): Promise<DigestPost[]> {
             type: 'video',
             url: videoUrl,
             thumbnailUrl: videoPreview || undefined,
+            audioUrl: postJson?.videoAudioUrl || undefined,
           });
         }
       }

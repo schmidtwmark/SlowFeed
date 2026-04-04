@@ -58,7 +58,6 @@ final class AppState {
     // Saved posts
     var savedPostIds: Set<String> = []
     var savedPostGroups: [SavedPostGroup] = []
-    var showingSavedPosts = false
 
     // Sources
     var sources: [SourceInfo] = []

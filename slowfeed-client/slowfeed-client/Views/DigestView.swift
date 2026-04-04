@@ -1,9 +1,19 @@
 import SwiftUI
+import AVKit
 #if os(macOS)
 import AppKit
 #else
 import UIKit
 #endif
+
+// MARK: - Conditional View Modifier
+
+private extension View {
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition { transform(self) } else { self }
+    }
+}
 
 // MARK: - Cached Image Loader (replaces AsyncImage for reliability)
 
@@ -92,48 +102,73 @@ struct DigestView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
     @FocusState private var isFocused: Bool
+    @Namespace private var imageNamespace
+    @State private var viewerURLs: [URL] = []
+    @State private var viewerIndex: Int = 0
+    @State private var showViewer = false
+
+    private func openImageViewer(urls: [URL], index: Int) {
+        viewerURLs = urls
+        viewerIndex = index
+        withAnimation(.spring(duration: 0.4, bounce: 0.15)) { showViewer = true }
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                // Header: tappable title opens digest in Safari
-                DigestHeader(digest: digest)
-                    .padding()
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if let url = URL(string: "\(appState.serverURL)/digest/\(digest.id)") {
-                            openURL(url)
-                        }
-                    }
-
-                Divider()
-
-                if let posts = digest.posts, !posts.isEmpty {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if digest.source == .bluesky {
-                            BlueskyThreadedView(posts: posts, source: digest.source, digestId: digest.id)
-                        } else {
-                            ForEach(posts) { post in
-                                PostView(post: post, source: digest.source, digestId: digest.id)
-                                Divider()
+        ZStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    // Header: tappable title opens digest in Safari
+                    DigestHeader(digest: digest)
+                        .padding()
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if let url = URL(string: "\(appState.serverURL)/digest/\(digest.id)") {
+                                openURL(url)
                             }
                         }
+
+                    Divider()
+
+                    if let posts = digest.posts, !posts.isEmpty {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            if digest.source == .bluesky {
+                                BlueskyThreadedView(posts: posts, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
+                            } else {
+                                ForEach(posts) { post in
+                                    PostView(post: post, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
+                                    Divider()
+                                }
+                            }
+                        }
+                    } else {
+                        ContentUnavailableView(
+                            "No Posts",
+                            systemImage: "doc.text",
+                            description: Text("This digest has no posts.")
+                        )
+                        .padding(.top, 40)
                     }
-                } else {
-                    ContentUnavailableView(
-                        "No Posts",
-                        systemImage: "doc.text",
-                        description: Text("This digest has no posts.")
-                    )
-                    .padding(.top, 40)
                 }
+            }
+            .allowsHitTesting(!showViewer)
+
+            if showViewer {
+                ImageViewerOverlay(
+                    imageURLs: viewerURLs,
+                    currentIndex: $viewerIndex,
+                    namespace: imageNamespace,
+                    onDismiss: {
+                        withAnimation(.spring(duration: 0.4, bounce: 0.15)) { showViewer = false }
+                    }
+                )
             }
         }
         .focusable()
         .focused($isFocused)
         #if os(macOS)
         .onKeyPress { keyPress in
-            handleKeyPress(keyPress)
+            if showViewer { return .ignored }
+            return handleKeyPress(keyPress)
         }
         #endif
         .onAppear { isFocused = true }
@@ -223,6 +258,8 @@ struct BlueskyThreadedView: View {
     let posts: [DigestPost]
     var source: SourceType = .bluesky
     var digestId: String?
+    var imageNamespace: Namespace.ID?
+    var onSelectImage: (([URL], Int) -> Void)?
 
     /// Groups posts by rootUri into threads, preserving standalone posts
     private var groups: [(id: String, posts: [DigestPost])] {
@@ -284,10 +321,10 @@ struct BlueskyThreadedView: View {
     var body: some View {
         ForEach(groups, id: \.id) { group in
             if group.posts.count == 1 {
-                PostView(post: group.posts[0], source: source, digestId: digestId)
+                PostView(post: group.posts[0], source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
                 Divider()
             } else {
-                ThreadGroupView(posts: group.posts, source: source, digestId: digestId)
+                ThreadGroupView(posts: group.posts, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
                 Divider()
             }
         }
@@ -299,6 +336,8 @@ struct ThreadGroupView: View {
     let posts: [DigestPost]
     var source: SourceType = .bluesky
     var digestId: String?
+    var imageNamespace: Namespace.ID?
+    var onSelectImage: (([URL], Int) -> Void)?
 
     /// Calculate indent level for each post based on parent chain
     private func indentLevel(for post: DigestPost) -> Int {
@@ -326,7 +365,7 @@ struct ThreadGroupView: View {
                                 .padding(.horizontal, 8)
                         }
                     }
-                    PostView(post: post, source: source, digestId: digestId)
+                    PostView(post: post, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if post.id != posts.last?.id {
@@ -344,6 +383,8 @@ struct PostView: View {
     let post: DigestPost
     var source: SourceType = .reddit
     var digestId: String?
+    var imageNamespace: Namespace.ID?
+    var onSelectImage: (([URL], Int) -> Void)?
 
     @Environment(\.openURL) private var openURL
     @Environment(AppState.self) private var appState
@@ -443,7 +484,7 @@ struct PostView: View {
 
             // Media
             if let media = post.media, !media.isEmpty {
-                MediaView(media: media, postTitle: post.title)
+                MediaView(media: media, postTitle: post.title, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
             }
 
             // External links
@@ -532,9 +573,10 @@ struct PostView: View {
 struct MediaView: View {
     let media: [PostMedia]
     let postTitle: String
+    var imageNamespace: Namespace.ID?
+    var onSelectImage: (([URL], Int) -> Void)?
 
     @Environment(\.openURL) private var openURL
-    @State private var selectedImageURL: URL?
 
     private var images: [PostMedia] { media.filter { $0.type == "image" } }
     private var videos: [PostMedia] { media.filter { $0.type == "video" } }
@@ -542,67 +584,49 @@ struct MediaView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !images.isEmpty {
+            if images.count == 1, let img = images.first, let url = URL(string: img.url) {
+                imageThumb(url: url, index: 0)
+                    .frame(maxWidth: 600)
+                    .contextMenu { mediaContextMenu(for: img) }
+            } else if images.count > 1 {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(images, id: \.url) { img in
+                    LazyHStack(spacing: 12) {
+                        ForEach(Array(images.enumerated()), id: \.element.url) { index, img in
                             if let url = URL(string: img.url) {
-                                CachedImage(url: url) {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(.quaternary)
-                                        .frame(width: 200, height: 150)
-                                }
-                                .aspectRatio(contentMode: .fit)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .frame(maxHeight: 300)
-                                .onTapGesture {
-                                    selectedImageURL = url
-                                }
-                                .contextMenu {
-                                    mediaContextMenu(for: img)
-                                }
+                                imageThumb(url: url, index: index)
+                                    .frame(maxWidth: 400, maxHeight: 300)
+                                    .containerRelativeFrame(.horizontal)
+                                    .contextMenu { mediaContextMenu(for: img) }
                             }
                         }
                     }
+                    .scrollTargetLayout()
                 }
+                .scrollTargetBehavior(.viewAligned)
             }
 
             ForEach(videos, id: \.url) { vid in
-                if let thumbUrl = vid.thumbnailUrl, let url = URL(string: thumbUrl) {
-                    CachedImage(url: url) {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(.quaternary)
-                            .aspectRatio(16/9, contentMode: .fit)
-                    }
-                    .aspectRatio(contentMode: .fit)
+                InlineVideoPlayer(media: vid)
+                    .frame(maxWidth: 600)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(alignment: .center) {
-                        Image(systemName: "play.circle.fill")
-                            .font(.system(size: 44))
-                            .foregroundStyle(.white.opacity(0.9))
-                    }
-                    .frame(maxHeight: 250)
-                    .onTapGesture {
-                        if let url = URL(string: vid.url) {
-                            openURL(url)
-                        }
-                    }
-                    .contextMenu {
-                        mediaContextMenu(for: vid)
-                    }
-                }
+                    .contextMenu { mediaContextMenu(for: vid) }
             }
         }
-        #if os(iOS)
-        .fullScreenCover(item: $selectedImageURL) { url in
-            ImageViewer(url: url, allImageURLs: allImageURLs)
+    }
+
+    @ViewBuilder
+    private func imageThumb(url: URL, index: Int) -> some View {
+        CachedImage(url: url) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.quaternary)
+                .aspectRatio(4/3, contentMode: .fit)
         }
-        #else
-        .sheet(item: $selectedImageURL) { url in
-            ImageViewer(url: url, allImageURLs: allImageURLs)
-                .frame(minWidth: 600, minHeight: 400)
+        .aspectRatio(contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .if(imageNamespace != nil) { view in
+            view.matchedGeometryEffect(id: url.absoluteString, in: imageNamespace!)
         }
-        #endif
+        .onTapGesture { onSelectImage?(allImageURLs, index) }
     }
 
     @ViewBuilder
@@ -705,152 +729,276 @@ struct MediaView: View {
     }
 }
 
-// Make URL work with fullScreenCover's item binding
-extension URL: @retroactive Identifiable {
-    public var id: String { absoluteString }
-}
+// MARK: - Inline Video Player
 
-// MARK: - Fullscreen Image Viewer
+struct InlineVideoPlayer: View {
+    let media: PostMedia
 
-struct ImageViewer: View {
-    let url: URL
-    let allImageURLs: [URL]
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var currentIndex: Int = 0
-    @State private var scale: CGFloat = 1.0
+    @State private var player: AVPlayer?
+    @State private var audioPlayer: AVPlayer?
+    @State private var isPlaying = false
+    @State private var showControls = true
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-
-            if allImageURLs.count > 1 {
-                // Gallery with arrow navigation
+            if let player {
+                VideoPlayer(player: player)
+                    .aspectRatio(16/9, contentMode: .fit)
+                    .onDisappear {
+                        player.pause()
+                        audioPlayer?.pause()
+                    }
+            } else {
+                // Thumbnail with play button
                 ZStack {
-                    imageContent(url: allImageURLs[currentIndex])
+                    if let thumbUrl = media.thumbnailUrl, let url = URL(string: thumbUrl) {
+                        CachedImage(url: url) {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(.quaternary)
+                                .aspectRatio(16/9, contentMode: .fit)
+                        }
+                        .aspectRatio(contentMode: .fit)
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(.quaternary)
+                            .aspectRatio(16/9, contentMode: .fit)
+                    }
 
-                    // Navigation arrows
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 52))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .shadow(radius: 4)
+                }
+                .onTapGesture { startPlayback() }
+            }
+        }
+    }
+
+    private func startPlayback() {
+        guard let videoURL = URL(string: media.url) else { return }
+
+        if let audioUrlString = media.audioUrl, let audioURL = URL(string: audioUrlString) {
+            // Reddit DASH: play video + audio simultaneously
+            let videoItem = AVPlayerItem(url: videoURL)
+            let mainPlayer = AVPlayer(playerItem: videoItem)
+
+            let audioItem = AVPlayerItem(url: audioURL)
+            let separateAudioPlayer = AVPlayer(playerItem: audioItem)
+
+            // Sync playback
+            mainPlayer.play()
+            separateAudioPlayer.play()
+
+            self.player = mainPlayer
+            self.audioPlayer = separateAudioPlayer
+
+            // Keep audio in sync on seek
+            NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: videoItem,
+                queue: .main
+            ) { _ in
+                // Loop both
+                mainPlayer.seek(to: .zero)
+                separateAudioPlayer.seek(to: .zero)
+                mainPlayer.play()
+                separateAudioPlayer.play()
+            }
+        } else {
+            // Standard video with embedded audio
+            let mainPlayer = AVPlayer(url: videoURL)
+            mainPlayer.play()
+            self.player = mainPlayer
+        }
+
+        isPlaying = true
+    }
+}
+
+// MARK: - Fullscreen Image Viewer Overlay
+
+struct ImageViewerOverlay: View {
+    let imageURLs: [URL]
+    @Binding var currentIndex: Int
+    let namespace: Namespace.ID
+    let onDismiss: () -> Void
+
+    // Pan & zoom
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    // Swipe-to-dismiss
+    @State private var dismissDrag: CGSize = .zero
+    @State private var backgroundOpacity: Double = 1.0
+    @FocusState private var isFocused: Bool
+
+    private var currentURL: URL { imageURLs[currentIndex] }
+    private var isDraggingToDismiss: Bool { scale <= 1.0 && dismissDrag != .zero }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color.black
+                    .opacity(backgroundOpacity)
+                    .ignoresSafeArea()
+                    .onTapGesture { onDismiss() }
+
+                // The image with matched geometry for animation
+                CachedImage(url: currentURL) {
+                    ProgressView().tint(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .aspectRatio(contentMode: .fit)
+                .matchedGeometryEffect(id: currentURL.absoluteString, in: namespace)
+                .scaleEffect(scale)
+                .offset(
+                    x: offset.width + (isDraggingToDismiss ? dismissDrag.width * 0.3 : 0),
+                    y: offset.height + (isDraggingToDismiss ? dismissDrag.height : 0)
+                )
+                .scaleEffect(isDraggingToDismiss ? max(0.7, 1.0 - abs(dismissDrag.height) / 1000) : 1.0)
+                .gesture(combinedGesture(containerSize: geo.size))
+                .onTapGesture(count: 2) { location in
+                    withAnimation(.spring(duration: 0.3)) {
+                        if scale > 1.5 {
+                            resetZoom()
+                        } else {
+                            let newScale: CGFloat = 3.0
+                            let cx = geo.size.width / 2, cy = geo.size.height / 2
+                            scale = newScale; lastScale = newScale
+                            offset = CGSize(width: (cx - location.x) * (newScale - 1),
+                                            height: (cy - location.y) * (newScale - 1))
+                            lastOffset = offset
+                        }
+                    }
+                }
+
+                // Gallery arrows
+                if imageURLs.count > 1 {
                     HStack {
                         if currentIndex > 0 {
-                            Button {
-                                withAnimation { currentIndex -= 1 }
-                            } label: {
-                                Image(systemName: "chevron.left.circle.fill")
-                                    .font(.title)
-                                    .foregroundStyle(.white.opacity(0.7))
+                            navButton(systemName: "chevron.left.circle.fill") {
+                                resetZoom()
+                                withAnimation(.easeInOut(duration: 0.25)) { currentIndex -= 1 }
                             }
-                            .buttonStyle(.plain)
-                            .padding(.leading)
+                            .padding(.leading, 16)
                         }
-
                         Spacer()
-
-                        if currentIndex < allImageURLs.count - 1 {
-                            Button {
-                                withAnimation { currentIndex += 1 }
-                            } label: {
-                                Image(systemName: "chevron.right.circle.fill")
-                                    .font(.title)
-                                    .foregroundStyle(.white.opacity(0.7))
+                        if currentIndex < imageURLs.count - 1 {
+                            navButton(systemName: "chevron.right.circle.fill") {
+                                resetZoom()
+                                withAnimation(.easeInOut(duration: 0.25)) { currentIndex += 1 }
                             }
-                            .buttonStyle(.plain)
-                            .padding(.trailing)
+                            .padding(.trailing, 16)
                         }
                     }
                 }
-            } else {
-                imageContent(url: url)
-            }
 
-            // Close button + counter
-            VStack {
-                HStack {
-                    Spacer()
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title)
-                            .foregroundStyle(.white.opacity(0.8))
-                            .padding()
+                // Chrome: close button + counter
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button(action: onDismiss) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title)
+                                .foregroundStyle(.white.opacity(0.8))
+                                .padding()
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    Spacer()
+                    if imageURLs.count > 1 {
+                        Text("\(currentIndex + 1) / \(imageURLs.count)")
+                            .font(.caption).fontWeight(.medium)
+                            .foregroundStyle(.white.opacity(0.8))
+                            .padding(.horizontal, 12).padding(.vertical, 4)
+                            .background(.black.opacity(0.4), in: Capsule())
+                            .padding(.bottom, 12)
+                    }
                 }
-                Spacer()
-
-                if allImageURLs.count > 1 {
-                    Text("\(currentIndex + 1) / \(allImageURLs.count)")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(.bottom, 8)
-                }
+                .opacity(backgroundOpacity)
             }
         }
         .focusable()
-        .onAppear {
-            if let idx = allImageURLs.firstIndex(of: url) {
-                currentIndex = idx
-            }
-        }
+        .focused($isFocused)
+        .onAppear { isFocused = true }
         #if os(macOS)
-        .onKeyPress(.escape) {
-            dismiss()
-            return .handled
-        }
+        .onKeyPress(.escape) { onDismiss(); return .handled }
         .onKeyPress(.leftArrow) {
-            if currentIndex > 0 { withAnimation { currentIndex -= 1 } }
+            if currentIndex > 0 { resetZoom(); withAnimation { currentIndex -= 1 } }
             return .handled
         }
         .onKeyPress(.rightArrow) {
-            if currentIndex < allImageURLs.count - 1 { withAnimation { currentIndex += 1 } }
+            if currentIndex < imageURLs.count - 1 { resetZoom(); withAnimation { currentIndex += 1 } }
             return .handled
         }
         #endif
     }
 
-    @ViewBuilder
-    private func imageContent(url: URL) -> some View {
-        AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image):
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .scaleEffect(scale)
-                    .gesture(
-                        MagnifyGesture()
-                            .onChanged { value in
-                                scale = max(0.5, value.magnification)
-                            }
-                            .onEnded { _ in
-                                if scale < 1.0 {
-                                    withAnimation(.spring(duration: 0.3)) { scale = 1.0 }
-                                }
-                            }
+    private func navButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.largeTitle)
+                .foregroundStyle(.white.opacity(0.7))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func resetZoom() {
+        scale = 1.0; lastScale = 1.0
+        offset = .zero; lastOffset = .zero
+    }
+
+    // MARK: - Simultaneous pinch + pan gesture (Photos-style)
+
+    private func combinedGesture(containerSize: CGSize) -> some Gesture {
+        SimultaneousGesture(
+            MagnifyGesture(),
+            DragGesture()
+        )
+        .onChanged { value in
+            // Pinch
+            if let magnification = value.first?.magnification {
+                scale = max(0.5, min(lastScale * magnification, 10.0))
+            }
+            // Drag
+            if let translation = value.second?.translation {
+                if scale > 1.01 {
+                    // Pan within zoomed image
+                    offset = CGSize(
+                        width: lastOffset.width + translation.width / scale,
+                        height: lastOffset.height + translation.height / scale
                     )
-                    .onTapGesture(count: 2) {
-                        withAnimation(.spring(duration: 0.3)) {
-                            scale = scale > 1.5 ? 1.0 : 3.0
-                        }
-                    }
-                    .onTapGesture(count: 1) {
-                        dismiss()
-                    }
-            case .failure:
-                VStack {
-                    Image(systemName: "photo")
-                        .font(.largeTitle)
-                        .foregroundStyle(.white.opacity(0.5))
-                    Text("Failed to load image")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.5))
+                } else if value.first == nil {
+                    // Only dragging (no pinch) at 1x → swipe to dismiss
+                    dismissDrag = translation
+                    let progress = min(abs(translation.height) / 300, 1.0)
+                    backgroundOpacity = Double(1.0 - progress * 0.6)
                 }
-            default:
-                ProgressView()
-                    .tint(.white)
             }
         }
-        .padding()
+        .onEnded { value in
+            // Finalize pinch
+            lastScale = scale
+            if scale < 1.0 {
+                withAnimation(.spring(duration: 0.3)) { resetZoom() }
+            }
+            // Finalize drag
+            if scale > 1.01 {
+                lastOffset = offset
+            } else if dismissDrag != .zero {
+                let vy = value.second?.velocity.height ?? 0
+                if abs(dismissDrag.height) > 120 || abs(vy) > 800 {
+                    onDismiss()
+                } else {
+                    withAnimation(.spring(duration: 0.3)) {
+                        dismissDrag = .zero
+                        backgroundOpacity = 1.0
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -940,6 +1088,12 @@ struct EmbedView: View {
                 }
 
                 Spacer()
+
+                if let date = embed.publishedAt {
+                    Text(date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
 
                 if let provider = embed.provider {
                     Text(provider)

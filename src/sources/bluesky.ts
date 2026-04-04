@@ -67,6 +67,7 @@ function postViewToQuoteEmbed(quotedPost: AppBskyFeedDefs.PostView): PostEmbed {
     text: quotedRecord.text || undefined,
     url: getPostUrl(quotedPost),
     imageUrl,
+    publishedAt: quotedPost.indexedAt,
   };
 }
 

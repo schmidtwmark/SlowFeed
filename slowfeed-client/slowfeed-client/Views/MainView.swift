@@ -2,41 +2,47 @@ import SwiftUI
 
 struct MainView: View {
     @Environment(AppState.self) private var appState
+    @State private var selectedTab: AppTab = .digests
+
+    enum AppTab: String {
+        case digests, saved, settings
+    }
 
     var body: some View {
-        NavigationSplitView {
-            DigestSidebar()
-        } detail: {
-            if appState.showingSavedPosts {
-                SavedPostsView()
-            } else {
-                DigestDetailView()
-            }
-        }
-        .toolbar {
-            #if os(macOS)
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { await appState.refreshDigests() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+        TabView(selection: $selectedTab) {
+            SwiftUI.Tab("Digests", systemImage: "doc.text.fill", value: AppTab.digests) {
+                NavigationSplitView {
+                    DigestSidebar()
+                } detail: {
+                    DigestDetailView()
                 }
-                .disabled(appState.isRefreshing)
-                .help("Refresh digest list")
+                #if os(macOS)
+                .frame(minWidth: 800, minHeight: 500)
+                #endif
             }
 
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { try? await appState.triggerPoll() }
-                } label: {
-                    Image(systemName: "arrow.triangle.2.circlepath")
+            SwiftUI.Tab("Saved", systemImage: "bookmark.fill", value: AppTab.saved) {
+                NavigationStack {
+                    SavedPostsView()
+                        .navigationTitle("Saved")
+                        #if !os(macOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                        #endif
                 }
-                .help("Trigger new poll from sources")
             }
-            #endif
+
+            SwiftUI.Tab("Settings", systemImage: "gear", value: AppTab.settings) {
+                NavigationStack {
+                    SettingsView()
+                        .navigationTitle("Settings")
+                        #if !os(macOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                        #endif
+                }
+            }
         }
-        #if os(macOS)
-        .frame(minWidth: 800, minHeight: 500)
+        #if os(iOS)
+        .tabViewStyle(.sidebarAdaptable)
         #endif
     }
 }
@@ -47,76 +53,76 @@ struct DigestSidebar: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        VStack(spacing: 0) {
-            List(selection: Binding(
-                get: { appState.currentDigest?.id },
-                set: { id in
-                    if let id, let index = appState.digests.firstIndex(where: { $0.id == id }) {
-                        Task {
-                            await appState.navigateToDigest(at: index)
-                        }
-                    }
-                }
-            )) {
-                ForEach(groupedDigests) { group in
-                    Section(isExpanded: Binding(
-                        get: { appState.expandedGroups.contains(group.id) },
-                        set: { expanded in
-                            if expanded {
-                                appState.expandedGroups.insert(group.id)
-                            } else {
-                                appState.expandedGroups.remove(group.id)
-                            }
-                        }
-                    )) {
-                        ForEach(group.digests) { digest in
-                            DigestRow(digest: digest)
-                                .tag(digest.id)
-                        }
-                    } header: {
-                        HStack {
-                            Text(group.label)
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-
-                            Spacer()
-
-                            Text("\(group.totalPosts) posts")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .listStyle(.sidebar)
-
-            Divider()
-
-            // Source filter toolbar at bottom
-            SourceToolbar()
-        }
-        .navigationTitle("Slowfeed")
-        #if os(iOS)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink {
-                    SettingsView()
-                } label: {
-                    Image(systemName: "gear")
-                }
-            }
-
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
+        List(selection: Binding(
+            get: { appState.currentDigest?.id },
+            set: { id in
+                if let id, let index = appState.digests.firstIndex(where: { $0.id == id }) {
                     Task {
-                        try? await appState.triggerPoll()
+                        await appState.navigateToDigest(at: index)
                     }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+                }
+            }
+        )) {
+            // Status row
+            Section {
+                HStack(spacing: 8) {
+                    if appState.isRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Refreshing...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if let lastDate = appState.digests.first?.publishedAt {
+                        Image(systemName: "checkmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                        Text("Last: \(lastDate.formatted(.relative(presentation: .named)))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("\(appState.digests.count) digests")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .listRowBackground(Color.clear)
+            }
+
+            ForEach(groupedDigests) { group in
+                Section(isExpanded: Binding(
+                    get: { appState.expandedGroups.contains(group.id) },
+                    set: { expanded in
+                        if expanded {
+                            appState.expandedGroups.insert(group.id)
+                        } else {
+                            appState.expandedGroups.remove(group.id)
+                        }
+                    }
+                )) {
+                    ForEach(group.digests) { digest in
+                        DigestRow(digest: digest)
+                            .tag(digest.id)
+                    }
+                } header: {
+                    HStack {
+                        Text(group.label)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+
+                        Spacer()
+
+                        Text("\(group.totalPosts) posts")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
-        #endif
+        .listStyle(.sidebar)
+        .navigationTitle("Slowfeed")
+        .refreshable {
+            await appState.refreshDigests()
+        }
     }
 
     // MARK: - Grouping Logic
@@ -221,64 +227,6 @@ struct DigestRow: View {
         case .youtube: return .red
         case .discord: return .purple
         }
-    }
-}
-
-// MARK: - Source Filter Toolbar
-
-struct SourceToolbar: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        HStack(spacing: 0) {
-            SourceFilterButton(label: "All", icon: "square.stack.3d.up", isSelected: appState.selectedSource == nil && !appState.showingSavedPosts) {
-                appState.showingSavedPosts = false
-                Task { await appState.selectSource(nil) }
-            }
-
-            ForEach(appState.sources, id: \.id) { source in
-                if source.enabled, let sourceType = SourceType(rawValue: source.id) {
-                    SourceFilterButton(
-                        label: sourceType.displayName,
-                        icon: sourceType.iconName,
-                        isSelected: appState.selectedSource == sourceType && !appState.showingSavedPosts
-                    ) {
-                        appState.showingSavedPosts = false
-                        Task { await appState.selectSource(sourceType) }
-                    }
-                }
-            }
-
-            SourceFilterButton(label: "Saved", icon: "bookmark.fill", isSelected: appState.showingSavedPosts) {
-                appState.showingSavedPosts = true
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial)
-    }
-}
-
-struct SourceFilterButton: View {
-    let label: String
-    let icon: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 2) {
-                Image(systemName: icon)
-                    .font(.system(size: 16))
-                Text(label)
-                    .font(.caption2)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-            .background(isSelected ? Color.accentColor.opacity(0.2) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
     }
 }
 

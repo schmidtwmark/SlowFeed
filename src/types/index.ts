@@ -51,6 +51,7 @@ export interface PostMedia {
   type: 'image' | 'video' | 'file';
   url: string;
   thumbnailUrl?: string;    // poster/preview for videos, thumb for files
+  audioUrl?: string;        // separate audio track (Reddit DASH videos)
   alt?: string;
   filename?: string;
   mimeType?: string;
@@ -84,6 +85,7 @@ export interface PostEmbed {
   authorAvatarUrl?: string;
   text?: string;           // body text of quoted post
   provider?: string;       // e.g., 'Twitter', 'YouTube', 'Instagram', 'Bluesky'
+  publishedAt?: string;    // ISO 8601 timestamp of the quoted/embedded post
 }
 
 /** Source-specific metadata */
