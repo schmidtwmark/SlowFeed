@@ -5,6 +5,87 @@ import AppKit
 import UIKit
 #endif
 
+// MARK: - Cached Image Loader (replaces AsyncImage for reliability)
+
+private final class ImageCache {
+    static let shared = ImageCache()
+    private let cache = NSCache<NSURL, PlatformImage>()
+
+    init() {
+        cache.countLimit = 300
+    }
+
+    func image(for url: URL) -> PlatformImage? {
+        cache.object(forKey: url as NSURL)
+    }
+
+    func store(_ image: PlatformImage, for url: URL) {
+        cache.setObject(image, forKey: url as NSURL)
+    }
+}
+
+#if os(macOS)
+private typealias PlatformImage = NSImage
+#else
+private typealias PlatformImage = UIImage
+#endif
+
+struct CachedImage<Placeholder: View>: View {
+    let url: URL?
+    let placeholder: () -> Placeholder
+
+    @State private var image: PlatformImage?
+    @State private var failed = false
+
+    init(url: URL?, @ViewBuilder placeholder: @escaping () -> Placeholder) {
+        self.url = url
+        self.placeholder = placeholder
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                #if os(macOS)
+                Image(nsImage: image)
+                    .resizable()
+                #else
+                Image(uiImage: image)
+                    .resizable()
+                #endif
+            } else if failed {
+                placeholder()
+            } else {
+                placeholder()
+                    .onAppear { loadImage() }
+            }
+        }
+    }
+
+    private func loadImage() {
+        guard let url else { failed = true; return }
+
+        // Check cache first
+        if let cached = ImageCache.shared.image(for: url) {
+            self.image = cached
+            return
+        }
+
+        Task {
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                if let loaded = PlatformImage(data: data) {
+                    ImageCache.shared.store(loaded, for: url)
+                    await MainActor.run { self.image = loaded }
+                } else {
+                    await MainActor.run { self.failed = true }
+                }
+            } catch {
+                await MainActor.run { self.failed = true }
+            }
+        }
+    }
+}
+
 struct DigestView: View {
     let digest: Digest
 
@@ -272,18 +353,15 @@ struct PostView: View {
         return URL(string: urlString)
     }
 
-    private var firstMedia: PostMedia? {
-        post.media?.first
-    }
-
-    private var hasMedia: Bool {
-        firstMedia != nil
+    /// Strip legacy "r/subreddit: " prefix from Reddit titles
+    private var displayTitle: String {
+        post.title.replacingOccurrences(of: #"^r/\w+:\s*"#, with: "", options: .regularExpression)
     }
 
     /// True if the title just repeats the author + content
     private var titleIsDuplicate: Bool {
         guard let content = post.content, !content.isEmpty else { return false }
-        let titleLower = post.title.lowercased()
+        let titleLower = displayTitle.lowercased()
         let contentStart = content.prefix(60).lowercased()
         return titleLower.contains(contentStart) || contentStart.contains(titleLower)
     }
@@ -300,14 +378,11 @@ struct PostView: View {
             // Author row with avatar, metadata, and date
             HStack(spacing: 8) {
                 if let avatarUrl = post.metadata?.avatarUrl, let url = URL(string: avatarUrl) {
-                    AsyncImage(url: url) { image in
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .clipShape(Circle())
-                    } placeholder: {
+                    CachedImage(url: url) {
                         Circle().fill(.quaternary)
                     }
+                    .aspectRatio(contentMode: .fill)
+                    .clipShape(Circle())
                     .frame(width: 28, height: 28)
                 }
 
@@ -353,7 +428,7 @@ struct PostView: View {
 
             // Title - skip if duplicate
             if !titleIsDuplicate {
-                Text(post.title)
+                Text(displayTitle)
                     .font(.headline)
                     .foregroundStyle(.primary)
             }
@@ -437,22 +512,6 @@ struct PostView: View {
                 ShareLink("Share Link", item: url)
             }
 
-            if hasMedia {
-                Divider()
-
-                Button {
-                    Task { await copyMediaToClipboard() }
-                } label: {
-                    Label("Copy Media", systemImage: "photo.on.rectangle")
-                }
-
-                Button {
-                    Task { await shareMedia() }
-                } label: {
-                    Label("Share Media", systemImage: "square.and.arrow.up")
-                }
-            }
-
             Divider()
 
             Button {
@@ -466,24 +525,114 @@ struct PostView: View {
             }
         }
     }
+}
 
-    /// Download media and return (data, media item) for the first media attachment
-    private func downloadMedia() async -> (Data, PostMedia)? {
-        guard let media = firstMedia, let url = URL(string: media.url) else { return nil }
+// MARK: - Media View
+
+struct MediaView: View {
+    let media: [PostMedia]
+    let postTitle: String
+
+    @Environment(\.openURL) private var openURL
+    @State private var selectedImageURL: URL?
+
+    private var images: [PostMedia] { media.filter { $0.type == "image" } }
+    private var videos: [PostMedia] { media.filter { $0.type == "video" } }
+    private var allImageURLs: [URL] { images.compactMap { URL(string: $0.url) } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !images.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(images, id: \.url) { img in
+                            if let url = URL(string: img.url) {
+                                CachedImage(url: url) {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(.quaternary)
+                                        .frame(width: 200, height: 150)
+                                }
+                                .aspectRatio(contentMode: .fit)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .frame(maxHeight: 300)
+                                .onTapGesture {
+                                    selectedImageURL = url
+                                }
+                                .contextMenu {
+                                    mediaContextMenu(for: img)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            ForEach(videos, id: \.url) { vid in
+                if let thumbUrl = vid.thumbnailUrl, let url = URL(string: thumbUrl) {
+                    CachedImage(url: url) {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(.quaternary)
+                            .aspectRatio(16/9, contentMode: .fit)
+                    }
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(alignment: .center) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 44))
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                    .frame(maxHeight: 250)
+                    .onTapGesture {
+                        if let url = URL(string: vid.url) {
+                            openURL(url)
+                        }
+                    }
+                    .contextMenu {
+                        mediaContextMenu(for: vid)
+                    }
+                }
+            }
+        }
+        #if os(iOS)
+        .fullScreenCover(item: $selectedImageURL) { url in
+            ImageViewer(url: url, allImageURLs: allImageURLs)
+        }
+        #else
+        .sheet(item: $selectedImageURL) { url in
+            ImageViewer(url: url, allImageURLs: allImageURLs)
+                .frame(minWidth: 600, minHeight: 400)
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private func mediaContextMenu(for media: PostMedia) -> some View {
+        Button {
+            Task { await copyMedia(media) }
+        } label: {
+            Label("Copy Media", systemImage: "photo.on.rectangle")
+        }
+
+        Button {
+            Task { await shareMedia(media) }
+        } label: {
+            Label("Share Media", systemImage: "square.and.arrow.up")
+        }
+    }
+
+    private func downloadMedia(_ media: PostMedia) async -> Data? {
+        guard let url = URL(string: media.url) else { return nil }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            return (data, media)
+            return data
         } catch {
             return nil
         }
     }
 
-    /// File extension based on media type and URL
     private func fileExtension(for media: PostMedia) -> String {
-        // Try URL path extension first
         let urlExt = URL(string: media.url)?.pathExtension ?? ""
         if !urlExt.isEmpty { return urlExt }
-        // Fall back based on type
         switch media.type {
         case "video": return "mp4"
         case "image": return "jpg"
@@ -491,7 +640,6 @@ struct PostView: View {
         }
     }
 
-    /// Write data to a temp file and return the URL
     private func writeTempFile(data: Data, media: PostMedia) -> URL {
         let ext = fileExtension(for: media)
         let filename = "slowfeed_media_\(UUID().uuidString.prefix(8)).\(ext)"
@@ -500,8 +648,8 @@ struct PostView: View {
         return tempURL
     }
 
-    private func copyMediaToClipboard() async {
-        guard let (data, media) = await downloadMedia() else { return }
+    private func copyMedia(_ media: PostMedia) async {
+        guard let data = await downloadMedia(media) else { return }
         let isImage = media.type == "image"
         let tempFileURL = writeTempFile(data: data, media: media)
 
@@ -512,22 +660,20 @@ struct PostView: View {
             if isImage, let image = NSImage(data: data) {
                 pb.writeObjects([image])
             } else {
-                // Video/file: copy as file URL so it can be pasted into Finder, Messages, etc.
                 pb.writeObjects([tempFileURL as NSURL])
             }
             #else
             if isImage, let image = UIImage(data: data) {
                 UIPasteboard.general.image = image
             } else {
-                // Video: copy file URL
                 UIPasteboard.general.url = tempFileURL
             }
             #endif
         }
     }
 
-    private func shareMedia() async {
-        guard let (data, media) = await downloadMedia() else { return }
+    private func shareMedia(_ media: PostMedia) async {
+        guard let data = await downloadMedia(media) else { return }
         let tempFileURL = writeTempFile(data: data, media: media)
 
         await MainActor.run {
@@ -559,65 +705,152 @@ struct PostView: View {
     }
 }
 
-// MARK: - Media View
+// Make URL work with fullScreenCover's item binding
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
+}
 
-struct MediaView: View {
-    let media: [PostMedia]
-    let postTitle: String
+// MARK: - Fullscreen Image Viewer
 
-    @Environment(\.openURL) private var openURL
+struct ImageViewer: View {
+    let url: URL
+    let allImageURLs: [URL]
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var currentIndex: Int = 0
+    @State private var scale: CGFloat = 1.0
 
     var body: some View {
-        let images = media.filter { $0.type == "image" }
-        let videos = media.filter { $0.type == "video" }
+        ZStack {
+            Color.black.ignoresSafeArea()
 
-        if !images.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(images, id: \.url) { img in
-                        if let url = URL(string: img.url) {
-                            AsyncImage(url: url) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                            } placeholder: {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(.quaternary)
-                                    .frame(width: 200, height: 150)
+            if allImageURLs.count > 1 {
+                // Gallery with arrow navigation
+                ZStack {
+                    imageContent(url: allImageURLs[currentIndex])
+
+                    // Navigation arrows
+                    HStack {
+                        if currentIndex > 0 {
+                            Button {
+                                withAnimation { currentIndex -= 1 }
+                            } label: {
+                                Image(systemName: "chevron.left.circle.fill")
+                                    .font(.title)
+                                    .foregroundStyle(.white.opacity(0.7))
                             }
-                            .frame(maxHeight: 300)
+                            .buttonStyle(.plain)
+                            .padding(.leading)
                         }
-                    }
-                }
-            }
-        }
 
-        ForEach(videos, id: \.url) { vid in
-            if let thumbUrl = vid.thumbnailUrl, let url = URL(string: thumbUrl) {
-                AsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(alignment: .center) {
-                            Image(systemName: "play.circle.fill")
-                                .font(.system(size: 44))
-                                .foregroundStyle(.white.opacity(0.9))
+                        Spacer()
+
+                        if currentIndex < allImageURLs.count - 1 {
+                            Button {
+                                withAnimation { currentIndex += 1 }
+                            } label: {
+                                Image(systemName: "chevron.right.circle.fill")
+                                    .font(.title)
+                                    .foregroundStyle(.white.opacity(0.7))
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.trailing)
                         }
-                } placeholder: {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(.quaternary)
-                        .aspectRatio(16/9, contentMode: .fit)
-                }
-                .frame(maxHeight: 250)
-                .onTapGesture {
-                    if let url = URL(string: vid.url) {
-                        openURL(url)
                     }
+                }
+            } else {
+                imageContent(url: url)
+            }
+
+            // Close button + counter
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title)
+                            .foregroundStyle(.white.opacity(0.8))
+                            .padding()
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+
+                if allImageURLs.count > 1 {
+                    Text("\(currentIndex + 1) / \(allImageURLs.count)")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(.bottom, 8)
                 }
             }
         }
+        .focusable()
+        .onAppear {
+            if let idx = allImageURLs.firstIndex(of: url) {
+                currentIndex = idx
+            }
+        }
+        #if os(macOS)
+        .onKeyPress(.escape) {
+            dismiss()
+            return .handled
+        }
+        .onKeyPress(.leftArrow) {
+            if currentIndex > 0 { withAnimation { currentIndex -= 1 } }
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            if currentIndex < allImageURLs.count - 1 { withAnimation { currentIndex += 1 } }
+            return .handled
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private func imageContent(url: URL) -> some View {
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .scaleEffect(scale)
+                    .gesture(
+                        MagnifyGesture()
+                            .onChanged { value in
+                                scale = max(0.5, value.magnification)
+                            }
+                            .onEnded { _ in
+                                if scale < 1.0 {
+                                    withAnimation(.spring(duration: 0.3)) { scale = 1.0 }
+                                }
+                            }
+                    )
+                    .onTapGesture(count: 2) {
+                        withAnimation(.spring(duration: 0.3)) {
+                            scale = scale > 1.5 ? 1.0 : 3.0
+                        }
+                    }
+                    .onTapGesture(count: 1) {
+                        dismiss()
+                    }
+            case .failure:
+                VStack {
+                    Image(systemName: "photo")
+                        .font(.largeTitle)
+                        .foregroundStyle(.white.opacity(0.5))
+                    Text("Failed to load image")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+            default:
+                ProgressView()
+                    .tint(.white)
+            }
+        }
+        .padding()
     }
 }
 
@@ -634,15 +867,10 @@ struct LinkCardView: View {
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 if let imageUrl = link.imageUrl, let url = URL(string: imageUrl) {
-                    AsyncImage(url: url) { image in
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                    } placeholder: {
-                        EmptyView()
-                    }
-                    .frame(maxHeight: 150)
+                    CachedImage(url: url) { EmptyView() }
+                        .aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .frame(maxHeight: 150)
                 }
 
                 Text(link.title ?? link.url)
@@ -698,15 +926,10 @@ struct EmbedView: View {
             // Provider + author row
             HStack(spacing: 6) {
                 if let avatarUrl = embed.authorAvatarUrl, let url = URL(string: avatarUrl) {
-                    AsyncImage(url: url) { image in
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .clipShape(Circle())
-                    } placeholder: {
-                        Circle().fill(.quaternary)
-                    }
-                    .frame(width: 20, height: 20)
+                    CachedImage(url: url) { Circle().fill(.quaternary) }
+                        .aspectRatio(contentMode: .fill)
+                        .clipShape(Circle())
+                        .frame(width: 20, height: 20)
                 }
 
                 if let author = embed.author {
@@ -748,16 +971,13 @@ struct EmbedView: View {
             }
 
             if let imageUrl = embed.imageUrl, let url = URL(string: imageUrl) {
-                AsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                } placeholder: {
+                CachedImage(url: url) {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(.quaternary)
                         .aspectRatio(16/9, contentMode: .fit)
                 }
+                .aspectRatio(contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
                 .frame(maxHeight: 300)
             }
         }
@@ -792,15 +1012,10 @@ struct EmbedView: View {
             }
 
             if let imageUrl = embed.imageUrl, let url = URL(string: imageUrl) {
-                AsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                } placeholder: {
-                    EmptyView()
-                }
-                .frame(maxHeight: 150)
+                CachedImage(url: url) { EmptyView() }
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .frame(maxHeight: 150)
             }
         }
         .padding(8)

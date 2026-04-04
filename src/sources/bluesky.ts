@@ -43,12 +43,30 @@ async function getAgent(): Promise<BskyAgent | null> {
  */
 function postViewToQuoteEmbed(quotedPost: AppBskyFeedDefs.PostView): PostEmbed {
   const quotedRecord = quotedPost.record as { text?: string };
+
+  // Extract the first image from the quoted post's embed (if any)
+  let imageUrl: string | undefined;
+  const embed = quotedPost.embed;
+  if (embed) {
+    if (AppBskyEmbedImages.isView(embed) && embed.images.length > 0) {
+      imageUrl = embed.images[0].thumb || embed.images[0].fullsize;
+    } else if (AppBskyEmbedRecordWithMedia.isView(embed)) {
+      const mediaEmbed = embed.media;
+      if (AppBskyEmbedImages.isView(mediaEmbed) && mediaEmbed.images.length > 0) {
+        imageUrl = mediaEmbed.images[0].thumb || mediaEmbed.images[0].fullsize;
+      }
+    } else if (AppBskyEmbedExternal.isView(embed) && embed.external.thumb) {
+      imageUrl = embed.external.thumb;
+    }
+  }
+
   return {
     type: 'quote',
     author: `@${quotedPost.author.handle}`,
     authorAvatarUrl: quotedPost.author.avatar || undefined,
     text: quotedRecord.text || undefined,
     url: getPostUrl(quotedPost),
+    imageUrl,
   };
 }
 

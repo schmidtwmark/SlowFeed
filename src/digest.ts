@@ -296,7 +296,7 @@ function renderRedditPost(post: DigestPost): string {
   if (post.metadata?.numComments !== undefined) meta.push(`${post.metadata.numComments} comments`);
   if (meta.length > 0) parts.push(`<p><small>${meta.join(' · ')}</small></p>`);
 
-  parts.push(`<h3><a href="${esc(post.url)}">${esc(post.title.replace(/^r\/\w+:\s*/, ''))}</a></h3>`);
+  parts.push(`<h3><a href="${esc(post.url)}">${esc(post.title)}</a></h3>`);
 
   if (post.content) parts.push(`<p>${esc(post.content)}</p>`);
 

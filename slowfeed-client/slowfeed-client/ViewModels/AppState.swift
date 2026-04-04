@@ -173,10 +173,6 @@ final class AppState {
 
             // Load saved post IDs in background
             Task { await loadSavedPostIds() }
-
-            if let firstDigest = digests.first {
-                await loadDigest(id: firstDigest.id)
-            }
         } catch {
             await MainActor.run {
                 self.error = error.localizedDescription

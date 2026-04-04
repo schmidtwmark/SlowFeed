@@ -512,7 +512,7 @@ export async function pollReddit(): Promise<DigestPost[]> {
 
       digestPosts.push({
         postId: post.id,
-        title: `r/${post.subreddit}: ${post.title}`,
+        title: post.title,
         content,
         url: post.permalink,
         author: `u/${post.author}`,
