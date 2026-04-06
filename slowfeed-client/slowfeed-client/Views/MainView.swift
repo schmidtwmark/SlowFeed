@@ -4,8 +4,10 @@ struct MainView: View {
     @Environment(AppState.self) private var appState
     @State private var selectedTab: AppTab = .digests
 
+    @State private var httpLogger = HTTPLogger.shared
+
     enum AppTab: String {
-        case digests, saved, settings
+        case digests, saved, network, settings
     }
 
     var body: some View {
@@ -31,15 +33,27 @@ struct MainView: View {
                 }
             }
 
+            if httpLogger.isEnabled {
+                SwiftUI.Tab("Network", systemImage: "network", value: AppTab.network) {
+                    NavigationStack {
+                        HTTPLogView()
+                            .navigationTitle("Network")
+                            #if !os(macOS)
+                            .navigationBarTitleDisplayMode(.inline)
+                            #endif
+                    }
+                }
+            }
+
+            #if !os(macOS)
             SwiftUI.Tab("Settings", systemImage: "gear", value: AppTab.settings) {
                 NavigationStack {
                     SettingsView()
                         .navigationTitle("Settings")
-                        #if !os(macOS)
                         .navigationBarTitleDisplayMode(.inline)
-                        #endif
                 }
             }
+            #endif
         }
         #if os(iOS)
         .tabViewStyle(.sidebarAdaptable)
@@ -191,6 +205,7 @@ struct DigestGroup: Identifiable {
 
 struct DigestRow: View {
     let digest: DigestSummary
+    @State private var debugJSON: String?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -218,6 +233,22 @@ struct DigestRow: View {
             }
         }
         .padding(.vertical, 2)
+        .contextMenu {
+            Button {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                encoder.dateEncodingStrategy = .iso8601
+                if let data = try? encoder.encode(digest),
+                   let string = String(data: data, encoding: .utf8) {
+                    debugJSON = string
+                }
+            } label: {
+                Label("Show Raw JSON", systemImage: "curlybraces")
+            }
+        }
+        .sheet(item: $debugJSON) { json in
+            DebugJSONView(title: "Digest Summary", json: json)
+        }
     }
 
     private var sourceColor: Color {

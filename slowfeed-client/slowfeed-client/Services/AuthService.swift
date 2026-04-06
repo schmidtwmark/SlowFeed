@@ -426,14 +426,15 @@ extension AuthService: ASAuthorizationControllerDelegate {
 // MARK: - ASAuthorizationControllerPresentationContextProviding
 
 extension AuthService: ASAuthorizationControllerPresentationContextProviding {
-    nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+    @MainActor
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         #if os(macOS)
         return NSApplication.shared.keyWindow ?? NSApplication.shared.windows.first!
         #else
-        return UIApplication.shared.connectedScenes
+        let scene = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
-            .flatMap { $0.windows }
-            .first { $0.isKeyWindow } ?? UIWindow()
+            .first!
+        return scene.keyWindow ?? scene.windows.first ?? UIWindow(windowScene: scene)
         #endif
     }
 }

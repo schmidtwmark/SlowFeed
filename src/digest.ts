@@ -307,9 +307,12 @@ function renderRedditPost(post: DigestPost): string {
   return parts.join('\n');
 }
 
-function renderBlueskyPost(post: DigestPost, indentLevel: number = 0): string {
+/**
+ * Render a single Bluesky post node (author, content, media).
+ */
+function renderBlueskyPostNode(post: DigestPost, indentLevel: number = 0): string {
   const parts: string[] = [];
-  const indent = indentLevel > 0 ? `style="margin-left: ${Math.min(indentLevel * 24, 72)}px; padding-left: 12px; border-left: 2px solid var(--border, #2a2a4a);"` : '';
+  const indent = indentLevel > 0 ? `style="margin-left: ${Math.min(indentLevel * 24, 96)}px; padding-left: 12px; border-left: 2px solid var(--border, #2a2a4a);"` : '';
   parts.push(`<div class="thread-post" ${indent}>`);
 
   if (post.metadata?.repostedBy) {
@@ -325,128 +328,72 @@ function renderBlueskyPost(post: DigestPost, indentLevel: number = 0): string {
 
   parts.push(renderMedia(post));
   parts.push(renderLinks(post));
+
+  // Render inline quoted post as a styled blockquote
+  if (post.quotedPost) {
+    parts.push(renderQuotedPostBlock(post.quotedPost));
+  }
+
+  // Render any remaining embeds (link cards, etc.)
   parts.push(renderEmbeds(post));
+
   parts.push(`</div>`);
   return parts.join('\n');
 }
 
-const MAX_THREAD_ITEMS = 5;
-
-function calculateThreadIndents(posts: DigestPost[]): Map<string, number> {
-  const indents = new Map<string, number>();
-
-  // Posts without a parentUri are roots (indent 0)
-  for (const post of posts) {
-    if (!post.metadata?.parentUri) indents.set(post.postId, 0);
+/**
+ * Render a quoted post as a blockquote block.
+ */
+function renderQuotedPostBlock(post: DigestPost): string {
+  const parts: string[] = [];
+  parts.push(`<blockquote style="margin: 8px 0; padding: 8px 12px; border-left: 3px solid #ccc; background: rgba(128,128,128,0.1); border-radius: 4px;">`);
+  if (post.author) {
+    const avatar = renderAvatar(post.metadata?.avatarUrl, post.author);
+    parts.push(`<p class="post-author">${avatar}<strong>${esc(post.author)}</strong></p>`);
   }
-
-  // Iteratively resolve child indent levels by matching parentUri to postId
-  let changed = true;
-  let iterations = 0;
-  while (changed && iterations < 10) {
-    changed = false;
-    iterations++;
-    for (const post of posts) {
-      if (indents.has(post.postId)) continue;
-      const parentUri = post.metadata?.parentUri;
-      if (parentUri) {
-        // Match parent by postId suffix (postId is the rkey at the end of the at:// URI)
-        // Also try exact rawJson.uri match for freshly-created digests
-        const parent = posts.find(p => {
-          if (parentUri.endsWith(`/${p.postId}`)) return true;
-          const raw = p.rawJson as { uri?: string } | undefined;
-          return raw?.uri === parentUri;
-        });
-        if (parent && indents.has(parent.postId)) {
-          indents.set(post.postId, (indents.get(parent.postId) || 0) + 1);
-          changed = true;
-        }
-      }
-    }
+  if (post.content) parts.push(`<p>${esc(post.content)}</p>`);
+  parts.push(renderMedia(post));
+  if (post.quotedPost) {
+    parts.push(renderQuotedPostBlock(post.quotedPost)); // recursive
   }
-
-  // Any unresolved posts default to indent 1 if they have a parentUri, 0 otherwise
-  for (const post of posts) {
-    if (!indents.has(post.postId)) {
-      indents.set(post.postId, post.metadata?.parentUri ? 1 : 0);
-    }
+  if (post.url) {
+    parts.push(`<p><a href="${esc(post.url)}">View on Bluesky →</a></p>`);
   }
-  return indents;
+  parts.push(`</blockquote>`);
+  return parts.join('\n');
 }
 
-function renderBlueskyPosts(posts: DigestPost[]): string {
-  const threads = new Map<string, DigestPost[]>();
-  const standalone: DigestPost[] = [];
+const MAX_THREAD_DEPTH = 6;
 
-  for (const post of posts) {
-    const rootUri = post.metadata?.rootUri;
-    if (rootUri) {
-      const existing = threads.get(rootUri) || [];
-      existing.push(post);
-      threads.set(rootUri, existing);
-    } else {
-      standalone.push(post);
+/**
+ * Recursively render a Bluesky post tree (post + replies).
+ */
+function renderBlueskyTree(post: DigestPost, depth: number = 0): string {
+  if (depth > MAX_THREAD_DEPTH) return '';
+  const parts: string[] = [];
+  parts.push(renderBlueskyPostNode(post, depth));
+
+  if (post.replies) {
+    for (const reply of post.replies) {
+      parts.push(renderBlueskyTree(reply, depth + 1));
     }
   }
 
-  const usedStandalone = new Set<string>();
-  const groups: { earliestTime: number; render: () => string }[] = [];
+  return parts.join('\n');
+}
 
-  for (const [rootUri, threadPosts] of threads) {
-    // Find the root post from standalone posts by matching postId suffix or exact rawJson.uri
-    const rootPost = standalone.find(p => {
-      if (rootUri.endsWith(`/${p.postId}`)) return true;
-      const raw = p.rawJson as { uri?: string } | undefined;
-      return raw?.uri === rootUri;
-    });
-    const allInThread = rootPost ? [rootPost, ...threadPosts] : threadPosts;
-    if (rootPost) usedStandalone.add(rootPost.postId);
-
-    allInThread.sort((a, b) => new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime());
-    const indents = calculateThreadIndents(allInThread);
-
-    groups.push({
-      earliestTime: new Date(allInThread[0].publishedAt).getTime(),
-      render: () => {
-        const parts: string[] = [];
-        const lastPost = allInThread[allInThread.length - 1];
-        const totalCount = allInThread.length;
-        const overflow = totalCount > MAX_THREAD_ITEMS;
-        const displayPosts = overflow ? allInThread.slice(0, MAX_THREAD_ITEMS) : allInThread;
-
-        parts.push(`<article class="post thread" data-source="bluesky" data-url="${esc(lastPost.url)}">`);
-        if (totalCount > 1) parts.push(`<p><strong>Thread (${totalCount} posts):</strong></p>`);
-        for (const p of displayPosts) {
-          parts.push(renderBlueskyPost(p, indents.get(p.postId) || 0));
-        }
-        if (overflow) {
-          const remaining = totalCount - MAX_THREAD_ITEMS;
-          parts.push(`<p class="thread-overflow"><a href="${esc(lastPost.url)}">+ ${remaining} more post${remaining === 1 ? '' : 's'} →</a></p>`);
-        }
-        parts.push(`<p><a href="${esc(lastPost.url)}">View on Bluesky →</a></p>`);
-        parts.push('</article>');
-        return parts.join('\n');
-      },
-    });
-  }
-
-  for (const post of standalone) {
-    if (usedStandalone.has(post.postId)) continue;
-    groups.push({
-      earliestTime: new Date(post.publishedAt).getTime(),
-      render: () => {
-        const parts: string[] = [];
-        parts.push(`<article class="post" data-source="bluesky" data-url="${esc(post.url)}">`);
-        parts.push(renderBlueskyPost(post, 0));
-        parts.push(`<p><a href="${esc(post.url)}">View on Bluesky →</a></p>`);
-        parts.push('</article>');
-        return parts.join('\n');
-      },
-    });
-  }
-
-  groups.sort((a, b) => a.earliestTime - b.earliestTime);
-  return groups.map(g => g.render()).join('\n');
+/**
+ * Render all Bluesky posts. Each post is a self-contained tree.
+ */
+function renderBlueskyPosts(posts: DigestPost[]): string {
+  return posts.map(post => {
+    const parts: string[] = [];
+    parts.push(`<article class="post" data-source="bluesky" data-url="${esc(post.url)}">`);
+    parts.push(renderBlueskyTree(post, 0));
+    parts.push(`<p><a href="${esc(post.url)}">View on Bluesky →</a></p>`);
+    parts.push('</article>');
+    return parts.join('\n');
+  }).join('\n');
 }
 
 function renderYouTubePost(post: DigestPost): string {
@@ -484,6 +431,8 @@ function renderDiscordMessage(post: DigestPost): string {
   parts.push(`<p><a href="${esc(appUrl)}">Open in Discord →</a></p>`);
   return parts.join('\n');
 }
+
+const MAX_THREAD_ITEMS = 5;
 
 function groupDiscordThreads(posts: DigestPost[]): DigestPost[][] {
   const byId = new Map<string, DigestPost>();
@@ -598,7 +547,7 @@ function renderSinglePost(post: DigestPost, source: SourceType): string {
     case 'reddit': return renderRedditPost(post);
     case 'youtube': return renderYouTubePost(post);
     case 'discord': return renderDiscordMessage(post);
-    case 'bluesky': return renderBlueskyPost(post);
+    case 'bluesky': return renderBlueskyPostNode(post);
     default: return renderRedditPost(post);
   }
 }

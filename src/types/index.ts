@@ -132,6 +132,8 @@ export interface DigestPost {
   links?: PostLink[];          // External link cards
   comments?: PostComment[];    // Top comments (Reddit)
   embeds?: PostEmbed[];        // Quoted posts, Discord embeds
+  replies?: DigestPost[];      // Child posts in thread (Bluesky)
+  quotedPost?: DigestPost;     // Inline quoted post (Bluesky)
 }
 
 export interface DigestItem {

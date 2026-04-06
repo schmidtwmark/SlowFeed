@@ -130,7 +130,7 @@ function extractPosts(html: string): RedditPost[] {
     }
 
     // For imgur single images, convert to direct image URL
-    let finalUrl = postUrl.startsWith('/') ? `https://old.reddit.com${postUrl}` : postUrl;
+    let finalUrl = postUrl.startsWith('/') ? `https://reddit.com${postUrl}` : postUrl;
     if (finalUrl.match(/^https?:\/\/imgur\.com\/[a-zA-Z0-9]+$/)) {
       // Convert imgur.com/abc to i.imgur.com/abc.jpg
       finalUrl = finalUrl.replace('imgur.com/', 'i.imgur.com/') + '.jpg';
@@ -142,7 +142,7 @@ function extractPosts(html: string): RedditPost[] {
       author,
       subreddit,
       url: finalUrl,
-      permalink: `https://old.reddit.com${permalink}`,
+      permalink: `https://reddit.com${permalink}`,
       selftext: '',
       score,
       numComments,
@@ -324,10 +324,13 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
 
     if (redditVideo?.fallback_url) {
       videoUrl = redditVideo.fallback_url;
-      // Derive audio URL from the video URL
-      const audioUrl = videoUrl.replace(/DASH_\d+\.mp4/, 'DASH_AUDIO_128.mp4')
-        .replace(/DASH_\d+\?/, 'DASH_AUDIO_128?');
-      videoAudioUrl = audioUrl;
+      // CMAF format (CMAF_480.mp4) has embedded audio — no separate track needed
+      // DASH format (DASH_720.mp4) needs a separate audio track
+      if (/DASH_\d+/.test(videoUrl)) {
+        const audioUrl = videoUrl.replace(/DASH_\d+\.mp4/, 'DASH_AUDIO_128.mp4')
+          .replace(/DASH_\d+\?/, 'DASH_AUDIO_128?');
+        videoAudioUrl = audioUrl;
+      }
     }
 
     // Extract preview URL (for videos and other content)

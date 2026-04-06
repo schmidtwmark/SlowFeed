@@ -83,7 +83,7 @@ struct Digest: Codable, Identifiable {
     }
 }
 
-struct DigestPost: Codable, Identifiable {
+final class DigestPost: Codable, Identifiable {
     let postId: String
     let title: String
     let content: String?       // Plain text (no HTML)
@@ -96,6 +96,8 @@ struct DigestPost: Codable, Identifiable {
     let links: [PostLink]?
     let comments: [PostComment]?
     let embeds: [PostEmbed]?
+    let replies: [DigestPost]?      // Child posts in thread (Bluesky)
+    let quotedPost: DigestPost?     // Inline quoted post (Bluesky)
 
     var id: String { postId }
 }

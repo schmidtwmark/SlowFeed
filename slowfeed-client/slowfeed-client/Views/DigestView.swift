@@ -106,6 +106,7 @@ struct DigestView: View {
     @State private var viewerURLs: [URL] = []
     @State private var viewerIndex: Int = 0
     @State private var showViewer = false
+    @State private var debugJSON: String?
 
     private func openImageViewer(urls: [URL], index: Int) {
         viewerURLs = urls
@@ -124,6 +125,13 @@ struct DigestView: View {
                         .onTapGesture {
                             if let url = URL(string: "\(appState.serverURL)/digest/\(digest.id)") {
                                 openURL(url)
+                            }
+                        }
+                        .contextMenu {
+                            Button {
+                                debugJSON = prettyJSON(digest)
+                            } label: {
+                                Label("Show Raw JSON", systemImage: "curlybraces")
                             }
                         }
 
@@ -172,6 +180,9 @@ struct DigestView: View {
         }
         #endif
         .onAppear { isFocused = true }
+        .sheet(item: $debugJSON) { json in
+            DebugJSONView(title: "Digest JSON", json: json)
+        }
     }
 
     #if os(macOS)
@@ -261,117 +272,124 @@ struct BlueskyThreadedView: View {
     var imageNamespace: Namespace.ID?
     var onSelectImage: (([URL], Int) -> Void)?
 
-    /// Groups posts by rootUri into threads, preserving standalone posts
-    private var groups: [(id: String, posts: [DigestPost])] {
-        var threads: [String: [DigestPost]] = [:]
-        var standalone: [DigestPost] = []
-        var threadOrder: [String] = []
-
-        for post in posts {
-            if let raw = post.metadata?.rootUri {
-                // This post is part of a thread
-                let key = raw
-                if threads[key] == nil {
-                    threads[key] = []
-                    threadOrder.append(key)
-                }
-                threads[key]!.append(post)
-            } else {
-                standalone.append(post)
-            }
-        }
-
-        // Check if any standalone post is actually a thread root
-        // (other posts reference it via rootUri that ends with the standalone's postId)
-        var usedStandalone = Set<String>()
-        for (rootUri, _) in threads {
-            if let root = standalone.first(where: { rootUri.hasSuffix($0.postId) }) {
-                threads[rootUri]!.insert(root, at: 0)
-                usedStandalone.insert(root.postId)
-            }
-        }
-
-        var result: [(id: String, posts: [DigestPost])] = []
-
-        // Add threads in order
-        for key in threadOrder {
-            if let threadPosts = threads[key] {
-                let sorted = threadPosts.sorted {
-                    ($0.publishedAt ?? .distantPast) < ($1.publishedAt ?? .distantPast)
-                }
-                result.append((id: key, posts: sorted))
-            }
-        }
-
-        // Add remaining standalone posts
-        for post in standalone where !usedStandalone.contains(post.postId) {
-            result.append((id: post.postId, posts: [post]))
-        }
-
-        // Sort all groups by earliest post time
-        result.sort {
-            let t0 = $0.posts.first?.publishedAt ?? .distantPast
-            let t1 = $1.posts.first?.publishedAt ?? .distantPast
-            return t0 < t1
-        }
-
-        return result
-    }
-
     var body: some View {
-        ForEach(groups, id: \.id) { group in
-            if group.posts.count == 1 {
-                PostView(post: group.posts[0], source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-                Divider()
-            } else {
-                ThreadGroupView(posts: group.posts, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-                Divider()
-            }
+        ForEach(posts) { post in
+            BlueskyTreeView(post: post, depth: 0, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+            Divider()
         }
     }
 }
 
-/// Renders a group of Bluesky posts as a thread with tree indentation
-struct ThreadGroupView: View {
-    let posts: [DigestPost]
+/// Recursively renders a Bluesky post tree (post + replies)
+struct BlueskyTreeView: View {
+    let post: DigestPost
+    let depth: Int
     var source: SourceType = .bluesky
     var digestId: String?
     var imageNamespace: Namespace.ID?
     var onSelectImage: (([URL], Int) -> Void)?
 
-    /// Calculate indent level for each post based on parent chain
-    private func indentLevel(for post: DigestPost) -> Int {
-        guard let parentUri = post.metadata?.parentUri else { return 0 }
-
-        // Find the parent in our posts array
-        if let parent = posts.first(where: { parentUri.hasSuffix($0.postId) }) {
-            return indentLevel(for: parent) + 1
-        }
-        // Parent not in our list — treat as top-level reply
-        return 1
-    }
+    private let maxDepth = 6
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(posts) { post in
-                let indent = min(indentLevel(for: post), 4)
+        if depth <= maxDepth {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 0) {
-                    if indent > 0 {
-                        // Thread line indicators
-                        ForEach(0..<indent, id: \.self) { _ in
+                    if depth > 0 {
+                        ForEach(0..<min(depth, 4), id: \.self) { _ in
                             Rectangle()
                                 .fill(Color.blue.opacity(0.3))
                                 .frame(width: 2)
                                 .padding(.horizontal, 8)
                         }
                     }
-                    PostView(post: post, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 8) {
+                        PostView(post: post, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+
+                        // Inline quoted post
+                        if let quoted = post.quotedPost {
+                            QuotedPostBubble(post: quoted, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+                                .padding(.horizontal)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if post.id != posts.last?.id {
-                    Divider()
-                        .padding(.leading, CGFloat(indent) * 18)
+
+                // Render replies recursively
+                if let replies = post.replies, !replies.isEmpty {
+                    ForEach(replies) { reply in
+                        Divider()
+                            .padding(.leading, CGFloat(min(depth + 1, 4)) * 18)
+                        BlueskyTreeView(post: reply, depth: depth + 1, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+                    }
                 }
+            }
+        }
+    }
+}
+
+/// Inline quoted post rendered as a bubble
+struct QuotedPostBubble: View {
+    let post: DigestPost
+    var depth: Int = 0
+    var imageNamespace: Namespace.ID?
+    var onSelectImage: (([URL], Int) -> Void)?
+
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Author
+            HStack(spacing: 6) {
+                if let avatarUrl = post.metadata?.avatarUrl, let url = URL(string: avatarUrl) {
+                    CachedImage(url: url) { Circle().fill(.quaternary) }
+                        .aspectRatio(contentMode: .fill)
+                        .clipShape(Circle())
+                        .frame(width: 20, height: 20)
+                }
+                if let author = post.author {
+                    Text(author)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let date = post.publishedAt {
+                    Text(date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            // Content
+            if let content = post.content, !content.isEmpty {
+                Text(content)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary.opacity(0.8))
+                    .lineLimit(8)
+            }
+
+            // Media
+            if let media = post.media, !media.isEmpty {
+                MediaView(media: media, postTitle: post.title, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+            }
+
+            // Nested quoted post (cap at 2 levels)
+            if let nested = post.quotedPost, depth < 2 {
+                QuotedPostBubble(post: nested, depth: depth + 1, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.3))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture {
+            if let urlStr = post.url, let url = URL(string: urlStr) {
+                openURL(url)
             }
         }
     }
@@ -388,10 +406,13 @@ struct PostView: View {
 
     @Environment(\.openURL) private var openURL
     @Environment(AppState.self) private var appState
+    @State private var debugJSON: String?
 
     private var postURL: URL? {
         guard let urlString = post.url, !urlString.isEmpty else { return nil }
-        return URL(string: urlString)
+        // Normalize old.reddit.com → reddit.com for existing cached data
+        let normalized = urlString.replacingOccurrences(of: "://old.reddit.com", with: "://reddit.com")
+        return URL(string: normalized)
     }
 
     /// Strip legacy "r/subreddit: " prefix from Reddit titles
@@ -564,6 +585,17 @@ struct PostView: View {
                     Label("Save for Later", systemImage: "bookmark")
                 }
             }
+
+            Divider()
+
+            Button {
+                debugJSON = prettyJSON(post)
+            } label: {
+                Label("Show Raw JSON", systemImage: "curlybraces")
+            }
+        }
+        .sheet(item: $debugJSON) { json in
+            DebugJSONView(title: "Post JSON", json: json)
         }
     }
 }
@@ -589,20 +621,29 @@ struct MediaView: View {
                     .frame(maxWidth: 600)
                     .contextMenu { mediaContextMenu(for: img) }
             } else if images.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 12) {
-                        ForEach(Array(images.enumerated()), id: \.element.url) { index, img in
-                            if let url = URL(string: img.url) {
-                                imageThumb(url: url, index: index)
-                                    .frame(maxWidth: 400, maxHeight: 300)
-                                    .containerRelativeFrame(.horizontal)
-                                    .contextMenu { mediaContextMenu(for: img) }
+                GeometryReader { geo in
+                    let itemWidth = min(geo.size.width - 24, 600.0)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 12) {
+                            ForEach(Array(images.enumerated()), id: \.offset) { index, img in
+                                if let url = URL(string: img.url) {
+                                    imageThumb(url: url, index: index)
+                                        .frame(width: itemWidth, height: min(itemWidth * 0.75, 400))
+                                        .contextMenu { mediaContextMenu(for: img) }
+                                }
                             }
                         }
+                        .scrollTargetLayout()
+                        .padding(.horizontal, 12)
                     }
-                    .scrollTargetLayout()
+                    .scrollTargetBehavior(.viewAligned)
                 }
-                .scrollTargetBehavior(.viewAligned)
+                .frame(height: min(400, 300))
+
+                // Gallery counter
+                Text("\(images.count) images")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
 
             ForEach(videos, id: \.url) { vid in
@@ -731,23 +772,48 @@ struct MediaView: View {
 
 // MARK: - Inline Video Player
 
+#if os(macOS)
+struct NativePlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.player = player
+        view.controlsStyle = .inline
+        view.showsFullScreenToggleButton = true
+        return view
+    }
+
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+        nsView.player = player
+    }
+}
+#endif
+
 struct InlineVideoPlayer: View {
     let media: PostMedia
 
     @State private var player: AVPlayer?
     @State private var audioPlayer: AVPlayer?
-    @State private var isPlaying = false
-    @State private var showControls = true
+
+    /// Whether the audio URL is actually a separate track (not the same as video)
+    private var hasSeparateAudio: Bool {
+        guard let audioUrl = media.audioUrl else { return false }
+        return audioUrl != media.url
+    }
 
     var body: some View {
         ZStack {
             if let player {
+                #if os(macOS)
+                NativePlayerView(player: player)
+                    .aspectRatio(16/9, contentMode: .fit)
+                    .onDisappear { stopPlayback() }
+                #else
                 VideoPlayer(player: player)
                     .aspectRatio(16/9, contentMode: .fit)
-                    .onDisappear {
-                        player.pause()
-                        audioPlayer?.pause()
-                    }
+                    .onDisappear { stopPlayback() }
+                #endif
             } else {
                 // Thumbnail with play button
                 ZStack {
@@ -777,41 +843,37 @@ struct InlineVideoPlayer: View {
     private func startPlayback() {
         guard let videoURL = URL(string: media.url) else { return }
 
-        if let audioUrlString = media.audioUrl, let audioURL = URL(string: audioUrlString) {
-            // Reddit DASH: play video + audio simultaneously
-            let videoItem = AVPlayerItem(url: videoURL)
-            let mainPlayer = AVPlayer(playerItem: videoItem)
+        let mainPlayer = AVPlayer(url: videoURL)
 
-            let audioItem = AVPlayerItem(url: audioURL)
-            let separateAudioPlayer = AVPlayer(playerItem: audioItem)
-
-            // Sync playback
+        if hasSeparateAudio, let audioURL = URL(string: media.audioUrl!) {
+            // Reddit DASH: separate audio track
+            let separateAudioPlayer = AVPlayer(url: audioURL)
             mainPlayer.play()
             separateAudioPlayer.play()
-
-            self.player = mainPlayer
             self.audioPlayer = separateAudioPlayer
 
-            // Keep audio in sync on seek
+            // Loop both on end
             NotificationCenter.default.addObserver(
                 forName: .AVPlayerItemDidPlayToEndTime,
-                object: videoItem,
+                object: mainPlayer.currentItem,
                 queue: .main
             ) { _ in
-                // Loop both
                 mainPlayer.seek(to: .zero)
                 separateAudioPlayer.seek(to: .zero)
                 mainPlayer.play()
                 separateAudioPlayer.play()
             }
         } else {
-            // Standard video with embedded audio
-            let mainPlayer = AVPlayer(url: videoURL)
+            // CMAF or standard video — audio is embedded
             mainPlayer.play()
-            self.player = mainPlayer
         }
 
-        isPlaying = true
+        self.player = mainPlayer
+    }
+
+    private func stopPlayback() {
+        player?.pause()
+        audioPlayer?.pause()
     }
 }
 
@@ -834,7 +896,14 @@ struct ImageViewerOverlay: View {
     @State private var backgroundOpacity: Double = 1.0
     @FocusState private var isFocused: Bool
 
-    private var currentURL: URL { imageURLs[currentIndex] }
+    private var safeIndex: Int {
+        guard !imageURLs.isEmpty else { return 0 }
+        return min(max(currentIndex, 0), imageURLs.count - 1)
+    }
+    private var currentURL: URL? {
+        guard !imageURLs.isEmpty else { return nil }
+        return imageURLs[safeIndex]
+    }
     private var isDraggingToDismiss: Bool { scale <= 1.0 && dismissDrag != .zero }
 
     var body: some View {
@@ -851,7 +920,7 @@ struct ImageViewerOverlay: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .aspectRatio(contentMode: .fit)
-                .matchedGeometryEffect(id: currentURL.absoluteString, in: namespace)
+                .matchedGeometryEffect(id: currentURL?.absoluteString ?? "", in: namespace)
                 .scaleEffect(scale)
                 .offset(
                     x: offset.width + (isDraggingToDismiss ? dismissDrag.width * 0.3 : 0),
@@ -1231,36 +1300,63 @@ struct CommentsView: View {
     }
 }
 
-#Preview {
-    DigestView(digest: Digest(
-        id: "test",
-        source: .reddit,
-        title: "Reddit Digest: 5 posts",
-        postCount: 5,
-        postIds: [],
-        publishedAt: Date(),
-        createdAt: Date(),
-        readAt: nil,
-        posts: [
-            DigestPost(
-                postId: "1",
-                title: "Example Post Title",
-                content: "This is some example content for the post.",
-                url: "https://reddit.com",
-                author: "u/example",
-                publishedAt: Date(),
-                isNotification: false,
-                metadata: PostMetadata(
-                    avatarUrl: nil, score: 142, subreddit: "swift", numComments: 23,
-                    videoId: nil, channel: nil, channelUrl: nil, duration: nil,
-                    viewCount: nil, publishedText: nil, guildName: nil, channelName: nil,
-                    replyToMessageId: nil, repostedBy: nil, rootUri: nil, parentUri: nil
-                ),
-                media: [], links: [],
-                comments: [PostComment(author: "commenter", body: "Great post!", score: 10)],
-                embeds: []
-            )
-        ]
-    ))
-    .environment(AppState())
+// MARK: - Debug JSON View
+
+extension String: @retroactive Identifiable {
+    public var id: String { self }
 }
+
+private func prettyJSON<T: Encodable>(_ value: T) -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    encoder.dateEncodingStrategy = .iso8601
+    guard let data = try? encoder.encode(value),
+          let string = String(data: data, encoding: .utf8) else {
+        return "Failed to encode"
+    }
+    return string
+}
+
+struct DebugJSONView: View {
+    let title: String
+    let json: String
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(json)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .navigationTitle(title)
+            #if !os(macOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        #if os(macOS)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(json, forType: .string)
+                        #else
+                        UIPasteboard.general.string = json
+                        #endif
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 500, minHeight: 400)
+        #endif
+    }
+}
+

@@ -46,6 +46,11 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Account", systemImage: "person")
                 }
+
+            AppSettingsView()
+                .tabItem {
+                    Label("App", systemImage: "wrench")
+                }
         }
         .frame(width: 500, height: 400)
         .task {
@@ -99,6 +104,14 @@ struct SettingsView: View {
                         AccountSettingsView()
                     } label: {
                         Label("Account", systemImage: "person")
+                    }
+                }
+
+                Section {
+                    NavigationLink {
+                        AppSettingsView()
+                    } label: {
+                        Label("App", systemImage: "wrench")
                     }
                 }
             }
@@ -602,6 +615,41 @@ struct AccountSettingsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Account")
+    }
+}
+
+// MARK: - App Settings
+
+struct AppSettingsView: View {
+    @State private var httpLogger = HTTPLogger.shared
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Network Logging", isOn: $httpLogger.isEnabled)
+
+                if httpLogger.isEnabled {
+                    HStack {
+                        Text("Logged requests")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(httpLogger.entries.count)")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button("Clear Log", role: .destructive) {
+                        httpLogger.clear()
+                    }
+                    .disabled(httpLogger.entries.isEmpty)
+                }
+            } header: {
+                Text("Debugging")
+            } footer: {
+                Text("When enabled, all HTTP requests are logged and viewable in the Network tab. This may use additional memory.")
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("App Settings")
     }
 }
 

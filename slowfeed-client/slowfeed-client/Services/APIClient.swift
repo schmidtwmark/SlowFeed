@@ -112,11 +112,28 @@ final class APIClient {
             request.httpBody = body
         }
 
+        let startTime = CFAbsoluteTimeGetCurrent()
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw APIError.networkError(NSError(domain: "Invalid response", code: 0))
+            }
+
+            let duration = CFAbsoluteTimeGetCurrent() - startTime
+
+            // Log if enabled
+            if HTTPLogger.shared.isEnabled {
+                HTTPLogger.shared.log(
+                    method: request.httpMethod ?? "GET",
+                    url: url,
+                    requestHeaders: request.allHTTPHeaderFields ?? [:],
+                    requestBody: request.httpBody,
+                    responseStatus: httpResponse.statusCode,
+                    responseHeaders: httpResponse.allHeaderFields,
+                    responseBody: data,
+                    duration: duration
+                )
             }
 
             if httpResponse.statusCode == 401 {
@@ -136,8 +153,37 @@ final class APIClient {
                 throw APIError.decodingError(error)
             }
         } catch let error as APIError {
+            // Log errors too
+            if HTTPLogger.shared.isEnabled {
+                let duration = CFAbsoluteTimeGetCurrent() - startTime
+                HTTPLogger.shared.log(
+                    method: request.httpMethod ?? "GET",
+                    url: url,
+                    requestHeaders: request.allHTTPHeaderFields ?? [:],
+                    requestBody: request.httpBody,
+                    responseStatus: 0,
+                    responseHeaders: [:],
+                    responseBody: nil,
+                    duration: duration,
+                    error: error.localizedDescription
+                )
+            }
             throw error
         } catch {
+            if HTTPLogger.shared.isEnabled {
+                let duration = CFAbsoluteTimeGetCurrent() - startTime
+                HTTPLogger.shared.log(
+                    method: request.httpMethod ?? "GET",
+                    url: url,
+                    requestHeaders: request.allHTTPHeaderFields ?? [:],
+                    requestBody: request.httpBody,
+                    responseStatus: 0,
+                    responseHeaders: [:],
+                    responseBody: nil,
+                    duration: duration,
+                    error: error.localizedDescription
+                )
+            }
             throw APIError.networkError(error)
         }
     }
