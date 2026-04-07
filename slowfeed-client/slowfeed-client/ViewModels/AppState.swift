@@ -407,10 +407,43 @@ final class AppState {
 
     // MARK: - Polling
 
+    var isPolling = false
+    var pollStatusMessage: String?
+
     func triggerPoll(source: SourceType? = nil) async throws {
-        try await apiClient.triggerPoll(source: source)
-        digestCache = [:] // Clear cache since new digests were created
-        await refreshDigests()
+        await MainActor.run {
+            isPolling = true
+            pollStatusMessage = "Starting poll..."
+        }
+
+        do {
+            try await apiClient.triggerPoll(source: source)
+
+            // Poll completed — the server endpoint blocks until done
+            await MainActor.run {
+                pollStatusMessage = "Loading new content..."
+            }
+
+            digestCache = [:] // Clear cache since new digests were created
+            await refreshDigests()
+
+            // Auto-select the first (newest) digest
+            if let first = digests.first {
+                await navigateToDigest(at: 0)
+            }
+
+            await MainActor.run {
+                isPolling = false
+                pollStatusMessage = nil
+            }
+        } catch {
+            await MainActor.run {
+                isPolling = false
+                pollStatusMessage = nil
+                self.error = error.localizedDescription
+            }
+            throw error
+        }
     }
 
     // MARK: - Sidebar Groups

@@ -194,6 +194,79 @@ async function buildThreadTree(
   }
 }
 
+/**
+ * Get the root postId of a thread tree (the top-level post).
+ */
+function getRootPostId(post: DigestPost): string {
+  return post.postId;
+}
+
+/**
+ * Collect all descendant posts from a tree (excluding the root).
+ */
+function collectReplies(post: DigestPost): DigestPost[] {
+  const result: DigestPost[] = [];
+  if (post.replies) {
+    for (const reply of post.replies) {
+      result.push(reply);
+      // Recurse into deeper replies
+      if (reply.replies) {
+        result.push(...collectReplies(reply));
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Merge digest posts that share the same root postId.
+ * - Standalone post + thread with same root → keep the thread
+ * - Multiple threads with same root → merge their reply chains
+ */
+function mergeThreadsByRoot(posts: DigestPost[]): DigestPost[] {
+  const rootMap = new Map<string, DigestPost>();
+  const order: string[] = [];
+
+  for (const post of posts) {
+    const rootId = getRootPostId(post);
+
+    if (!rootMap.has(rootId)) {
+      rootMap.set(rootId, post);
+      order.push(rootId);
+    } else {
+      // Merge: keep the existing root node, add new replies
+      const existing = rootMap.get(rootId)!;
+      const newReplies = collectReplies(post);
+
+      if (newReplies.length > 0) {
+        // Add replies that aren't already in the existing tree
+        const existingReplyIds = new Set(collectReplies(existing).map(r => r.postId));
+        const uniqueNewReplies = newReplies.filter(r => !existingReplyIds.has(r.postId));
+
+        if (uniqueNewReplies.length > 0) {
+          // Attach new replies at the appropriate depth
+          // Find the deepest single-child chain and add as siblings
+          let node = existing;
+          while (node.replies && node.replies.length === 1 && node.replies[0].replies) {
+            node = node.replies[0];
+          }
+          if (!node.replies) {
+            node.replies = uniqueNewReplies;
+          } else {
+            node.replies = [...node.replies, ...uniqueNewReplies];
+          }
+        }
+      }
+      // If existing had no replies but new does, the new tree is better
+      else if (!existing.replies && post.replies) {
+        rootMap.set(rootId, post);
+      }
+    }
+  }
+
+  return order.map(id => rootMap.get(id)!);
+}
+
 // ---- Main poll function ----
 
 export async function pollBluesky(): Promise<DigestPost[]> {
@@ -265,8 +338,13 @@ export async function pollBluesky(): Promise<DigestPost[]> {
       }
     }
 
-    logger.info(`Bluesky poll complete: found ${digestPosts.length} posts`);
-    return digestPosts;
+    // Merge threads that share the same root post.
+    // e.g. if post A appears standalone AND as root of thread A→B, keep only A→B.
+    // If multiple threads share root A (A→B and A→C), merge into A→[B,C].
+    const mergedPosts = mergeThreadsByRoot(digestPosts);
+
+    logger.info(`Bluesky poll complete: found ${mergedPosts.length} posts (${digestPosts.length} before merge)`);
+    return mergedPosts;
   } catch (err) {
     logger.error('Bluesky polling failed:', err);
     throw err;

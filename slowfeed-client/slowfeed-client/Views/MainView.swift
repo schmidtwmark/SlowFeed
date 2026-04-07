@@ -133,6 +133,9 @@ struct DigestSidebar: View {
             }
         }
         .listStyle(.sidebar)
+        #if os(macOS)
+        .tint(.secondary)
+        #endif
         .navigationTitle("Slowfeed")
         .refreshable {
             await appState.refreshDigests()
@@ -265,6 +268,7 @@ struct DigestRow: View {
 
 struct DigestDetailView: View {
     @Environment(AppState.self) private var appState
+    @State private var showPollConfirmation = false
 
     var body: some View {
         ZStack {
@@ -301,6 +305,20 @@ struct DigestDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
+            // Poll progress overlay
+            if appState.isPolling {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.large)
+                    Text(appState.pollStatusMessage ?? "Fetching new content...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(24)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
             // Error overlay
             if let error = appState.digestError {
                 VStack(spacing: 12) {
@@ -319,6 +337,26 @@ struct DigestDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.ultraThinMaterial)
             }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showPollConfirmation = true
+                } label: {
+                    Label("Fetch New Content", systemImage: "arrow.trianglehead.2.counterclockwise.rotate.90")
+                }
+                .disabled(appState.isPolling)
+            }
+        }
+        .confirmationDialog("Fetch New Content", isPresented: $showPollConfirmation) {
+            Button("Fetch Now") {
+                Task {
+                    try? await appState.triggerPoll()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to fetch new content from all sources? This will poll Reddit, Bluesky, YouTube, and any other enabled sources.")
         }
     }
 }

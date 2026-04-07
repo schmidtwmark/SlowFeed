@@ -38,7 +38,7 @@ struct SavedPostsView: View {
                         )
                         .padding(.top, 40)
                     } else {
-                        LazyVStack(alignment: .leading, spacing: 0) {
+                        VStack(alignment: .leading, spacing: 0) {
                             ForEach(appState.savedPostGroups) { group in
                                 HStack {
                                     SourceBadge(source: group.source)

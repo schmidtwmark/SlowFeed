@@ -138,7 +138,7 @@ struct DigestView: View {
                     Divider()
 
                     if let posts = digest.posts, !posts.isEmpty {
-                        LazyVStack(alignment: .leading, spacing: 0) {
+                        VStack(alignment: .leading, spacing: 0) {
                             if digest.source == .bluesky {
                                 BlueskyThreadedView(posts: posts, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
                             } else {
@@ -265,6 +265,26 @@ struct SourceBadge: View {
 
 // MARK: - Bluesky Threaded View
 
+/// A flattened entry from a post tree, carrying depth info for indentation.
+private struct FlatThreadItem: Identifiable {
+    let post: DigestPost
+    let depth: Int
+    let isThreadRoot: Bool  // true for top-level posts (depth 0)
+    var id: String { "\(post.postId)_\(depth)" }
+}
+
+/// Flattens a post tree into an ordered list with depth markers.
+private func flattenThread(_ post: DigestPost, depth: Int = 0, maxDepth: Int = 6, isRoot: Bool = true) -> [FlatThreadItem] {
+    guard depth <= maxDepth else { return [] }
+    var items = [FlatThreadItem(post: post, depth: depth, isThreadRoot: isRoot)]
+    if let replies = post.replies {
+        for reply in replies {
+            items.append(contentsOf: flattenThread(reply, depth: depth + 1, maxDepth: maxDepth, isRoot: false))
+        }
+    }
+    return items
+}
+
 struct BlueskyThreadedView: View {
     let posts: [DigestPost]
     var source: SourceType = .bluesky
@@ -272,58 +292,53 @@ struct BlueskyThreadedView: View {
     var imageNamespace: Namespace.ID?
     var onSelectImage: (([URL], Int) -> Void)?
 
+    private var flatItems: [FlatThreadItem] {
+        posts.flatMap { flattenThread($0) }
+    }
+
     var body: some View {
-        ForEach(posts) { post in
-            BlueskyTreeView(post: post, depth: 0, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-            Divider()
+        ForEach(flatItems) { item in
+            if item.isThreadRoot && item.post.postId != flatItems.first?.post.postId {
+                Divider()
+            }
+            BlueskyFlatPostRow(item: item, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+            if !item.isThreadRoot {
+                Divider()
+                    .padding(.leading, CGFloat(min(item.depth, 4)) * 18)
+            }
         }
+        Divider()
     }
 }
 
-/// Recursively renders a Bluesky post tree (post + replies)
-struct BlueskyTreeView: View {
-    let post: DigestPost
-    let depth: Int
+/// Renders a single post row with depth-based indentation (non-recursive).
+private struct BlueskyFlatPostRow: View {
+    let item: FlatThreadItem
     var source: SourceType = .bluesky
     var digestId: String?
     var imageNamespace: Namespace.ID?
     var onSelectImage: (([URL], Int) -> Void)?
 
-    private let maxDepth = 6
-
     var body: some View {
-        if depth <= maxDepth {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 0) {
-                    if depth > 0 {
-                        ForEach(0..<min(depth, 4), id: \.self) { _ in
-                            Rectangle()
-                                .fill(Color.blue.opacity(0.3))
-                                .frame(width: 2)
-                                .padding(.horizontal, 8)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        PostView(post: post, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-
-                        // Inline quoted post
-                        if let quoted = post.quotedPost {
-                            QuotedPostBubble(post: quoted, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-                                .padding(.horizontal)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                // Render replies recursively
-                if let replies = post.replies, !replies.isEmpty {
-                    ForEach(replies) { reply in
-                        Divider()
-                            .padding(.leading, CGFloat(min(depth + 1, 4)) * 18)
-                        BlueskyTreeView(post: reply, depth: depth + 1, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-                    }
+        HStack(spacing: 0) {
+            if item.depth > 0 {
+                ForEach(0..<min(item.depth, 4), id: \.self) { _ in
+                    Rectangle()
+                        .fill(Color.blue.opacity(0.3))
+                        .frame(width: 2)
+                        .padding(.horizontal, 8)
                 }
             }
+            VStack(alignment: .leading, spacing: 8) {
+                PostView(post: item.post, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+
+                // Inline quoted post
+                if let quoted = item.post.quotedPost {
+                    QuotedPostBubble(post: quoted, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+                        .padding(.horizontal)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

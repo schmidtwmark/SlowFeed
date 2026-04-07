@@ -12,9 +12,9 @@ struct SlowfeedApp: App {
         #if os(macOS)
         .commands {
             CommandGroup(after: .appInfo) {
-                Button("Refresh Feeds") {
+                Button("Refresh") {
                     Task {
-                        try? await appState.triggerPoll()
+                        await appState.refreshDigests()
                     }
                 }
                 .keyboardShortcut("r", modifiers: .command)
