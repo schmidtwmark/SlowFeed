@@ -10,6 +10,11 @@ enum AppScreen {
     case main
 }
 
+enum KeyboardFocusPane {
+    case digests
+    case posts
+}
+
 @Observable
 final class AppState {
     // Services
@@ -50,6 +55,37 @@ final class AppState {
     var currentDigestIndex: Int = 0
     var expandedGroups: Set<String> = []
     var isRefreshing = false
+
+    // Keyboard navigation
+    var keyboardFocusPane: KeyboardFocusPane = .posts
+    var focusedPostId: String?
+
+    /// Flat list of digest IDs in sidebar render order (groups by poll run, sorted by date desc, source asc within group).
+    var renderedDigestIds: [String] {
+        let calendar = Calendar.current
+        var groups: [String: [DigestSummary]] = [:]
+        var groupDates: [String: Date] = [:]
+
+        for digest in digests {
+            let groupKey: String
+            if let pollRunId = digest.pollRunId {
+                groupKey = "run_\(pollRunId)"
+            } else {
+                let components = calendar.dateComponents([.year, .month, .day, .hour], from: digest.publishedAt)
+                groupKey = "time_\(components.year!)_\(components.month!)_\(components.day!)_\(components.hour!)"
+            }
+            groups[groupKey, default: []].append(digest)
+            if let existing = groupDates[groupKey] {
+                groupDates[groupKey] = max(existing, digest.publishedAt)
+            } else {
+                groupDates[groupKey] = digest.publishedAt
+            }
+        }
+
+        return groups.map { (key: $0.key, date: groupDates[$0.key] ?? Date(), digests: $0.value.sorted { $0.source.rawValue < $1.source.rawValue }) }
+            .sorted { $0.date > $1.date }
+            .flatMap { $0.digests.map(\.id) }
+    }
 
     // Digest cache
     private var digestCache: [String: Digest] = [:]
@@ -320,6 +356,95 @@ final class AppState {
 
     var canNavigateNext: Bool {
         currentDigestIndex > 0
+    }
+
+    /// Navigate to the next digest in rendered (visual) order.
+    func navigateToNextRenderedDigest() async {
+        let order = renderedDigestIds
+        guard let currentId = currentDigest?.id,
+              let currentIdx = order.firstIndex(of: currentId),
+              currentIdx + 1 < order.count else { return }
+        let nextId = order[currentIdx + 1]
+        if let flatIdx = digests.firstIndex(where: { $0.id == nextId }) {
+            await navigateToDigest(at: flatIdx)
+        }
+    }
+
+    /// Navigate to the previous digest in rendered (visual) order.
+    func navigateToPreviousRenderedDigest() async {
+        let order = renderedDigestIds
+        guard let currentId = currentDigest?.id,
+              let currentIdx = order.firstIndex(of: currentId),
+              currentIdx > 0 else { return }
+        let prevId = order[currentIdx - 1]
+        if let flatIdx = digests.firstIndex(where: { $0.id == prevId }) {
+            await navigateToDigest(at: flatIdx)
+        }
+    }
+
+    /// Rendered digest group boundaries (list of first digest ID in each group, in rendered order).
+    private var renderedGroupFirstIds: [String] {
+        let calendar = Calendar.current
+        var groups: [String: [DigestSummary]] = [:]
+        var groupDates: [String: Date] = [:]
+
+        for digest in digests {
+            let groupKey: String
+            if let pollRunId = digest.pollRunId {
+                groupKey = "run_\(pollRunId)"
+            } else {
+                let components = calendar.dateComponents([.year, .month, .day, .hour], from: digest.publishedAt)
+                groupKey = "time_\(components.year!)_\(components.month!)_\(components.day!)_\(components.hour!)"
+            }
+            groups[groupKey, default: []].append(digest)
+            if let existing = groupDates[groupKey] {
+                groupDates[groupKey] = max(existing, digest.publishedAt)
+            } else {
+                groupDates[groupKey] = digest.publishedAt
+            }
+        }
+
+        return groups.map { (key: $0.key, date: groupDates[$0.key] ?? Date(), digests: $0.value.sorted { $0.source.rawValue < $1.source.rawValue }) }
+            .sorted { $0.date > $1.date }
+            .compactMap { $0.digests.first?.id }
+    }
+
+    /// Navigate to the first digest of the next group in rendered order.
+    func navigateToNextRenderedGroup() async {
+        let groupStarts = renderedGroupFirstIds
+        let order = renderedDigestIds
+        guard let currentId = currentDigest?.id,
+              let currentIdx = order.firstIndex(of: currentId) else { return }
+
+        // Find the next group start that comes after the current position
+        for startId in groupStarts {
+            guard let startIdx = order.firstIndex(of: startId) else { continue }
+            if startIdx > currentIdx {
+                if let flatIdx = digests.firstIndex(where: { $0.id == startId }) {
+                    await navigateToDigest(at: flatIdx)
+                }
+                return
+            }
+        }
+    }
+
+    /// Navigate to the first digest of the previous group in rendered order.
+    func navigateToPreviousRenderedGroup() async {
+        let groupStarts = renderedGroupFirstIds
+        let order = renderedDigestIds
+        guard let currentId = currentDigest?.id,
+              let currentIdx = order.firstIndex(of: currentId) else { return }
+
+        // Find the previous group start that comes before the current position
+        for startId in groupStarts.reversed() {
+            guard let startIdx = order.firstIndex(of: startId) else { continue }
+            if startIdx < currentIdx {
+                if let flatIdx = digests.firstIndex(where: { $0.id == startId }) {
+                    await navigateToDigest(at: flatIdx)
+                }
+                return
+            }
+        }
     }
 
     // MARK: - Saved Posts

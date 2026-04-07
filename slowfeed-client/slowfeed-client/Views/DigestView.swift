@@ -107,6 +107,27 @@ struct DigestView: View {
     @State private var viewerIndex: Int = 0
     @State private var showViewer = false
     @State private var debugJSON: String?
+    @State private var scrolledPostId: String?
+
+    /// All post IDs in order (including thread replies for Bluesky).
+    private var allPostIds: [String] {
+        guard let posts = digest.posts else { return [] }
+        if digest.source == .bluesky {
+            return posts.flatMap { flattenThread($0) }.map(\.post.postId)
+        } else {
+            return posts.map(\.postId)
+        }
+    }
+
+    /// Top-level post IDs only (skips thread replies). Used for shift+nav and iOS skip button.
+    private var topLevelPostIds: [String] {
+        guard let posts = digest.posts else { return [] }
+        if digest.source == .bluesky {
+            return posts.flatMap { flattenThread($0) }.filter(\.isThreadRoot).map(\.post.postId)
+        } else {
+            return posts.map(\.postId)
+        }
+    }
 
     private func openImageViewer(urls: [URL], index: Int) {
         viewerURLs = urls
@@ -116,49 +137,90 @@ struct DigestView: View {
 
     var body: some View {
         ZStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    // Header: tappable title opens digest in Safari
-                    DigestHeader(digest: digest)
-                        .padding()
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            if let url = URL(string: "\(appState.serverURL)/digest/\(digest.id)") {
-                                openURL(url)
-                            }
-                        }
-                        .contextMenu {
-                            Button {
-                                debugJSON = prettyJSON(digest)
-                            } label: {
-                                Label("Show Raw JSON", systemImage: "curlybraces")
-                            }
-                        }
-
-                    Divider()
-
-                    if let posts = digest.posts, !posts.isEmpty {
-                        VStack(alignment: .leading, spacing: 0) {
-                            if digest.source == .bluesky {
-                                BlueskyThreadedView(posts: posts, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
-                            } else {
-                                ForEach(posts) { post in
-                                    PostView(post: post, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
-                                    Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        // Header: tappable title opens digest in Safari
+                        DigestHeader(digest: digest)
+                            .padding()
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if let url = URL(string: "\(appState.serverURL)/digest/\(digest.id)") {
+                                    openURL(url)
                                 }
                             }
+                            .contextMenu {
+                                Button {
+                                    debugJSON = prettyJSON(digest)
+                                } label: {
+                                    Label("Show Raw JSON", systemImage: "curlybraces")
+                                }
+                            }
+
+                        Divider()
+
+                        if let posts = digest.posts, !posts.isEmpty {
+                            VStack(alignment: .leading, spacing: 0) {
+                                if digest.source == .bluesky {
+                                    BlueskyThreadedView(posts: posts, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
+                                } else {
+                                    ForEach(posts) { post in
+                                        PostView(post: post, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
+                                            .id(post.postId)
+                                        Divider()
+                                    }
+                                }
+                            }
+                        } else {
+                            ContentUnavailableView(
+                                "No Posts",
+                                systemImage: "doc.text",
+                                description: Text("This digest has no posts.")
+                            )
+                            .padding(.top, 40)
                         }
-                    } else {
-                        ContentUnavailableView(
-                            "No Posts",
-                            systemImage: "doc.text",
-                            description: Text("This digest has no posts.")
-                        )
-                        .padding(.top, 40)
+                    }
+                }
+                .scrollPosition(id: $scrolledPostId, anchor: .top)
+                .scrollIndicators(.hidden)
+                .onChange(of: appState.focusedPostId) { _, newId in
+                    guard let newId, appState.keyboardFocusPane == .posts else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(newId, anchor: .top)
                     }
                 }
             }
             .allowsHitTesting(!showViewer)
+
+            // Floating skip button (iOS)
+            #if os(iOS)
+            if !showViewer, let posts = digest.posts, !posts.isEmpty {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button {
+                            navigateTopLevelPost(direction: 1)
+                        } label: {
+                            Image(systemName: "chevron.down")
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.white)
+                                .frame(width: 48, height: 48)
+                                .background(.thinMaterial.opacity(0.9), in: Circle())
+                                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+                        }
+                        .simultaneousGesture(
+                            LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                                navigateTopLevelPost(direction: -1)
+                            }
+                        )
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 20)
+                }
+            }
+            #endif
 
             if showViewer {
                 ImageViewerOverlay(
@@ -173,6 +235,7 @@ struct DigestView: View {
         }
         .focusable()
         .focused($isFocused)
+        .focusEffectDisabled()
         #if os(macOS)
         .onKeyPress { keyPress in
             if showViewer { return .ignored }
@@ -180,6 +243,16 @@ struct DigestView: View {
         }
         #endif
         .onAppear { isFocused = true }
+        .onChange(of: digest.id) {
+            appState.focusedPostId = nil
+        }
+        // Sync scroll position → focused post when user scrolls with mouse
+        .onChange(of: scrolledPostId) { _, newId in
+            guard appState.keyboardFocusPane == .posts, let newId else { return }
+            if allPostIds.contains(newId) {
+                appState.focusedPostId = newId
+            }
+        }
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Digest JSON", json: json)
         }
@@ -187,22 +260,121 @@ struct DigestView: View {
 
     #if os(macOS)
     private func handleKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
+        let shift = keyPress.modifiers.contains(.shift)
+
         switch keyPress.key {
+        case .downArrow, "j":
+            if appState.keyboardFocusPane == .posts {
+                // Shift: skip to next top-level post (skip thread replies)
+                // Normal: navigate all posts including replies
+                return navigatePost(direction: 1, skipThreadReplies: shift)
+            } else {
+                // Shift: skip to next digest group
+                if shift {
+                    Task { await appState.navigateToNextRenderedGroup() }
+                } else {
+                    Task { await appState.navigateToNextRenderedDigest() }
+                }
+                return .handled
+            }
+        case .upArrow, "k":
+            if appState.keyboardFocusPane == .posts {
+                return navigatePost(direction: -1, skipThreadReplies: shift)
+            } else {
+                if shift {
+                    Task { await appState.navigateToPreviousRenderedGroup() }
+                } else {
+                    Task { await appState.navigateToPreviousRenderedDigest() }
+                }
+                return .handled
+            }
         case .leftArrow, "h":
-            if appState.canNavigatePrevious {
-                Task { await appState.navigateToPreviousDigest() }
-                return .handled
-            }
+            appState.keyboardFocusPane = .digests
+            return .handled
         case .rightArrow, "l":
-            if appState.canNavigateNext {
-                Task { await appState.navigateToNextDigest() }
-                return .handled
+            appState.keyboardFocusPane = .posts
+            if appState.focusedPostId == nil, let first = allPostIds.first {
+                appState.focusedPostId = first
             }
-        default: break
+            return .handled
+        default:
+            return .ignored
         }
-        return .ignored
+    }
+
+    private func navigatePost(direction: Int, skipThreadReplies: Bool) -> KeyPress.Result {
+        let ids = skipThreadReplies ? topLevelPostIds : allPostIds
+        guard !ids.isEmpty else { return .ignored }
+
+        // If no post focused yet, start from the first/last
+        guard let currentId = appState.focusedPostId else {
+            appState.focusedPostId = direction > 0 ? ids.first : ids.last
+            return .handled
+        }
+
+        // Find current position in the target list
+        if let currentIdx = ids.firstIndex(of: currentId) {
+            let newIdx = currentIdx + direction
+            guard newIdx >= 0, newIdx < ids.count else { return .ignored }
+            appState.focusedPostId = ids[newIdx]
+        } else {
+            // Current post is a reply and we're in skip mode — find the nearest top-level post
+            let all = allPostIds
+            guard let allIdx = all.firstIndex(of: currentId) else { return .ignored }
+            if direction > 0 {
+                // Find next top-level post after current position
+                if let next = ids.first(where: { topId in
+                    guard let topIdx = all.firstIndex(of: topId) else { return false }
+                    return topIdx > allIdx
+                }) {
+                    appState.focusedPostId = next
+                } else { return .ignored }
+            } else {
+                // Find previous top-level post before current position
+                if let prev = ids.last(where: { topId in
+                    guard let topIdx = all.firstIndex(of: topId) else { return false }
+                    return topIdx < allIdx
+                }) {
+                    appState.focusedPostId = prev
+                } else { return .ignored }
+            }
+        }
+        return .handled
     }
     #endif
+
+    /// Navigate to next/previous top-level post (used by iOS floating button)
+    func navigateTopLevelPost(direction: Int) {
+        let ids = topLevelPostIds
+        guard !ids.isEmpty else { return }
+
+        guard let currentId = appState.focusedPostId ?? scrolledPostId else {
+            appState.focusedPostId = direction > 0 ? ids.first : ids.last
+            return
+        }
+
+        // Find nearest top-level post in the given direction
+        let all = allPostIds
+        if let currentIdx = all.firstIndex(of: currentId) {
+            if direction > 0 {
+                if let next = ids.first(where: { topId in
+                    guard let topIdx = all.firstIndex(of: topId) else { return false }
+                    return topIdx > currentIdx
+                }) {
+                    appState.focusedPostId = next
+                }
+            } else {
+                if let prev = ids.last(where: { topId in
+                    guard let topIdx = all.firstIndex(of: topId) else { return false }
+                    return topIdx < currentIdx
+                }) {
+                    appState.focusedPostId = prev
+                }
+            }
+        } else {
+            appState.focusedPostId = direction > 0 ? ids.first : ids.last
+        }
+    }
 }
 
 // MARK: - Digest Header
@@ -302,6 +474,7 @@ struct BlueskyThreadedView: View {
                 Divider()
             }
             BlueskyFlatPostRow(item: item, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+                .id(item.post.postId)
             if !item.isThreadRoot {
                 Divider()
                     .padding(.leading, CGFloat(min(item.depth, 4)) * 18)
@@ -563,8 +736,20 @@ struct PostView: View {
             }
         }
         .padding()
+        .background(appState.focusedPostId == post.postId && appState.keyboardFocusPane == .posts
+                     ? Color.accentColor.opacity(0.08)
+                     : Color.clear)
+        .overlay(alignment: .leading) {
+            if appState.focusedPostId == post.postId && appState.keyboardFocusPane == .posts {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(width: 3)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
+            appState.focusedPostId = post.postId
+            appState.keyboardFocusPane = .posts
             if let url = postURL { openURL(url) }
         }
         .contextMenu {

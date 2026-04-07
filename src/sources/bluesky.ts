@@ -195,72 +195,47 @@ async function buildThreadTree(
 }
 
 /**
- * Get the root postId of a thread tree (the top-level post).
+ * Recursively merge an incoming thread tree into an existing one.
+ * Walks both trees in parallel, matching children by postId.
+ * New children are inserted; existing children are merged recursively.
  */
-function getRootPostId(post: DigestPost): string {
-  return post.postId;
-}
+function mergeIntoTree(existing: DigestPost, incoming: DigestPost): void {
+  if (!incoming.replies) return;
 
-/**
- * Collect all descendant posts from a tree (excluding the root).
- */
-function collectReplies(post: DigestPost): DigestPost[] {
-  const result: DigestPost[] = [];
-  if (post.replies) {
-    for (const reply of post.replies) {
-      result.push(reply);
-      // Recurse into deeper replies
-      if (reply.replies) {
-        result.push(...collectReplies(reply));
+  for (const incomingReply of incoming.replies) {
+    const existingReply = existing.replies?.find(r => r.postId === incomingReply.postId);
+
+    if (existingReply) {
+      // Same post exists at this level — recurse to merge their children
+      mergeIntoTree(existingReply, incomingReply);
+    } else {
+      // New reply at this level — add it
+      if (!existing.replies) {
+        existing.replies = [incomingReply];
+      } else {
+        existing.replies.push(incomingReply);
       }
     }
   }
-  return result;
 }
 
 /**
  * Merge digest posts that share the same root postId.
- * - Standalone post + thread with same root → keep the thread
- * - Multiple threads with same root → merge their reply chains
+ * Each buildThreadTree call produces a linear chain (root → ... → leaf).
+ * This merges overlapping chains into a proper tree by matching nodes at each depth.
  */
 function mergeThreadsByRoot(posts: DigestPost[]): DigestPost[] {
   const rootMap = new Map<string, DigestPost>();
   const order: string[] = [];
 
   for (const post of posts) {
-    const rootId = getRootPostId(post);
+    const rootId = post.postId;
 
     if (!rootMap.has(rootId)) {
       rootMap.set(rootId, post);
       order.push(rootId);
     } else {
-      // Merge: keep the existing root node, add new replies
-      const existing = rootMap.get(rootId)!;
-      const newReplies = collectReplies(post);
-
-      if (newReplies.length > 0) {
-        // Add replies that aren't already in the existing tree
-        const existingReplyIds = new Set(collectReplies(existing).map(r => r.postId));
-        const uniqueNewReplies = newReplies.filter(r => !existingReplyIds.has(r.postId));
-
-        if (uniqueNewReplies.length > 0) {
-          // Attach new replies at the appropriate depth
-          // Find the deepest single-child chain and add as siblings
-          let node = existing;
-          while (node.replies && node.replies.length === 1 && node.replies[0].replies) {
-            node = node.replies[0];
-          }
-          if (!node.replies) {
-            node.replies = uniqueNewReplies;
-          } else {
-            node.replies = [...node.replies, ...uniqueNewReplies];
-          }
-        }
-      }
-      // If existing had no replies but new does, the new tree is better
-      else if (!existing.replies && post.replies) {
-        rootMap.set(rootId, post);
-      }
+      mergeIntoTree(rootMap.get(rootId)!, post);
     }
   }
 

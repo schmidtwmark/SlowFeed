@@ -71,9 +71,8 @@ struct DigestSidebar: View {
             get: { appState.currentDigest?.id },
             set: { id in
                 if let id, let index = appState.digests.firstIndex(where: { $0.id == id }) {
-                    Task {
-                        await appState.navigateToDigest(at: index)
-                    }
+                    appState.keyboardFocusPane = .posts
+                    Task { await appState.navigateToDigest(at: index) }
                 }
             }
         )) {
@@ -114,7 +113,7 @@ struct DigestSidebar: View {
                     }
                 )) {
                     ForEach(group.digests) { digest in
-                        DigestRow(digest: digest)
+                        DigestRow(digest: digest, isSelected: appState.currentDigest?.id == digest.id)
                             .tag(digest.id)
                     }
                 } header: {
@@ -133,9 +132,6 @@ struct DigestSidebar: View {
             }
         }
         .listStyle(.sidebar)
-        #if os(macOS)
-        .tint(.secondary)
-        #endif
         .navigationTitle("Slowfeed")
         .refreshable {
             await appState.refreshDigests()
@@ -208,6 +204,7 @@ struct DigestGroup: Identifiable {
 
 struct DigestRow: View {
     let digest: DigestSummary
+    var isSelected: Bool = false
     @State private var debugJSON: String?
 
     var body: some View {
