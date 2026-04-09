@@ -67,13 +67,6 @@ export interface PostLink {
   imageUrl?: string;
 }
 
-/** A comment on a post (Reddit) */
-export interface PostComment {
-  author: string;
-  body: string;
-  score: number;
-}
-
 /** An embedded object (Discord embeds, quote posts) */
 export interface PostEmbed {
   type: 'quote' | 'link_card';
@@ -96,7 +89,6 @@ export interface PostMetadata {
   // Reddit
   score?: number;
   subreddit?: string;
-  numComments?: number;
 
   // YouTube
   videoId?: string;
@@ -130,7 +122,6 @@ export interface DigestPost {
   metadata?: PostMetadata;
   media?: PostMedia[];         // Images, videos, files
   links?: PostLink[];          // External link cards
-  comments?: PostComment[];    // Top comments (Reddit)
   embeds?: PostEmbed[];        // Quoted posts, Discord embeds
   replies?: DigestPost[];      // Child posts in thread (Bluesky)
   quotedPost?: DigestPost;     // Inline quoted post (Bluesky)

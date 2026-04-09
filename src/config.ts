@@ -13,8 +13,6 @@ export interface Config {
   reddit_enabled: boolean;
   reddit_cookies: string;
   reddit_top_n: number;
-  reddit_include_comments: boolean;
-  reddit_comment_depth: number;
   discord_enabled: boolean;
   discord_token: string;
   discord_channels: string;
@@ -41,8 +39,6 @@ const DEFAULT_CONFIG: Config = {
   reddit_enabled: false,
   reddit_cookies: '',
   reddit_top_n: 30,
-  reddit_include_comments: true,
-  reddit_comment_depth: 3,
   discord_enabled: false,
   discord_token: '',
   discord_channels: '[]',

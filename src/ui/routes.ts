@@ -460,8 +460,6 @@ export function createUiRouter(): Router {
         'reddit_enabled',
         'reddit_cookies',
         'reddit_top_n',
-        'reddit_include_comments',
-        'reddit_comment_depth',
         'discord_enabled',
         'discord_token',
         'discord_channels',
@@ -1469,13 +1467,6 @@ function buildDigestPageHtml(
       border-left-color: #0085ff;
       background: rgba(0, 133, 255, 0.08);
       color: var(--text);
-    }
-
-    /* Comment sections */
-    article.post h4 {
-      margin: 12px 0 8px;
-      font-size: 0.9375rem;
-      color: var(--text-muted);
     }
 
     /* Content overflow prevention */

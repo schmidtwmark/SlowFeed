@@ -1,8 +1,8 @@
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
-import type { DigestPost, PostMedia, PostLink, PostComment } from '../types/index.js';
+import type { DigestPost, PostMedia, PostLink } from '../types/index.js';
 
-const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
 interface RedditPost {
   id: string;
@@ -13,7 +13,6 @@ interface RedditPost {
   permalink: string;
   selftext: string;
   score: number;
-  numComments: number;
   createdUtc: number;
   thumbnail: string | null;
   isSelf: boolean;
@@ -21,12 +20,6 @@ interface RedditPost {
   isVideo: boolean;
   isGallery: boolean;
   previewUrl: string | null;
-}
-
-interface RedditComment {
-  author: string;
-  body: string;
-  score: number;
 }
 
 function getRedditCookies(): string {
@@ -88,7 +81,6 @@ function extractPosts(html: string): RedditPost[] {
     const urlMatch = openingTag.match(/data-url="([^"]+)"/);
     const permalinkMatch = openingTag.match(/data-permalink="([^"]+)"/);
     const scoreMatch = openingTag.match(/data-score="([^"]+)"/);
-    const commentsMatch = openingTag.match(/data-comments-count="([^"]+)"/);
     const timestampMatch = openingTag.match(/data-timestamp="([^"]+)"/);
 
     if (!idMatch) continue;
@@ -99,7 +91,6 @@ function extractPosts(html: string): RedditPost[] {
     const postUrl = urlMatch ? urlMatch[1] : '';
     const permalink = permalinkMatch ? permalinkMatch[1] : `/r/${subreddit}/comments/${id}`;
     const score = scoreMatch ? parseInt(scoreMatch[1], 10) || 0 : 0;
-    const numComments = commentsMatch ? parseInt(commentsMatch[1], 10) || 0 : 0;
     const timestamp = timestampMatch ? parseInt(timestampMatch[1], 10) : Date.now();
 
     // Extract title from the thing block
@@ -145,7 +136,6 @@ function extractPosts(html: string): RedditPost[] {
       permalink: `https://reddit.com${permalink}`,
       selftext: '',
       score,
-      numComments,
       createdUtc: timestamp / 1000,
       thumbnail: null,
       isSelf,
@@ -157,39 +147,6 @@ function extractPosts(html: string): RedditPost[] {
   }
 
   return posts;
-}
-
-function extractComments(html: string, maxComments: number): RedditComment[] {
-  const comments: RedditComment[] = [];
-
-  // Find comment entries
-  const commentAreaMatch = html.match(/<div class="commentarea">([\s\S]*?)(<div class="footer-parent">|$)/i);
-  if (!commentAreaMatch) return comments;
-
-  const commentArea = commentAreaMatch[1];
-
-  // Match individual comments
-  const commentRegex = /<div[^>]*class="[^"]*comment[^"]*"[^>]*data-author="([^"]+)"[^>]*>[\s\S]*?<div class="md"[^>]*>([\s\S]*?)<\/div>/gi;
-
-  let match;
-  while ((match = commentRegex.exec(commentArea)) !== null && comments.length < maxComments) {
-    const author = match[1];
-    const bodyHtml = match[2];
-
-    if (author === '[deleted]') continue;
-
-    // Clean up body
-    const body = bodyHtml
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (body && body.length > 5) {
-      comments.push({ author, body, score: 0 });
-    }
-  }
-
-  return comments;
 }
 
 interface RedditPostJson {
@@ -350,29 +307,6 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
   }
 }
 
-async function fetchPostWithComments(permalink: string, commentDepth: number): Promise<{ selftext: string; comments: RedditComment[] }> {
-  try {
-    const html = await fetchPage(permalink);
-
-    // Extract selftext
-    let selftext = '';
-    const selftextMatch = html.match(/<div class="usertext-body"[^>]*>[\s\S]*?<div class="md"[^>]*>([\s\S]*?)<\/div>/i);
-    if (selftextMatch) {
-      selftext = selftextMatch[1]
-        .replace(/<[^>]+>/g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-    }
-
-    const comments = extractComments(html, commentDepth * 3);
-
-    return { selftext, comments };
-  } catch (err) {
-    logger.warn(`Failed to fetch comments for ${permalink}:`, err);
-    return { selftext: '', comments: [] };
-  }
-}
-
 function decodeHtmlEntities(text: string): string {
   return text
     .replace(/&lt;/g, '<')
@@ -434,7 +368,6 @@ export async function pollReddit(): Promise<DigestPost[]> {
     for (const post of topPosts) {
       const media: PostMedia[] = [];
       const links: PostLink[] = [];
-      let postComments: PostComment[] = [];
       let content = '';
 
       // Fetch JSON data for rich content (galleries, videos, selftext)
@@ -484,25 +417,8 @@ export async function pollReddit(): Promise<DigestPost[]> {
         content = plainText;
       }
 
-      // Fetch comments if enabled
-      if (config.reddit_include_comments && post.numComments > 0) {
-        const { comments } = await fetchPostWithComments(
-          post.permalink,
-          config.reddit_comment_depth
-        );
-
-        postComments = comments.map(c => ({
-          author: c.author,
-          body: c.body,
-          score: c.score,
-        }));
-
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } else {
-        // Small delay even without comments to avoid rate limiting on JSON fetch
-        await new Promise(resolve => setTimeout(resolve, 300));
-      }
+      // Small delay to avoid rate limiting on JSON fetch
+      await new Promise(resolve => setTimeout(resolve, 300));
 
       // Non-self link posts: add to links array
       if (!post.isSelf && !post.isImage && !post.isVideo && !post.isGallery && post.url) {
@@ -525,11 +441,9 @@ export async function pollReddit(): Promise<DigestPost[]> {
         metadata: {
           score: post.score,
           subreddit: post.subreddit,
-          numComments: post.numComments,
         },
         ...(media.length > 0 ? { media } : {}),
         ...(links.length > 0 ? { links } : {}),
-        ...(postComments.length > 0 ? { comments: postComments } : {}),
       });
     }
 

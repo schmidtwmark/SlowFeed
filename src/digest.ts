@@ -219,22 +219,6 @@ function renderLinks(post: DigestPost): string {
   }).join('\n');
 }
 
-function renderComments(post: DigestPost): string {
-  if (!post.comments || post.comments.length === 0) return '';
-  const parts: string[] = [];
-  parts.push('<h4 style="margin: 16px 0 8px 0; font-size: 14px; color: #666;">Top Comments</h4>');
-  for (const c of post.comments) {
-    parts.push(`<div style="border-left: 3px solid #ff4500; padding: 8px 12px; margin: 8px 0; background: #fafafa;">`);
-    parts.push(`<div style="font-size: 13px; color: #666; margin-bottom: 4px;">`);
-    parts.push(`<strong style="color: #0066cc;">u/${esc(c.author)}</strong>`);
-    if (c.score !== 0) parts.push(` · ${c.score} points`);
-    parts.push(`</div>`);
-    parts.push(`<div style="line-height: 1.5;">${esc(c.body)}</div>`);
-    parts.push(`</div>`);
-  }
-  return parts.join('\n');
-}
-
 function renderEmbeds(post: DigestPost): string {
   if (!post.embeds || post.embeds.length === 0) return '';
   return post.embeds.map(embed => {
@@ -293,7 +277,6 @@ function renderRedditPost(post: DigestPost): string {
     meta.push(`<a href="https://reddit.com/user/${esc(cleanAuthor)}">u/${esc(cleanAuthor)}</a>`);
   }
   if (post.metadata?.score !== undefined) meta.push(`${post.metadata.score} points`);
-  if (post.metadata?.numComments !== undefined) meta.push(`${post.metadata.numComments} comments`);
   if (meta.length > 0) parts.push(`<p><small>${meta.join(' · ')}</small></p>`);
 
   parts.push(`<h3><a href="${esc(post.url)}">${esc(post.title)}</a></h3>`);
@@ -302,7 +285,6 @@ function renderRedditPost(post: DigestPost): string {
 
   parts.push(renderMedia(post));
   parts.push(renderLinks(post));
-  parts.push(renderComments(post));
   parts.push('</article>');
   return parts.join('\n');
 }
