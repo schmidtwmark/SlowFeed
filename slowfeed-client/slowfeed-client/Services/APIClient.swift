@@ -221,7 +221,7 @@ final class APIClient {
     }
 
     func getDigest(id: String) async throws -> Digest {
-        try await request("/api/digests/\(id)")
+        try await request("/api/digests/\(id)?format=json")
     }
 
     func markAsRead(digestId: String) async throws {

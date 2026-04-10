@@ -147,8 +147,7 @@ struct SettingsView: View {
 struct GeneralSettingsView: View {
     @Environment(AppState.self) private var appState
 
-    @State private var feedTitle = ""
-    @State private var feedTtlDays = 14
+    @State private var digestRetentionDays = 14
     @State private var isSaving = false
     @State private var message: String?
     @State private var hasLoaded = false
@@ -161,11 +160,11 @@ struct GeneralSettingsView: View {
                 }
             } else {
                 Section {
-                    TextField("Feed Title", text: $feedTitle)
-
-                    Stepper("Feed TTL: \(feedTtlDays) days", value: $feedTtlDays, in: 1...90)
+                    Stepper("Keep digests for \(digestRetentionDays) days", value: $digestRetentionDays, in: 1...90)
                 } header: {
-                    Text("Feed Settings")
+                    Text("Digest Retention")
+                } footer: {
+                    Text("Digests older than this are automatically deleted.")
                 }
 
                 Section {
@@ -199,8 +198,7 @@ struct GeneralSettingsView: View {
 
     private func loadConfig() {
         guard let config = appState.config else { return }
-        feedTitle = config.feedTitle
-        feedTtlDays = config.feedTtlDays
+        digestRetentionDays = config.feedTtlDays
     }
 
     private func save() {
@@ -210,8 +208,7 @@ struct GeneralSettingsView: View {
         Task {
             do {
                 try await appState.saveConfig([
-                    "feed_title": feedTitle,
-                    "feed_ttl_days": feedTtlDays
+                    "feed_ttl_days": digestRetentionDays
                 ])
                 await MainActor.run {
                     message = "Saved!"

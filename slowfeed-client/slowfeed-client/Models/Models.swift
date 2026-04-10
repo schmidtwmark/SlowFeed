@@ -204,7 +204,6 @@ struct AppConfig: Codable, Equatable {
     var discordChannels: [String]
     var discordTopN: Int
 
-    var feedTitle: String
     var feedTtlDays: Int
 
     enum CodingKeys: String, CodingKey {
@@ -223,7 +222,6 @@ struct AppConfig: Codable, Equatable {
         case discordToken = "discord_token"
         case discordChannels = "discord_channels"
         case discordTopN = "discord_top_n"
-        case feedTitle = "feed_title"
         case feedTtlDays = "feed_ttl_days"
     }
 
@@ -250,7 +248,6 @@ struct AppConfig: Codable, Equatable {
         discordChannels = (try? container.decode([String].self, forKey: .discordChannels)) ?? []
         discordTopN = (try? container.decode(Int.self, forKey: .discordTopN)) ?? 20
 
-        feedTitle = (try? container.decode(String.self, forKey: .feedTitle)) ?? "Slowfeed"
         feedTtlDays = (try? container.decode(Int.self, forKey: .feedTtlDays)) ?? 14
     }
 }
