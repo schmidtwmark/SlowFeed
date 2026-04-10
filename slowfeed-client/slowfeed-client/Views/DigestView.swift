@@ -502,14 +502,8 @@ private struct BlueskyFlatPostRow: View {
                         .padding(.horizontal, 8)
                 }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                PostView(post: item.post, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-
-                // Inline quoted post
-                if let quoted = item.post.quotedPost {
-                    QuotedPostBubble(post: quoted, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-                        .padding(.horizontal)
-                }
+            VStack(alignment: .leading, spacing: 0) {
+                PostView(post: item.post, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage, quotedPost: item.post.quotedPost)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -591,6 +585,7 @@ struct PostView: View {
     var digestId: String?
     var imageNamespace: Namespace.ID?
     var onSelectImage: (([URL], Int) -> Void)?
+    var quotedPost: DigestPost?
 
     @Environment(\.openURL) private var openURL
     @Environment(AppState.self) private var appState
@@ -708,6 +703,11 @@ struct PostView: View {
                 ForEach(Array(embeds.enumerated()), id: \.offset) { _, embed in
                     EmbedView(embed: embed)
                 }
+            }
+
+            // Inline quoted post
+            if let quoted = quotedPost {
+                QuotedPostBubble(post: quoted, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
             }
 
             // Comments
