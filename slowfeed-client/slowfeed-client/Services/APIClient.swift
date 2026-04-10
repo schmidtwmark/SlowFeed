@@ -221,7 +221,7 @@ final class APIClient {
     }
 
     func getDigest(id: String) async throws -> Digest {
-        try await request("/api/digests/\(id)?format=json")
+        try await request("/api/digests/\(id)")
     }
 
     func markAsRead(digestId: String) async throws {
@@ -296,6 +296,36 @@ final class APIClient {
 
     func getSchedules() async throws -> [PollSchedule] {
         try await request("/api/schedules")
+    }
+
+    func createSchedule(_ input: ScheduleInput) async throws -> PollSchedule {
+        let body = try encoder.encode(input)
+        return try await request("/api/schedules", method: "POST", body: body)
+    }
+
+    func updateSchedule(id: Int, _ input: ScheduleInput) async throws -> PollSchedule {
+        let body = try encoder.encode(input)
+        return try await request("/api/schedules/\(id)", method: "PUT", body: body)
+    }
+
+    func deleteSchedule(id: Int) async throws {
+        try await requestVoid("/api/schedules/\(id)", method: "DELETE")
+    }
+
+    func runSchedule(id: Int) async throws {
+        try await requestVoid("/api/schedules/\(id)/run", method: "POST")
+    }
+
+    // MARK: - Log Endpoints
+
+    func getLogs(limit: Int? = nil) async throws -> [LogEntry] {
+        var endpoint = "/api/logs"
+        if let limit { endpoint += "?limit=\(limit)" }
+        return try await request(endpoint)
+    }
+
+    func clearLogs() async throws {
+        try await requestVoid("/api/logs/clear", method: "POST")
     }
 
     // MARK: - Passkey Endpoints

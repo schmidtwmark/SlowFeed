@@ -1,11 +1,5 @@
 import SwiftUI
 
-#if os(macOS)
-import AppKit
-#else
-import UIKit
-#endif
-
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
 
@@ -37,6 +31,16 @@ struct SettingsView: View {
                     Label("Discord", systemImage: "message")
                 }
 
+            ScheduleSettingsView()
+                .tabItem {
+                    Label("Schedules", systemImage: "calendar.badge.clock")
+                }
+
+            ServerLogsView()
+                .tabItem {
+                    Label("Logs", systemImage: "doc.text")
+                }
+
             PasskeySettingsView()
                 .tabItem {
                     Label("Passkeys", systemImage: "key")
@@ -52,7 +56,7 @@ struct SettingsView: View {
                     Label("App", systemImage: "wrench")
                 }
         }
-        .frame(width: 500, height: 400)
+        .frame(width: 550, height: 450)
         .task {
             await appState.loadConfig()
         }
@@ -90,6 +94,20 @@ struct SettingsView: View {
                         SourceSettingsView(source: .discord)
                     } label: {
                         Label("Discord", systemImage: "message")
+                    }
+                }
+
+                Section("Server") {
+                    NavigationLink {
+                        ScheduleSettingsView()
+                    } label: {
+                        Label("Schedules", systemImage: "calendar.badge.clock")
+                    }
+
+                    NavigationLink {
+                        ServerLogsView()
+                    } label: {
+                        Label("Server Logs", systemImage: "doc.text")
                     }
                 }
 
@@ -131,7 +149,6 @@ struct GeneralSettingsView: View {
 
     @State private var feedTitle = ""
     @State private var feedTtlDays = 14
-    @State private var feedToken = ""
     @State private var isSaving = false
     @State private var message: String?
     @State private var hasLoaded = false
@@ -149,31 +166,6 @@ struct GeneralSettingsView: View {
                     Stepper("Feed TTL: \(feedTtlDays) days", value: $feedTtlDays, in: 1...90)
                 } header: {
                     Text("Feed Settings")
-                }
-
-                Section {
-                    HStack {
-                        TextField("Token", text: .constant(feedToken))
-                            .textSelection(.enabled)
-                            #if os(macOS)
-                            .textFieldStyle(.plain)
-                            #endif
-
-                        Button("Copy") {
-                            #if os(macOS)
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(feedToken, forType: .string)
-                            #else
-                            UIPasteboard.general.string = feedToken
-                            #endif
-                        }
-                    }
-
-                    Text("Add ?token=\(feedToken) to your feed URLs")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } header: {
-                    Text("Feed Token")
                 }
 
                 Section {
@@ -209,7 +201,6 @@ struct GeneralSettingsView: View {
         guard let config = appState.config else { return }
         feedTitle = config.feedTitle
         feedTtlDays = config.feedTtlDays
-        feedToken = config.feedToken
     }
 
     private func save() {
@@ -650,6 +641,437 @@ struct AppSettingsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("App Settings")
+    }
+}
+
+// MARK: - Schedule Settings
+
+struct ScheduleSettingsView: View {
+    @Environment(AppState.self) private var appState
+
+    @State private var schedules: [PollSchedule] = []
+    @State private var isLoading = true
+    @State private var editingSchedule: PollSchedule?
+    @State private var isCreating = false
+    @State private var error: String?
+
+    var body: some View {
+        Form {
+            Section {
+                if isLoading {
+                    ProgressView()
+                } else if schedules.isEmpty {
+                    Text("No schedules configured")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(schedules) { schedule in
+                        ScheduleRow(schedule: schedule, onEdit: {
+                            editingSchedule = schedule
+                        }, onRun: {
+                            await runSchedule(schedule)
+                        }, onDelete: {
+                            await deleteSchedule(schedule)
+                        })
+                    }
+                }
+            } header: {
+                Text("Poll Schedules")
+            }
+
+            if let error {
+                Section {
+                    Text(error)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Section {
+                Button("New Schedule") {
+                    isCreating = true
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Schedules")
+        .task {
+            await loadSchedules()
+        }
+        .sheet(isPresented: $isCreating) {
+            ScheduleEditorView(schedule: nil) {
+                await loadSchedules()
+            }
+        }
+        .sheet(item: $editingSchedule) { schedule in
+            ScheduleEditorView(schedule: schedule) {
+                await loadSchedules()
+            }
+        }
+    }
+
+    private func loadSchedules() async {
+        do {
+            let loaded = try await appState.apiClient.getSchedules()
+            await MainActor.run {
+                schedules = loaded
+                isLoading = false
+                error = nil
+            }
+        } catch {
+            await MainActor.run {
+                self.error = error.localizedDescription
+                isLoading = false
+            }
+        }
+    }
+
+    private func runSchedule(_ schedule: PollSchedule) async {
+        do {
+            try await appState.apiClient.runSchedule(id: schedule.id)
+        } catch {
+            await MainActor.run {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private func deleteSchedule(_ schedule: PollSchedule) async {
+        do {
+            try await appState.apiClient.deleteSchedule(id: schedule.id)
+            await loadSchedules()
+        } catch {
+            await MainActor.run {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+}
+
+struct ScheduleRow: View {
+    let schedule: PollSchedule
+    let onEdit: () -> Void
+    let onRun: () async -> Void
+    let onDelete: () async -> Void
+
+    @State private var isRunning = false
+
+    private static let dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(schedule.name)
+                    .fontWeight(.medium)
+
+                Spacer()
+
+                if schedule.enabled {
+                    Text("Active")
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.green.opacity(0.2))
+                        .foregroundStyle(.green)
+                        .clipShape(Capsule())
+                } else {
+                    Text("Disabled")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 4) {
+                Text(schedule.daysOfWeek.sorted().map { Self.dayNames[$0] }.joined(separator: ", "))
+                Text("at \(schedule.timeOfDay)")
+                Text("(\(schedule.timezone))")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            HStack(spacing: 4) {
+                Text("Sources:")
+                Text(schedule.sources.map(\.displayName).joined(separator: ", "))
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                Button("Edit") { onEdit() }
+                    .buttonStyle(.borderless)
+
+                Button {
+                    isRunning = true
+                    Task {
+                        await onRun()
+                        isRunning = false
+                    }
+                } label: {
+                    if isRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Run Now")
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(isRunning)
+
+                Button("Delete", role: .destructive) {
+                    Task { await onDelete() }
+                }
+                .buttonStyle(.borderless)
+            }
+            .font(.caption)
+            .padding(.top, 2)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct ScheduleEditorView: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+
+    let schedule: PollSchedule?
+    let onSave: () async -> Void
+
+    @State private var name = ""
+    @State private var timeOfDay = "08:00"
+    @State private var timezone = TimeZone.current.identifier
+    @State private var selectedDays: Set<Int> = [1, 2, 3, 4, 5] // Mon-Fri
+    @State private var selectedSources: Set<SourceType> = [.reddit, .bluesky]
+    @State private var enabled = true
+    @State private var isSaving = false
+    @State private var error: String?
+
+    private static let dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Name", text: $name)
+                    TextField("Time (HH:MM)", text: $timeOfDay)
+                    TextField("Timezone", text: $timezone)
+                    Toggle("Enabled", isOn: $enabled)
+                }
+
+                Section("Days") {
+                    ForEach(0..<7, id: \.self) { day in
+                        Toggle(Self.dayNames[day], isOn: Binding(
+                            get: { selectedDays.contains(day) },
+                            set: { isOn in
+                                if isOn { selectedDays.insert(day) }
+                                else { selectedDays.remove(day) }
+                            }
+                        ))
+                    }
+                }
+
+                Section("Sources") {
+                    ForEach(SourceType.allCases) { source in
+                        Toggle(source.displayName, isOn: Binding(
+                            get: { selectedSources.contains(source) },
+                            set: { isOn in
+                                if isOn { selectedSources.insert(source) }
+                                else { selectedSources.remove(source) }
+                            }
+                        ))
+                    }
+                }
+
+                if let error {
+                    Section {
+                        Text(error).foregroundStyle(.red)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle(schedule == nil ? "New Schedule" : "Edit Schedule")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { save() }
+                        .disabled(isSaving || name.isEmpty)
+                }
+            }
+        }
+        .onAppear {
+            if let schedule {
+                name = schedule.name
+                timeOfDay = schedule.timeOfDay
+                timezone = schedule.timezone
+                selectedDays = Set(schedule.daysOfWeek)
+                selectedSources = Set(schedule.sources)
+                enabled = schedule.enabled
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 400, minHeight: 500)
+        #endif
+    }
+
+    private func save() {
+        isSaving = true
+        error = nil
+
+        let input = ScheduleInput(
+            name: name,
+            days_of_week: selectedDays.sorted(),
+            time_of_day: timeOfDay,
+            timezone: timezone,
+            sources: selectedSources.sorted { $0.rawValue < $1.rawValue },
+            enabled: enabled
+        )
+
+        Task {
+            do {
+                if let schedule {
+                    _ = try await appState.apiClient.updateSchedule(id: schedule.id, input)
+                } else {
+                    _ = try await appState.apiClient.createSchedule(input)
+                }
+                await onSave()
+                await MainActor.run { dismiss() }
+            } catch {
+                await MainActor.run {
+                    self.error = error.localizedDescription
+                    isSaving = false
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Server Logs
+
+struct ServerLogsView: View {
+    @Environment(AppState.self) private var appState
+
+    @State private var logs: [LogEntry] = []
+    @State private var isLoading = true
+    @State private var autoRefresh = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Toggle("Auto-refresh", isOn: $autoRefresh)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+
+                Spacer()
+
+                Button("Clear") {
+                    Task {
+                        try? await appState.apiClient.clearLogs()
+                        await loadLogs()
+                    }
+                }
+                .disabled(logs.isEmpty)
+
+                Button {
+                    Task { await loadLogs() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            if isLoading {
+                Spacer()
+                ProgressView()
+                Spacer()
+            } else if logs.isEmpty {
+                Spacer()
+                Text("No logs")
+                    .foregroundStyle(.secondary)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(logs) { entry in
+                            LogEntryRow(entry: entry)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 4)
+                }
+                .font(.system(.caption, design: .monospaced))
+            }
+        }
+        .navigationTitle("Server Logs")
+        .task {
+            await loadLogs()
+        }
+        .task(id: autoRefresh) {
+            guard autoRefresh else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled else { return }
+                await loadLogs()
+            }
+        }
+    }
+
+    private func loadLogs() async {
+        do {
+            let loaded = try await appState.apiClient.getLogs(limit: 200)
+            await MainActor.run {
+                logs = loaded
+                isLoading = false
+            }
+        } catch {
+            await MainActor.run {
+                isLoading = false
+            }
+        }
+    }
+}
+
+struct LogEntryRow: View {
+    let entry: LogEntry
+
+    private var levelColor: Color {
+        switch entry.level.lowercased() {
+        case "error": return .red
+        case "warn": return .orange
+        case "info": return .blue
+        case "debug": return .secondary
+        default: return .primary
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(entry.level.uppercased())
+                .foregroundStyle(levelColor)
+                .frame(width: 44, alignment: .leading)
+
+            Text(formatTimestamp(entry.timestamp))
+                .foregroundStyle(.secondary)
+                .frame(width: 70, alignment: .leading)
+
+            Text(entry.message)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 1)
+    }
+
+    private func formatTimestamp(_ ts: String) -> String {
+        // Show just HH:MM:SS from ISO timestamp
+        if let tIndex = ts.firstIndex(of: "T"),
+           let dotIndex = ts.firstIndex(of: ".") ?? ts.firstIndex(of: "Z") {
+            return String(ts[ts.index(after: tIndex)..<dotIndex])
+        }
+        return ts
     }
 }
 

@@ -206,7 +206,6 @@ struct AppConfig: Codable, Equatable {
 
     var feedTitle: String
     var feedTtlDays: Int
-    var feedToken: String
 
     enum CodingKeys: String, CodingKey {
         case blueskyEnabled = "bluesky_enabled"
@@ -226,7 +225,6 @@ struct AppConfig: Codable, Equatable {
         case discordTopN = "discord_top_n"
         case feedTitle = "feed_title"
         case feedTtlDays = "feed_ttl_days"
-        case feedToken = "feed_token"
     }
 
     init(from decoder: Decoder) throws {
@@ -254,7 +252,6 @@ struct AppConfig: Codable, Equatable {
 
         feedTitle = (try? container.decode(String.self, forKey: .feedTitle)) ?? "Slowfeed"
         feedTtlDays = (try? container.decode(Int.self, forKey: .feedTtlDays)) ?? 14
-        feedToken = (try? container.decode(String.self, forKey: .feedToken)) ?? ""
     }
 }
 
@@ -278,6 +275,27 @@ struct PollSchedule: Codable, Identifiable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
+}
+
+// MARK: - Schedule Input
+
+struct ScheduleInput: Codable {
+    var name: String
+    var days_of_week: [Int]
+    var time_of_day: String
+    var timezone: String
+    var sources: [SourceType]
+    var enabled: Bool
+}
+
+// MARK: - Log Models
+
+struct LogEntry: Codable, Identifiable {
+    let timestamp: String
+    let level: String
+    let message: String
+
+    var id: String { "\(timestamp)-\(message.prefix(50))" }
 }
 
 // MARK: - Auth Models
