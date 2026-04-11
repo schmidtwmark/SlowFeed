@@ -112,6 +112,7 @@ async function fetchPage(url: string): Promise<string> {
 
 function extractVideos(html: string): YouTubeVideo[] {
   const videos: YouTubeVideo[] = [];
+  const seenIds = new Set<string>();
 
   // YouTube embeds video data in a JSON object within the page
   // Look for ytInitialData which contains all the video information
@@ -181,7 +182,8 @@ function extractVideos(html: string): YouTubeVideo[] {
         const lockupViewModel = content?.lockupViewModel;
         if (lockupViewModel) {
           const videoId = lockupViewModel.contentId;
-          if (!videoId) continue;
+          if (!videoId || seenIds.has(videoId)) continue;
+          seenIds.add(videoId);
 
           // Extract from lockupViewModel structure
           const lockupMetadata = lockupViewModel.metadata?.lockupMetadataViewModel;
@@ -215,7 +217,8 @@ function extractVideos(html: string): YouTubeVideo[] {
         if (!videoRenderer) continue;
 
         const videoId = videoRenderer.videoId;
-        if (!videoId) continue;
+        if (!videoId || seenIds.has(videoId)) continue;
+        seenIds.add(videoId);
 
         // Extract video details
         const title = videoRenderer.title?.runs?.[0]?.text ||
@@ -311,6 +314,32 @@ function extractVideosFromHtml(html: string): YouTubeVideo[] {
   return videos;
 }
 
+/**
+ * Parse a relative time string like "2 hours ago", "1 day ago", "3 weeks ago"
+ * into an approximate Date. Returns current time if unparseable.
+ */
+function parseRelativeTime(text: string): Date {
+  if (!text) return new Date();
+
+  const match = text.match(/(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago/i);
+  if (!match) return new Date();
+
+  const amount = parseInt(match[1], 10);
+  const unit = match[2].toLowerCase();
+
+  const now = new Date();
+  switch (unit) {
+    case 'second': now.setSeconds(now.getSeconds() - amount); break;
+    case 'minute': now.setMinutes(now.getMinutes() - amount); break;
+    case 'hour': now.setHours(now.getHours() - amount); break;
+    case 'day': now.setDate(now.getDate() - amount); break;
+    case 'week': now.setDate(now.getDate() - amount * 7); break;
+    case 'month': now.setMonth(now.getMonth() - amount); break;
+    case 'year': now.setFullYear(now.getFullYear() - amount); break;
+  }
+  return now;
+}
+
 function decodeHtmlEntities(text: string): string {
   return text
     .replace(/&lt;/g, '<')
@@ -378,7 +407,7 @@ export async function pollYouTube(): Promise<DigestPost[]> {
         content: '',
         url: video.url,
         author: video.channel,
-        publishedAt: new Date(), // YouTube doesn't give exact timestamps in the HTML
+        publishedAt: parseRelativeTime(video.publishedText),
         rawJson: video,
         metadata: {
           avatarUrl: video.channelIcon || undefined,

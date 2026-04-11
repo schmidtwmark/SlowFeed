@@ -1,11 +1,9 @@
 import 'dotenv/config';
 import express from 'express';
 import compression from 'compression';
-import path from 'path';
 import { initDb } from './db.js';
 import { loadConfig } from './config.js';
-import { createFeedRouter } from './feed.js';
-import { createUiRouter } from './ui/routes.js';
+import { createApiRouter } from './ui/routes.js';
 import { startScheduler } from './scheduler.js';
 import { initYouTubeState } from './sources/youtube.js';
 import { logger } from './logger.js';
@@ -43,16 +41,18 @@ async function main() {
   const app = express();
 
   // Middleware
-  app.use(compression()); // Compress all responses
+  app.use(compression());
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // Serve static files for Web UI
-  app.use(express.static(path.join(process.cwd(), 'src/ui/public')));
+  // Prevent caching of API responses
+  app.use('/api', (_req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
 
-  // Mount main routers
-  app.use(createFeedRouter());
-  app.use(createUiRouter());
+  // Mount API router
+  app.use(createApiRouter());
 
   // Health check endpoint
   app.get('/health', (_req, res) => {
@@ -65,10 +65,7 @@ async function main() {
 
   // Start server
   app.listen(PORT, () => {
-    logger.info(`Slowfeed running on port ${PORT}`);
-    logger.info(`Web UI: http://localhost:${PORT}`);
-    logger.info(`RSS Feed: http://localhost:${PORT}/feed.rss`);
-    logger.info(`Atom Feed: http://localhost:${PORT}/feed.atom`);
+    logger.info(`Slowfeed API running on port ${PORT}`);
   });
 }
 

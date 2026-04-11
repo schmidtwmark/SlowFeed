@@ -239,6 +239,9 @@ export async function pollDiscord(): Promise<DigestPost[]> {
     try {
       const messages = await fetchMessages(channel.channelId, topN);
 
+      // Discord API returns newest first — reverse to chronological order
+      messages.reverse();
+
       for (const message of messages) {
         const authorName = message.author.global_name || message.author.username;
         const preview = getMessagePreview(message);
