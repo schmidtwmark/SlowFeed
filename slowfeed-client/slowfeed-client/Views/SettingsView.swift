@@ -1062,11 +1062,28 @@ struct LogEntryRow: View {
         .padding(.vertical, 1)
     }
 
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        f.timeZone = .current
+        return f
+    }()
+
     private func formatTimestamp(_ ts: String) -> String {
-        // Show just HH:MM:SS from ISO timestamp
-        if let tIndex = ts.firstIndex(of: "T"),
-           let dotIndex = ts.firstIndex(of: ".") ?? ts.firstIndex(of: "Z") {
-            return String(ts[ts.index(after: tIndex)..<dotIndex])
+        if let date = Self.isoFormatter.date(from: ts) {
+            return Self.timeFormatter.string(from: date)
+        }
+        // Retry without fractional seconds
+        let fallback = ISO8601DateFormatter()
+        fallback.formatOptions = [.withInternetDateTime]
+        if let date = fallback.date(from: ts) {
+            return Self.timeFormatter.string(from: date)
         }
         return ts
     }

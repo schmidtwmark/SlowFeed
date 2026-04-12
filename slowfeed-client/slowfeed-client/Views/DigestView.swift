@@ -306,9 +306,13 @@ struct DigestView: View {
         let ids = skipThreadReplies ? topLevelPostIds : allPostIds
         guard !ids.isEmpty else { return .ignored }
 
-        // If no post focused yet, start from the first/last
+        // If no post focused yet, start from whatever is currently visible
         guard let currentId = appState.focusedPostId else {
-            appState.focusedPostId = direction > 0 ? ids.first : ids.last
+            if let visible = scrolledPostId, ids.contains(visible) {
+                appState.focusedPostId = visible
+            } else {
+                appState.focusedPostId = direction > 0 ? ids.first : ids.last
+            }
             return .handled
         }
 
@@ -475,10 +479,6 @@ struct BlueskyThreadedView: View {
             }
             BlueskyFlatPostRow(item: item, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
                 .id(item.post.postId)
-            if !item.isThreadRoot {
-                Divider()
-                    .padding(.leading, CGFloat(min(item.depth, 4)) * 18)
-            }
         }
         Divider()
     }
@@ -497,7 +497,7 @@ private struct BlueskyFlatPostRow: View {
             if item.depth > 0 {
                 ForEach(0..<min(item.depth, 4), id: \.self) { _ in
                     Rectangle()
-                        .fill(Color.blue.opacity(0.3))
+                        .fill(Color.secondary.opacity(0.3))
                         .frame(width: 2)
                         .padding(.horizontal, 8)
                 }
