@@ -12,6 +12,12 @@ final class HTTPLogger {
         didSet { UserDefaults.standard.set(isEnabled, forKey: "httpLoggingEnabled") }
     }
 
+    private static var storageURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("com.markschmidt.slowfeed-client", isDirectory: true)
+            .appendingPathComponent("http_logs.json")
+    }
+
     private init() {
         // Default to enabled if never set
         if UserDefaults.standard.object(forKey: "httpLoggingEnabled") == nil {
@@ -19,6 +25,7 @@ final class HTTPLogger {
         } else {
             isEnabled = UserDefaults.standard.bool(forKey: "httpLoggingEnabled")
         }
+        loadFromDisk()
     }
 
     func log(
@@ -52,6 +59,7 @@ final class HTTPLogger {
             if entries.count > 200 {
                 entries = Array(entries.prefix(200))
             }
+            saveToDisk()
         }
 
         logger.debug("\(method) \(url.absoluteString) → \(responseStatus) (\(String(format: "%.0f", duration * 1000))ms)")
@@ -60,6 +68,36 @@ final class HTTPLogger {
     @MainActor
     func clear() {
         entries.removeAll()
+        saveToDisk()
+    }
+
+    private func saveToDisk() {
+        let entriesToSave = entries
+        Task.detached(priority: .utility) {
+            do {
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                let data = try encoder.encode(entriesToSave)
+                let url = Self.storageURL
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                logger.error("Failed to save HTTP logs: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func loadFromDisk() {
+        let url = Self.storageURL
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            entries = try decoder.decode([HTTPLogEntry].self, from: data)
+        } catch {
+            logger.error("Failed to load HTTP logs: \(error.localizedDescription)")
+        }
     }
 
     private func formatBody(_ data: Data?) -> String? {
@@ -83,7 +121,7 @@ final class HTTPLogger {
     }
 }
 
-struct HTTPLogEntry: Identifiable {
+struct HTTPLogEntry: Identifiable, Codable {
     let id: UUID
     let timestamp: Date
     let method: String

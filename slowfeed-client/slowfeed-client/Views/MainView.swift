@@ -76,31 +76,6 @@ struct DigestSidebar: View {
                 }
             }
         )) {
-            // Status row
-            Section {
-                HStack(spacing: 8) {
-                    if appState.isRefreshing {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Refreshing...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if let lastDate = appState.digests.first?.publishedAt {
-                        Image(systemName: "checkmark.circle")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                        Text("Last: \(lastDate.formatted(.relative(presentation: .named)))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Text("\(appState.digests.count) digests")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .listRowBackground(Color.clear)
-            }
-
             ForEach(groupedDigests) { group in
                 Section(isExpanded: Binding(
                     get: { appState.expandedGroups.contains(group.id) },
@@ -132,10 +107,38 @@ struct DigestSidebar: View {
             }
         }
         .listStyle(.sidebar)
+        #if os(macOS)
         .navigationTitle("Slowfeed")
+        .navigationSubtitle(lastUpdatedText)
+        #else
+        .navigationTitle("Slowfeed")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 1) {
+                    Text("Slowfeed")
+                        .font(.headline)
+                    if !lastUpdatedText.isEmpty {
+                        Text(lastUpdatedText)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        #endif
         .refreshable {
             await appState.refreshDigests()
         }
+    }
+
+    private var lastUpdatedText: String {
+        if appState.isRefreshing {
+            return "Refreshing..."
+        } else if let lastDate = appState.digests.first?.publishedAt {
+            return "Last: \(lastDate.formatted(.relative(presentation: .named)))"
+        }
+        return ""
     }
 
     // MARK: - Grouping Logic

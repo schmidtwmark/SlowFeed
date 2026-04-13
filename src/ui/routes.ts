@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { loadConfig, getConfig, setConfigValues, Config } from '../config.js';
 import { query } from '../db.js';
-import { triggerMainPoll, triggerSourcePoll, triggerSchedulePoll, restartScheduler, getPollStatus, getScheduleStatus } from '../scheduler.js';
+import { triggerMainPoll, triggerSourcePoll, triggerTestPoll, triggerSchedulePoll, restartScheduler, getPollStatus, getScheduleStatus } from '../scheduler.js';
 import { getAllSchedules, createSchedule, updateSchedule, deleteSchedule, validateScheduleInput, getNextRunTime } from '../schedules.js';
 import { testBlueskyConnection, pollBluesky } from '../sources/bluesky.js';
 import { testDiscordConnection, fetchGuilds, fetchChannels, pollDiscord } from '../sources/discord.js';
@@ -522,8 +522,31 @@ export function createApiRouter(): Router {
 
       res.json({ success: true });
     } catch (err) {
-      logger.error('Error triggering poll:', err);
-      res.status(500).json({ error: 'Failed to trigger poll' });
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      logger.error(`Error triggering poll: ${message}`);
+      if (stack) logger.error(stack);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // Test poll (dry run) - returns posts without persisting
+  router.post('/api/poll/test', async (req, res) => {
+    try {
+      const source = (req.query.source || req.body?.source) as string;
+
+      if (!source || !['reddit', 'bluesky', 'youtube', 'discord'].includes(source)) {
+        res.status(400).json({ error: 'Valid source parameter required (reddit, bluesky, youtube, discord)' });
+        return;
+      }
+
+      const posts = await triggerTestPoll(source as SourceType);
+      res.json({ source, postCount: posts.length, posts });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      logger.error(`Test poll failed: ${message}`, { stack });
+      res.status(500).json({ error: message, stack });
     }
   });
 

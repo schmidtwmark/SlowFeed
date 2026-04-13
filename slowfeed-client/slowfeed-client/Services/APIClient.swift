@@ -102,6 +102,7 @@ final class APIClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = method
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         if let sessionId {
@@ -385,6 +386,10 @@ final class APIClient {
             endpoint += "?source=\(source.rawValue)"
         }
         try await requestVoid(endpoint, method: "POST")
+    }
+
+    func testPoll(source: SourceType) async throws -> TestPollResponse {
+        try await request("/api/poll/test?source=\(source.rawValue)", method: "POST")
     }
 
     // MARK: - Stats

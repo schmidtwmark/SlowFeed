@@ -67,22 +67,37 @@ export async function createDigest(
 
   const content = '';
 
-  await query(
-    `INSERT INTO digest_items (id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW(), NOW())
-     ON CONFLICT (id) DO UPDATE SET
-       content = $6,
-       post_count = $7,
-       post_ids = $8,
-       posts_json = $9::jsonb,
-       poll_run_id = $4`,
-    [
-      digestId, source, scheduleId ?? null, pollRunId ?? null,
-      title, content.replace(/\u0000/g, ''), posts.length, postIds,
-      // Stringify manually to strip null bytes that PostgreSQL JSONB rejects
-      JSON.stringify(postsJson).replace(/\u0000/g, ''),
-    ]
-  );
+  // Serialize posts to JSON, stripping null bytes that PostgreSQL JSONB rejects
+  const postsJsonStr = JSON.stringify(postsJson).replace(/\u0000/g, '').replace(/\\u0000/g, '');
+
+  try {
+    await query(
+      `INSERT INTO digest_items (id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW(), NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         content = $6,
+         post_count = $7,
+         post_ids = $8,
+         posts_json = $9::jsonb,
+         poll_run_id = $4`,
+      [
+        digestId, source, scheduleId ?? null, pollRunId ?? null,
+        title, content.replace(/\u0000/g, '').replace(/\\u0000/g, ''), posts.length, postIds,
+        postsJsonStr,
+      ]
+    );
+  } catch (err) {
+    const jsonSize = postsJsonStr.length;
+    const preview = postsJsonStr.substring(0, 500);
+    logger.error(`Failed to insert digest ${digestId} for ${source} (${posts.length} posts, JSON size: ${jsonSize} bytes)`);
+    logger.error(`JSON preview: ${preview}...`);
+    logger.error(`Post IDs: ${postIds.join(', ')}`);
+    if (err instanceof Error) {
+      logger.error(`Database error: ${err.message}`);
+      if (err.stack) logger.error(err.stack);
+    }
+    throw err;
+  }
 
   logger.info(`Created ${source} digest with ${posts.length} items: ${digestId}`);
 

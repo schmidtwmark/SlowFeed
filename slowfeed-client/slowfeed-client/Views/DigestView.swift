@@ -140,15 +140,8 @@ struct DigestView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        // Header: tappable title opens digest in Safari
                         DigestHeader(digest: digest)
                             .padding()
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if let url = URL(string: "\(appState.serverURL)/digest/\(digest.id)") {
-                                    openURL(url)
-                                }
-                            }
                             .contextMenu {
                                 Button {
                                     debugJSON = prettyJSON(digest)
@@ -163,6 +156,8 @@ struct DigestView: View {
                             VStack(alignment: .leading, spacing: 0) {
                                 if digest.source == .bluesky {
                                     BlueskyThreadedView(posts: posts, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
+                                } else if digest.source == .reddit || digest.source == .discord {
+                                    GroupedPostsView(posts: posts, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
                                 } else {
                                     ForEach(posts) { post in
                                         PostView(post: post, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
@@ -256,6 +251,12 @@ struct DigestView: View {
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Digest JSON", json: json)
         }
+        .navigationTitle(digest.source.displayName)
+        #if os(macOS)
+        .navigationSubtitle(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
+        #else
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
     }
 
     #if os(macOS)
@@ -387,29 +388,10 @@ struct DigestHeader: View {
     let digest: Digest
 
     var body: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(digest.title)
-                    .font(.title2)
-                    .fontWeight(.semibold)
-
-                HStack(spacing: 12) {
-                    SourceBadge(source: digest.source)
-
-                    if digest.isRead {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            Spacer()
-
-            Text(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
+        Text(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -435,6 +417,71 @@ struct SourceBadge: View {
         case .bluesky: return .blue
         case .youtube: return .red
         case .discord: return .purple
+        }
+    }
+}
+
+// MARK: - Grouped Posts View (Reddit by subreddit, Discord by channel)
+
+private struct PostGroup: Identifiable {
+    let name: String
+    let posts: [DigestPost]
+    var id: String { name }
+}
+
+struct GroupedPostsView: View {
+    let posts: [DigestPost]
+    var source: SourceType
+    var digestId: String?
+    var imageNamespace: Namespace.ID?
+    var onSelectImage: (([URL], Int) -> Void)?
+
+    private var groups: [PostGroup] {
+        var groupMap: [(key: String, posts: [DigestPost])] = []
+        var seen: [String: Int] = [:]
+
+        for post in posts {
+            let groupName: String
+            if source == .reddit {
+                groupName = post.metadata?.subreddit.map { "r/\($0)" } ?? "Other"
+            } else {
+                // Discord: group by channel name
+                groupName = post.metadata?.channelName ?? "General"
+            }
+
+            if let idx = seen[groupName] {
+                groupMap[idx].posts.append(post)
+            } else {
+                seen[groupName] = groupMap.count
+                groupMap.append((key: groupName, posts: [post]))
+            }
+        }
+
+        return groupMap.map { PostGroup(name: $0.key, posts: source == .discord ? $0.posts.sorted { ($0.publishedAt ?? .distantPast) < ($1.publishedAt ?? .distantPast) } : $0.posts) }
+    }
+
+    var body: some View {
+        ForEach(groups) { group in
+            // Section header
+            HStack {
+                Text(group.name)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(group.posts.count)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal)
+            .padding(.top, 16)
+            .padding(.bottom, 4)
+
+            ForEach(group.posts) { post in
+                PostView(post: post, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+                    .id(post.postId)
+                Divider()
+            }
         }
     }
 }

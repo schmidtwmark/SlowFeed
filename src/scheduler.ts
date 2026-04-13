@@ -175,10 +175,12 @@ async function runScheduledPoll(schedule: PollSchedule): Promise<PollRun | null>
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
+        const stack = err instanceof Error ? err.stack : undefined;
         if (sourceStatus) {
           sourceStatus.lastError = errorMessage;
         }
-        logger.error(`${source} poll failed:`, err);
+        logger.error(`${source} poll failed: ${errorMessage}`);
+        if (stack) logger.error(`${source} poll stack trace: ${stack}`);
         hasError = true;
       } finally {
         if (sourceStatus) {
@@ -367,16 +369,36 @@ export async function triggerSourcePoll(source: SourceType, pollRunId?: number):
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
     if (sourceStatus) {
       sourceStatus.lastError = errorMessage;
     }
-    logger.error(`${source} poll failed:`, err);
+    logger.error(`${source} poll failed: ${errorMessage}`);
+    if (stack) logger.error(`${source} poll stack trace: ${stack}`);
     throw err;
   } finally {
     if (sourceStatus) {
       sourceStatus.isPolling = false;
     }
   }
+}
+
+// Test/dry-run: poll a source and return posts without persisting anything
+export async function triggerTestPoll(source: SourceType): Promise<DigestPost[]> {
+  logger.info(`Test poll triggered for: ${source}`);
+
+  const pollFn = getSourcePollFn(source);
+  const posts = await pollFn();
+
+  const notificationFn = getNotificationPollFn(source);
+  let notifications: DigestPost[] = [];
+  if (notificationFn) {
+    notifications = await notificationFn();
+  }
+
+  const allPosts = [...posts, ...notifications];
+  logger.info(`Test poll for ${source}: ${allPosts.length} posts fetched (not persisted)`);
+  return allPosts;
 }
 
 // Manual trigger: poll all enabled sources

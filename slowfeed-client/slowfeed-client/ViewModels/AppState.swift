@@ -223,6 +223,7 @@ final class AppState {
             let loadedDigests = try await apiClient.getDigests(source: selectedSource)
             await MainActor.run {
                 digests = loadedDigests
+                digestCache = [:]
                 expandDigestGroups()
                 isRefreshing = false
             }

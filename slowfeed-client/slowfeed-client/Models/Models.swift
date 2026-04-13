@@ -161,6 +161,14 @@ struct PostMetadata: Codable {
     let parentUri: String?
 }
 
+// MARK: - Test Poll Response
+
+struct TestPollResponse: Codable {
+    let source: SourceType
+    let postCount: Int
+    let posts: [DigestPost]
+}
+
 // MARK: - Saved Posts
 
 struct SavedPostGroup: Codable, Identifiable {

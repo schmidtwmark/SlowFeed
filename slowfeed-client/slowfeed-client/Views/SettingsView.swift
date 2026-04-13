@@ -241,6 +241,9 @@ struct SourceSettingsView: View {
     @State private var isSaving = false
     @State private var message: String?
     @State private var hasLoaded = false
+    @State private var isTestRunning = false
+    @State private var testRunResult: Digest?
+    @State private var testRunError: String?
 
     var body: some View {
         Form {
@@ -275,7 +278,51 @@ struct SourceSettingsView: View {
                             .foregroundStyle(message.contains("Error") ? .red : .green)
                     }
                 }
+
+                Section {
+                    Button {
+                        runTestPoll()
+                    } label: {
+                        HStack {
+                            Label("Test Run", systemImage: "play.circle")
+                            Spacer()
+                            if isTestRunning {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+                    .disabled(isTestRunning)
+
+                    if let testRunError {
+                        Text(testRunError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                } footer: {
+                    Text("Polls this source and shows results without saving anything.")
+                }
             }
+        }
+        .sheet(item: $testRunResult) { digest in
+            NavigationStack {
+                DigestView(digest: digest)
+                    .environment(appState)
+                    .navigationTitle("Test Run — \(source.displayName)")
+                    #if os(macOS)
+                    .navigationSubtitle("\(digest.postCount) posts")
+                    #else
+                    .navigationBarTitleDisplayMode(.inline)
+                    #endif
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { testRunResult = nil }
+                        }
+                    }
+            }
+            #if os(macOS)
+            .frame(minWidth: 700, minHeight: 500)
+            #endif
         }
         .formStyle(.grouped)
         .navigationTitle(source.displayName)
@@ -441,6 +488,36 @@ struct SourceSettingsView: View {
                 await MainActor.run {
                     message = "Error: \(error.localizedDescription)"
                     isSaving = false
+                }
+            }
+        }
+    }
+
+    private func runTestPoll() {
+        isTestRunning = true
+        testRunError = nil
+        Task {
+            do {
+                let response = try await appState.apiClient.testPoll(source: source)
+                let digest = Digest(
+                    id: "test_\(source.rawValue)_\(Date().timeIntervalSince1970)",
+                    source: source,
+                    title: "Test Run",
+                    postCount: response.postCount,
+                    postIds: response.posts.map(\.postId),
+                    publishedAt: Date(),
+                    createdAt: Date(),
+                    readAt: nil,
+                    posts: response.posts
+                )
+                await MainActor.run {
+                    testRunResult = digest
+                    isTestRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    testRunError = error.localizedDescription
+                    isTestRunning = false
                 }
             }
         }
