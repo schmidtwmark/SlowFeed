@@ -90,6 +90,7 @@ final class AppState {
     // Digest cache
     private var digestCache: [String: Digest] = [:]
     private var preloadTask: Task<Void, Never>?
+    private var scrollPositionTask: Task<Void, Never>?
 
     // Saved posts
     var savedPostIds: Set<String> = []
@@ -116,6 +117,12 @@ final class AppState {
         }
 
         setupServices()
+
+        apiClient.onUnauthorized = { [weak self] in
+            guard let self, self.currentScreen == .main else { return }
+            self.currentScreen = .authentication
+            self.sessionId = nil
+        }
     }
 
     // MARK: - Initialization
@@ -315,6 +322,18 @@ final class AppState {
                     readAt: Date()
                 )
             }
+        }
+    }
+
+    // MARK: - Scroll Position
+
+    /// Debounced save of scroll position to server
+    func saveScrollPosition(digestId: String, postId: String) {
+        scrollPositionTask?.cancel()
+        scrollPositionTask = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            try? await apiClient.updateScrollPosition(digestId: digestId, postId: postId)
         }
     }
 

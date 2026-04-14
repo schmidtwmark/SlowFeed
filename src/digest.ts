@@ -67,8 +67,14 @@ export async function createDigest(
 
   const content = '';
 
-  // Serialize posts to JSON, stripping null bytes that PostgreSQL JSONB rejects
-  const postsJsonStr = JSON.stringify(postsJson).replace(/\u0000/g, '').replace(/\\u0000/g, '');
+  // Serialize posts to JSON, stripping characters that PostgreSQL JSONB rejects:
+  // - Null bytes (\u0000)
+  // - Lone surrogates (\uD800-\uDFFF)
+  const postsJsonStr = JSON.stringify(postsJson)
+    .replace(/\u0000/g, '')
+    .replace(/\\u0000/g, '')
+    .replace(/[\uD800-\uDFFF]/g, '')
+    .replace(/\\u[dD][89a-fA-F][0-9a-fA-F]{2}/g, '');
 
   try {
     await query(
@@ -112,6 +118,7 @@ export async function createDigest(
     published_at: new Date(),
     created_at: new Date(),
     read_at: null,
+    last_read_post_id: null,
   };
 }
 
@@ -150,7 +157,7 @@ function parsePostsJson(raw: unknown): DigestItem['posts_json'] {
 
 export async function getDigestItems(source?: SourceType): Promise<DigestItem[]> {
   let sql = `
-    SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at, read_at
+    SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at, read_at, last_read_post_id
     FROM digest_items
   `;
   const params: string[] = [];
@@ -174,12 +181,13 @@ export async function getDigestItems(source?: SourceType): Promise<DigestItem[]>
     published_at: row.published_at,
     created_at: row.created_at,
     read_at: row.read_at,
+    last_read_post_id: row.last_read_post_id,
   }));
 }
 
 export async function getDigestById(id: string): Promise<DigestItem | null> {
   const { rows } = await query<DigestItemRow>(
-    `SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at, read_at
+    `SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at, read_at, last_read_post_id
      FROM digest_items WHERE id = $1`,
     [id]
   );
@@ -199,6 +207,7 @@ export async function getDigestById(id: string): Promise<DigestItem | null> {
     published_at: row.published_at,
     created_at: row.created_at,
     read_at: row.read_at,
+    last_read_post_id: row.last_read_post_id,
   };
 }
 
@@ -206,6 +215,14 @@ export async function markDigestAsRead(id: string): Promise<boolean> {
   const result = await query(
     `UPDATE digest_items SET read_at = NOW() WHERE id = $1 AND read_at IS NULL`,
     [id]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+export async function updateScrollPosition(id: string, postId: string): Promise<boolean> {
+  const result = await query(
+    `UPDATE digest_items SET last_read_post_id = $2 WHERE id = $1`,
+    [id, postId]
   );
   return (result.rowCount ?? 0) > 0;
 }

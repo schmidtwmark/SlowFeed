@@ -508,6 +508,7 @@ struct SourceSettingsView: View {
                     publishedAt: Date(),
                     createdAt: Date(),
                     readAt: nil,
+                    lastReadPostId: nil,
                     posts: response.posts
                 )
                 await MainActor.run {

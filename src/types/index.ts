@@ -104,6 +104,7 @@ export interface PostMetadata {
   replyToMessageId?: string;
 
   // Bluesky
+  displayName?: string;
   repostedBy?: string;
   rootUri?: string;
   parentUri?: string;
@@ -140,6 +141,7 @@ export interface DigestItem {
   published_at: Date;
   created_at: Date;
   read_at: Date | null;          // When the digest was marked as read
+  last_read_post_id: string | null; // Last visible post for scroll position persistence
 }
 
 export interface DigestItemInput {
@@ -174,4 +176,5 @@ export interface DigestItemRow {
   published_at: Date;
   created_at: Date;
   read_at: Date | null;
+  last_read_post_id: string | null;
 }

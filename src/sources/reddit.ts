@@ -281,12 +281,13 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
 
     if (redditVideo?.fallback_url) {
       videoUrl = redditVideo.fallback_url;
-      // CMAF format (CMAF_480.mp4) has embedded audio — no separate track needed
-      // DASH format (DASH_720.mp4) needs a separate audio track
+      // Both DASH and CMAF formats need a separate audio track
       if (/DASH_\d+/.test(videoUrl)) {
-        const audioUrl = videoUrl.replace(/DASH_\d+\.mp4/, 'DASH_AUDIO_128.mp4')
+        videoAudioUrl = videoUrl.replace(/DASH_\d+\.mp4/, 'DASH_AUDIO_128.mp4')
           .replace(/DASH_\d+\?/, 'DASH_AUDIO_128?');
-        videoAudioUrl = audioUrl;
+      } else if (/CMAF_\d+/.test(videoUrl)) {
+        videoAudioUrl = videoUrl.replace(/CMAF_\d+\.mp4/, 'CMAF_AUDIO_64.mp4')
+          .replace(/CMAF_\d+\?/, 'CMAF_AUDIO_64?');
       }
     }
 

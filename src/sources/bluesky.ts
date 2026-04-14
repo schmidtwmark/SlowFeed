@@ -133,6 +133,8 @@ function postViewToNode(post: AppBskyFeedDefs.PostView, repostedBy?: string): Di
   const quotedView = extractQuotedPostView(post.embed);
   const quotedPost = quotedView ? postViewToNode(quotedView) : undefined;
 
+  const displayName = post.author.displayName || undefined;
+
   return {
     postId,
     title: `@${post.author.handle}: ${record.text?.substring(0, 100) || 'Post'}`,
@@ -142,6 +144,7 @@ function postViewToNode(post: AppBskyFeedDefs.PostView, repostedBy?: string): Di
     publishedAt: new Date(post.indexedAt),
     metadata: {
       avatarUrl: post.author.avatar || undefined,
+      displayName,
       repostedBy,
     },
     media: media.length > 0 ? media : undefined,

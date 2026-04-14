@@ -73,6 +73,9 @@ final class APIClient {
         self.baseURL = url
     }
 
+    /// Called when any API request receives a 401 response
+    var onUnauthorized: (() -> Void)?
+
     func setSession(_ sessionId: String?) {
         self.sessionId = sessionId
     }
@@ -138,6 +141,7 @@ final class APIClient {
             }
 
             if httpResponse.statusCode == 401 {
+                Task { @MainActor in self.onUnauthorized?() }
                 throw APIError.unauthorized
             }
 
@@ -231,6 +235,11 @@ final class APIClient {
 
     func markAsUnread(digestId: String) async throws {
         try await requestVoid("/api/digests/\(digestId)/read", method: "DELETE")
+    }
+
+    func updateScrollPosition(digestId: String, postId: String) async throws {
+        let body = try encoder.encode(["postId": postId])
+        try await requestVoid("/api/digests/\(digestId)/scroll-position", method: "PUT", body: body)
     }
 
     // MARK: - Source Endpoints

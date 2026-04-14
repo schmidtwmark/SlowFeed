@@ -8,7 +8,7 @@ import { testDiscordConnection, fetchGuilds, fetchChannels, pollDiscord } from '
 import { pollReddit } from '../sources/reddit.js';
 import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
-import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, getDigestPosts, stripHtml } from '../digest.js';
+import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, updateScrollPosition, getDigestPosts, stripHtml } from '../digest.js';
 import { savePost, unsavePost, getSavedPosts, getSavedPostIds } from '../saved-posts.js';
 import type { ScheduleInput, SourceType, DigestPost } from '../types/index.js';
 import {
@@ -23,19 +23,20 @@ import {
   getWebAuthnConfig,
 } from '../webauthn.js';
 
-// Simple session store (in production, use a proper session store)
-const sessions = new Map<string, { authenticated: boolean; expires: number }>();
+import crypto from 'crypto';
+
+const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 function generateSessionId(): string {
-  return Math.random().toString(36).substring(2) + Date.now().toString(36);
+  return crypto.randomBytes(32).toString('base64url');
 }
 
 function getSessionId(req: Request): string | undefined {
-  // Check header first (API calls from SPA)
+  // Check header first (API calls from native app)
   const headerSession = req.headers['x-session-id'] as string;
   if (headerSession) return headerSession;
 
-  // Check cookie (server-rendered pages visited via browser navigation)
+  // Check cookie
   const cookieHeader = req.headers.cookie;
   if (cookieHeader) {
     const match = cookieHeader.split(';').map(c => c.trim()).find(c => c.startsWith('slowfeed_session='));
@@ -45,20 +46,51 @@ function getSessionId(req: Request): string | undefined {
   return undefined;
 }
 
-function isValidSession(sessionId: string | undefined): boolean {
-  if (!sessionId || !sessions.has(sessionId)) return false;
-  const session = sessions.get(sessionId)!;
-  if (session.authenticated && session.expires > Date.now()) return true;
-  sessions.delete(sessionId);
-  return false;
+async function createSession(): Promise<string> {
+  const sessionId = generateSessionId();
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
+  await query(
+    `INSERT INTO sessions (id, expires_at) VALUES ($1, $2)`,
+    [sessionId, expiresAt]
+  );
+  return sessionId;
+}
+
+async function isValidSession(sessionId: string | undefined): Promise<boolean> {
+  if (!sessionId) return false;
+  const { rows } = await query<{ id: string }>(
+    `SELECT id FROM sessions WHERE id = $1 AND expires_at > NOW()`,
+    [sessionId]
+  );
+  if (rows.length === 0) return false;
+
+  // Sliding expiry: extend session on each valid use
+  await query(
+    `UPDATE sessions SET expires_at = $1 WHERE id = $2`,
+    [new Date(Date.now() + SESSION_DURATION_MS), sessionId]
+  );
+  return true;
+}
+
+async function deleteSession(sessionId: string): Promise<void> {
+  await query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
+}
+
+async function cleanupExpiredSessions(): Promise<void> {
+  await query(`DELETE FROM sessions WHERE expires_at < NOW()`);
 }
 
 function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-  if (isValidSession(getSessionId(req))) {
-    next();
-    return;
-  }
-  res.status(401).json({ error: 'Unauthorized' });
+  const sessionId = getSessionId(req);
+  isValidSession(sessionId).then(valid => {
+    if (valid) {
+      next();
+    } else {
+      res.status(401).json({ error: 'Authentication required' });
+    }
+  }).catch(() => {
+    res.status(401).json({ error: 'Authentication required' });
+  });
 }
 
 export function createApiRouter(): Router {
@@ -98,7 +130,7 @@ export function createApiRouter(): Router {
       // If passkeys already exist, require authentication
       const passkeyExists = await hasPasskeys();
       if (passkeyExists) {
-        if (!isValidSession(getSessionId(req))) {
+        if (!(await isValidSession(getSessionId(req)))) {
           res.status(401).json({ error: 'Authentication required to add a new passkey' });
           return;
         }
@@ -125,7 +157,7 @@ export function createApiRouter(): Router {
       // If passkeys already exist, require authentication
       const passkeyExists = await hasPasskeys();
       if (passkeyExists) {
-        if (!isValidSession(getSessionId(req))) {
+        if (!(await isValidSession(getSessionId(req)))) {
           res.status(401).json({ error: 'Authentication required' });
           return;
         }
@@ -133,18 +165,12 @@ export function createApiRouter(): Router {
 
       await finishRegistration(challengeId, response, name);
 
-      // Create a session for the user
-      const sessionId = generateSessionId();
-      const expiresMs = 24 * 60 * 60 * 1000; // 24 hours
-      sessions.set(sessionId, {
-        authenticated: true,
-        expires: Date.now() + expiresMs,
-      });
+      const sessionId = await createSession();
 
       res.cookie('slowfeed_session', sessionId, {
         httpOnly: true,
         sameSite: 'lax',
-        maxAge: expiresMs,
+        maxAge: SESSION_DURATION_MS,
         path: '/',
       });
       res.json({ success: true, sessionId });
@@ -184,18 +210,12 @@ export function createApiRouter(): Router {
 
       await finishAuthentication(challengeId, response);
 
-      // Create a session
-      const sessionId = generateSessionId();
-      const expiresMs = 24 * 60 * 60 * 1000; // 24 hours
-      sessions.set(sessionId, {
-        authenticated: true,
-        expires: Date.now() + expiresMs,
-      });
+      const sessionId = await createSession();
 
       res.cookie('slowfeed_session', sessionId, {
         httpOnly: true,
         sameSite: 'lax',
-        maxAge: expiresMs,
+        maxAge: SESSION_DURATION_MS,
         path: '/',
       });
       res.json({ success: true, sessionId });
@@ -207,18 +227,19 @@ export function createApiRouter(): Router {
   });
 
   // Logout endpoint
-  router.post('/api/logout', (req, res) => {
+  router.post('/api/logout', async (req, res) => {
     const sid = getSessionId(req);
     if (sid) {
-      sessions.delete(sid);
+      await deleteSession(sid);
     }
     res.clearCookie('slowfeed_session', { path: '/' });
     res.json({ success: true });
   });
 
   // Check auth status
-  router.get('/api/auth/status', (req, res) => {
-    res.json({ authenticated: isValidSession(getSessionId(req)) });
+  router.get('/api/auth/status', async (req, res) => {
+    const valid = await isValidSession(getSessionId(req));
+    res.json({ authenticated: valid });
   });
 
   // Get WebAuthn configuration (for debugging)
@@ -383,6 +404,23 @@ export function createApiRouter(): Router {
     } catch (err) {
       logger.error('Error marking digest as unread:', err);
       res.status(500).json({ error: 'Failed to mark digest as unread' });
+    }
+  });
+
+  // Update scroll position (last read post) for a digest
+  router.put('/api/digests/:id/scroll-position', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { postId } = req.body;
+      if (!postId || typeof postId !== 'string') {
+        res.status(400).json({ error: 'postId is required' });
+        return;
+      }
+      await updateScrollPosition(id, postId);
+      res.json({ success: true });
+    } catch (err) {
+      logger.error('Error updating scroll position:', err);
+      res.status(500).json({ error: 'Failed to update scroll position' });
     }
   });
 

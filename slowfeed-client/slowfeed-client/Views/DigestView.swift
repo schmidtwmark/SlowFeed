@@ -183,6 +183,14 @@ struct DigestView: View {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         proxy.scrollTo(newId, anchor: .top)
                     }
+                    appState.saveScrollPosition(digestId: digest.id, postId: newId)
+                }
+                .onAppear {
+                    // Restore saved scroll position on initial load
+                    if let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
+                        appState.focusedPostId = savedPostId
+                        proxy.scrollTo(savedPostId, anchor: .top)
+                    }
                 }
             }
             .allowsHitTesting(!showViewer)
@@ -240,13 +248,14 @@ struct DigestView: View {
         .onAppear { isFocused = true }
         .onChange(of: digest.id) {
             appState.focusedPostId = nil
+            // Restore saved scroll position
+            if let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
+                appState.focusedPostId = savedPostId
+            }
         }
         // Sync scroll position → focused post when user scrolls with mouse
         .onChange(of: scrolledPostId) { _, newId in
-            guard appState.keyboardFocusPane == .posts, let newId else { return }
-            if allPostIds.contains(newId) {
-                appState.focusedPostId = newId
-            }
+            handleScrollChange(newId)
         }
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Digest JSON", json: json)
@@ -378,6 +387,14 @@ struct DigestView: View {
             }
         } else {
             appState.focusedPostId = direction > 0 ? ids.first : ids.last
+        }
+    }
+
+    private func handleScrollChange(_ newId: String?) {
+        guard appState.keyboardFocusPane == .posts, let newId else { return }
+        if allPostIds.contains(newId) {
+            appState.focusedPostId = newId
+            appState.saveScrollPosition(digestId: digest.id, postId: newId)
         }
     }
 }
@@ -576,7 +593,17 @@ struct QuotedPostBubble: View {
                         .clipShape(Circle())
                         .frame(width: 20, height: 20)
                 }
-                if let author = post.author {
+                if let displayName = post.metadata?.displayName, !displayName.isEmpty {
+                    Text(displayName)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.primary)
+                    if let author = post.author {
+                        Text(author)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let author = post.author {
                     Text(author)
                         .font(.caption)
                         .fontWeight(.medium)
@@ -678,7 +705,19 @@ struct PostView: View {
                     .frame(width: 28, height: 28)
                 }
 
-                if let author = post.author, !author.isEmpty {
+                if let displayName = post.metadata?.displayName, !displayName.isEmpty {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(displayName)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.primary)
+                        if let author = post.author, !author.isEmpty {
+                            Text(author)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else if let author = post.author, !author.isEmpty {
                     Text(author)
                         .font(.subheadline)
                         .fontWeight(.medium)
@@ -1093,7 +1132,7 @@ struct InlineVideoPlayer: View {
         let mainPlayer = AVPlayer(url: videoURL)
 
         if hasSeparateAudio, let audioURL = URL(string: media.audioUrl!) {
-            // Reddit DASH: separate audio track
+            // Reddit DASH/CMAF: separate audio track
             let separateAudioPlayer = AVPlayer(url: audioURL)
             mainPlayer.play()
             separateAudioPlayer.play()
@@ -1111,7 +1150,7 @@ struct InlineVideoPlayer: View {
                 separateAudioPlayer.play()
             }
         } else {
-            // CMAF or standard video — audio is embedded
+            // Standard video — audio is embedded
             mainPlayer.play()
         }
 

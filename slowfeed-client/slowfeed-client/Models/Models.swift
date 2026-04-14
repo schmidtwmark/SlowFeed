@@ -69,6 +69,7 @@ struct Digest: Codable, Identifiable {
     let publishedAt: Date
     let createdAt: Date
     let readAt: Date?
+    let lastReadPostId: String?
     let posts: [DigestPost]?
 
     var isRead: Bool { readAt != nil }
@@ -80,6 +81,7 @@ struct Digest: Codable, Identifiable {
         case publishedAt = "published_at"
         case createdAt = "created_at"
         case readAt = "read_at"
+        case lastReadPostId = "last_read_post_id"
     }
 }
 
@@ -156,6 +158,7 @@ struct PostMetadata: Codable {
     let channelName: String?
     let replyToMessageId: String?
     // Bluesky
+    let displayName: String?
     let repostedBy: String?
     let rootUri: String?
     let parentUri: String?
