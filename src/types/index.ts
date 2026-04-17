@@ -89,6 +89,7 @@ export interface PostMetadata {
   // Reddit
   score?: number;
   subreddit?: string;
+  numComments?: number;
 
   // YouTube
   videoId?: string;

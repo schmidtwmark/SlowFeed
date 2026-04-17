@@ -13,6 +13,9 @@ interface RedditPost {
   permalink: string;
   selftext: string;
   score: number;
+  /** `null` when old.reddit didn't expose a count on the thing; the JSON pass
+   *  fills this in when available. */
+  numComments: number | null;
   createdUtc: number;
   thumbnail: string | null;
   isSelf: boolean;
@@ -82,6 +85,7 @@ function extractPosts(html: string): RedditPost[] {
     const permalinkMatch = openingTag.match(/data-permalink="([^"]+)"/);
     const scoreMatch = openingTag.match(/data-score="([^"]+)"/);
     const timestampMatch = openingTag.match(/data-timestamp="([^"]+)"/);
+    const commentsMatch = openingTag.match(/data-comments-count="([^"]+)"/);
 
     if (!idMatch) continue;
 
@@ -92,6 +96,7 @@ function extractPosts(html: string): RedditPost[] {
     const permalink = permalinkMatch ? permalinkMatch[1] : `/r/${subreddit}/comments/${id}`;
     const score = scoreMatch ? parseInt(scoreMatch[1], 10) || 0 : 0;
     const timestamp = timestampMatch ? parseInt(timestampMatch[1], 10) : Date.now();
+    const numComments = commentsMatch ? parseInt(commentsMatch[1], 10) : null;
 
     // Extract title from the thing block
     const titleMatch = thingBlock.match(/<a[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)<\/a>/i) ||
@@ -136,6 +141,7 @@ function extractPosts(html: string): RedditPost[] {
       permalink: `https://reddit.com${permalink}`,
       selftext: '',
       score,
+      numComments: Number.isFinite(numComments) ? numComments : null,
       createdUtc: timestamp / 1000,
       thumbnail: null,
       isSelf,
@@ -152,9 +158,73 @@ function extractPosts(html: string): RedditPost[] {
 interface RedditPostJson {
   selftextHtml: string;
   galleryImageUrls: string[];
+  /** Per-image captions from media_metadata, parallel to galleryImageUrls. */
+  galleryCaptions: (string | null)[];
   videoUrl: string | null;
   videoAudioUrl: string | null;
   previewUrl: string | null;
+  /** `null` when the JSON didn't include it; otherwise an authoritative count. */
+  numComments: number | null;
+}
+
+/**
+ * Try a list of audio URL candidates derived from the video's fallback_url.
+ * v.redd.it has used several suffixes over the years — DASH_AUDIO_128/64,
+ * CMAF_AUDIO_128/64, and the legacy DASH_audio.mp4 — so we HEAD-probe each.
+ * Returns the first URL that responds 200, or null if none do.
+ */
+async function resolveRedditAudioUrl(
+  videoUrl: string,
+  dashUrl: string | undefined,
+): Promise<string | null> {
+  const candidates: string[] = [];
+  const pushSub = (pattern: RegExp, replacements: string[]) => {
+    if (!pattern.test(videoUrl)) return;
+    for (const r of replacements) {
+      const withExt = videoUrl.replace(pattern, `${r}.mp4`);
+      const noExt = videoUrl.replace(new RegExp(pattern.source.replace('\\.mp4', '') + '(?=\\?|$)'), r);
+      if (!candidates.includes(withExt)) candidates.push(withExt);
+      if (!candidates.includes(noExt) && noExt !== withExt) candidates.push(noExt);
+    }
+  };
+  // DASH format: DASH_720.mp4 → DASH_AUDIO_128.mp4 / DASH_AUDIO_64.mp4 / DASH_audio.mp4
+  pushSub(/DASH_\d+\.mp4/, ['DASH_AUDIO_128', 'DASH_AUDIO_64', 'DASH_audio']);
+  // CMAF format: CMAF_720.mp4 → CMAF_AUDIO_128.mp4 / CMAF_AUDIO_64.mp4
+  pushSub(/CMAF_\d+\.mp4/, ['CMAF_AUDIO_128', 'CMAF_AUDIO_64']);
+
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { method: 'HEAD', headers: { 'User-Agent': USER_AGENT } });
+      if (res.ok) return url;
+    } catch {
+      // network error – try next
+    }
+  }
+
+  // Fallback: parse the DASH manifest for an AdaptationSet with mimeType="audio/*"
+  if (dashUrl) {
+    try {
+      const res = await fetch(dashUrl, { headers: { 'User-Agent': USER_AGENT } });
+      if (res.ok) {
+        const mpd = await res.text();
+        // Extract the audio representation's BaseURL; pick the highest bandwidth.
+        const audioSet = mpd.match(/<AdaptationSet[^>]*mimeType="audio\/[^"]+"[\s\S]*?<\/AdaptationSet>/i);
+        if (audioSet) {
+          const baseMatches = [...audioSet[0].matchAll(/<BaseURL[^>]*>([^<]+)<\/BaseURL>/gi)];
+          if (baseMatches.length > 0) {
+            const base = baseMatches[baseMatches.length - 1][1].trim();
+            const absolute = new URL(base, dashUrl).toString();
+            const probe = await fetch(absolute, { method: 'HEAD', headers: { 'User-Agent': USER_AGENT } });
+            if (probe.ok) return absolute;
+          }
+        }
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  return null;
 }
 
 async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> {
@@ -180,6 +250,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
             selftext_html?: string;
             selftext?: string;
             thumbnail?: string;
+            num_comments?: number;
             preview?: {
               images?: Array<{
                 source?: { url?: string; width?: number; height?: number };
@@ -189,28 +260,36 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
             media_metadata?: Record<string, {
               status: string;
               s?: { u?: string; gif?: string };
+              caption?: string;
             }>;
             gallery_data?: { items: Array<{ media_id: string }> };
             media?: {
               reddit_video?: {
                 fallback_url?: string;
                 dash_url?: string;
+                is_gif?: boolean;
               };
             };
             secure_media?: {
               reddit_video?: {
                 fallback_url?: string;
+                dash_url?: string;
+                is_gif?: boolean;
               };
             };
             crosspost_parent_list?: Array<{
               media?: {
                 reddit_video?: {
                   fallback_url?: string;
+                  dash_url?: string;
+                  is_gif?: boolean;
                 };
               };
               secure_media?: {
                 reddit_video?: {
                   fallback_url?: string;
+                  dash_url?: string;
+                  is_gif?: boolean;
                 };
               };
               preview?: {
@@ -221,6 +300,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
               media_metadata?: Record<string, {
                 status: string;
                 s?: { u?: string; gif?: string };
+                caption?: string;
               }>;
               gallery_data?: { items: Array<{ media_id: string }> };
             }>;
@@ -242,10 +322,18 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
       ? decodeHtmlEntities(postData.selftext_html)
       : '';
 
-    // Extract gallery images
+    // Extract gallery images + per-image captions (Reddit stores these in
+    // media_metadata[id].caption — previously dropped on the floor).
     const galleryImageUrls: string[] = [];
+    const galleryCaptions: (string | null)[] = [];
     const mediaMetadata = postData.media_metadata || crosspost?.media_metadata;
     const galleryData = postData.gallery_data || crosspost?.gallery_data;
+
+    const pushGallery = (url: string, caption: string | undefined) => {
+      galleryImageUrls.push(url.replace(/&amp;/g, '&'));
+      const c = caption?.trim();
+      galleryCaptions.push(c && c.length > 0 ? c : null);
+    };
 
     if (mediaMetadata && galleryData) {
       // Use gallery_data.items for ordering
@@ -253,10 +341,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
         const meta = mediaMetadata[item.media_id];
         if (meta?.status === 'valid' && meta.s) {
           const url = meta.s.gif || meta.s.u;
-          if (url) {
-            // Reddit encodes URLs with &amp; in the JSON
-            galleryImageUrls.push(url.replace(/&amp;/g, '&'));
-          }
+          if (url) pushGallery(url, meta.caption);
         }
       }
     } else if (mediaMetadata) {
@@ -264,14 +349,14 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
       for (const meta of Object.values(mediaMetadata)) {
         if (meta?.status === 'valid' && meta.s) {
           const url = meta.s.gif || meta.s.u;
-          if (url) {
-            galleryImageUrls.push(url.replace(/&amp;/g, '&'));
-          }
+          if (url) pushGallery(url, meta.caption);
         }
       }
     }
 
-    // Extract video URL
+    // Extract video URL. v.redd.it serves video-only DASH/CMAF streams with
+    // audio as a separate file. We probe a few known audio variants to find
+    // one that exists (Reddit uses different suffixes at different times).
     let videoUrl: string | null = null;
     let videoAudioUrl: string | null = null;
     const redditVideo = postData.media?.reddit_video
@@ -281,13 +366,9 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
 
     if (redditVideo?.fallback_url) {
       videoUrl = redditVideo.fallback_url;
-      // Both DASH and CMAF formats need a separate audio track
-      if (/DASH_\d+/.test(videoUrl)) {
-        videoAudioUrl = videoUrl.replace(/DASH_\d+\.mp4/, 'DASH_AUDIO_128.mp4')
-          .replace(/DASH_\d+\?/, 'DASH_AUDIO_128?');
-      } else if (/CMAF_\d+/.test(videoUrl)) {
-        videoAudioUrl = videoUrl.replace(/CMAF_\d+\.mp4/, 'CMAF_AUDIO_64.mp4')
-          .replace(/CMAF_\d+\?/, 'CMAF_AUDIO_64?');
+      const isGif = redditVideo.is_gif === true;
+      if (!isGif) {
+        videoAudioUrl = await resolveRedditAudioUrl(videoUrl, redditVideo.dash_url);
       }
     }
 
@@ -301,7 +382,9 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
       }
     }
 
-    return { selftextHtml, galleryImageUrls, videoUrl, videoAudioUrl, previewUrl };
+    const numComments = typeof postData.num_comments === 'number' ? postData.num_comments : null;
+
+    return { selftextHtml, galleryImageUrls, galleryCaptions, videoUrl, videoAudioUrl, previewUrl, numComments };
   } catch (err) {
     logger.debug(`Failed to fetch post JSON for ${permalink}: ${(err as Error).message}`);
     return null;
@@ -331,6 +414,40 @@ function stripHtmlToPlainText(html: string): string {
     .replace(/<[^>]+>/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/**
+ * Pull inline images out of a self-post's rendered selftext HTML. Reddit
+ * inlines images as `<img>` or `<a href=".../image.jpg">` — we stripHtml
+ * later, so images would otherwise vanish from the post body.
+ */
+function extractImagesFromSelftext(html: string): PostMedia[] {
+  const found: PostMedia[] = [];
+  const seen = new Set<string>();
+
+  const imgRe = /<img\b[^>]*\bsrc=(?:"([^"]+)"|'([^']+)')[^>]*>/gi;
+  for (const m of html.matchAll(imgRe)) {
+    const src = (m[1] ?? m[2])?.replace(/&amp;/g, '&');
+    if (src && !seen.has(src)) {
+      seen.add(src);
+      found.push({ type: 'image', url: src });
+    }
+  }
+
+  // Reddit also commonly produces `<a href="https://i.redd.it/xxx.jpg">...</a>`
+  // with no <img>. Pick those up too.
+  const aRe = /<a\b[^>]*\bhref=(?:"([^"]+)"|'([^']+)')[^>]*>/gi;
+  for (const m of html.matchAll(aRe)) {
+    const href = (m[1] ?? m[2])?.replace(/&amp;/g, '&');
+    if (!href) continue;
+    if (!/\.(?:png|jpe?g|gif|webp)(?:\?|$)/i.test(href)) continue;
+    if (!seen.has(href)) {
+      seen.add(href);
+      found.push({ type: 'image', url: href });
+    }
+  }
+
+  return found;
 }
 
 export async function pollReddit(): Promise<DigestPost[]> {
@@ -374,13 +491,15 @@ export async function pollReddit(): Promise<DigestPost[]> {
       // Fetch JSON data for rich content (galleries, videos, selftext)
       const postJson = await fetchPostJson(post.permalink);
 
-      // Gallery posts: each image becomes a media entry
+      // Gallery posts: each image becomes a media entry. Use Reddit's per-image
+      // caption from media_metadata if present; fall back to a positional label.
       if (post.isGallery && postJson && postJson.galleryImageUrls.length > 0) {
         for (let i = 0; i < postJson.galleryImageUrls.length; i++) {
+          const caption = postJson.galleryCaptions[i];
           media.push({
             type: 'image',
             url: postJson.galleryImageUrls[i],
-            alt: `${post.title} (${i + 1}/${postJson.galleryImageUrls.length})`,
+            alt: caption ?? `${post.title} (${i + 1}/${postJson.galleryImageUrls.length})`,
           });
         }
       } else if (post.isImage) {
@@ -407,9 +526,20 @@ export async function pollReddit(): Promise<DigestPost[]> {
         }
       }
 
-      // Selftext: convert HTML to plain text, truncate if needed
+      // Selftext: extract embedded images first (before we strip HTML) so that
+      // a self/text post with inline images surfaces both text AND media.
       if (postJson?.selftextHtml) {
-        let plainText = stripHtmlToPlainText(decodeHtmlEntities(postJson.selftextHtml));
+        const decoded = decodeHtmlEntities(postJson.selftextHtml);
+        const inlineImages = extractImagesFromSelftext(decoded);
+        const existingUrls = new Set(media.map(m => m.url));
+        for (const img of inlineImages) {
+          if (!existingUrls.has(img.url)) {
+            media.push(img);
+            existingUrls.add(img.url);
+          }
+        }
+
+        let plainText = stripHtmlToPlainText(decoded);
         if (plainText.length > 2000) {
           const truncateAt = plainText.lastIndexOf('.', 1800);
           const cutPoint = truncateAt > 1000 ? truncateAt + 1 : 1800;
@@ -431,6 +561,10 @@ export async function pollReddit(): Promise<DigestPost[]> {
         });
       }
 
+      // Comment count: prefer the authoritative `.json` value when present,
+      // fall back to the HTML `data-comments-count` attribute, else omit.
+      const commentCount = postJson?.numComments ?? post.numComments ?? undefined;
+
       digestPosts.push({
         postId: post.id,
         title: post.title,
@@ -442,6 +576,7 @@ export async function pollReddit(): Promise<DigestPost[]> {
         metadata: {
           score: post.score,
           subreddit: post.subreddit,
+          ...(typeof commentCount === 'number' ? { numComments: commentCount } : {}),
         },
         ...(media.length > 0 ? { media } : {}),
         ...(links.length > 0 ? { links } : {}),

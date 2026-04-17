@@ -7,8 +7,6 @@ import { pollReddit } from './sources/reddit.js';
 import { pollBluesky } from './sources/bluesky.js';
 import { pollYouTube } from './sources/youtube.js';
 import { pollDiscord } from './sources/discord.js';
-import { pollRedditNotifications } from './notifications/reddit-mail.js';
-import { pollBlueskyNotifications } from './notifications/bluesky-replies.js';
 import { getEnabledSchedules, scheduleToCron } from './schedules.js';
 import { filterNewPosts, createDigest, pruneOldDigests } from './digest.js';
 import type { PollSchedule, PollRun, SourceType, DigestPost } from './types/index.js';
@@ -97,18 +95,6 @@ function getSourcePollFn(source: SourceType): () => Promise<DigestPost[]> {
   }
 }
 
-// Get notification poll function for a source type
-function getNotificationPollFn(source: SourceType): (() => Promise<DigestPost[]>) | null {
-  switch (source) {
-    case 'reddit':
-      return pollRedditNotifications;
-    case 'bluesky':
-      return pollBlueskyNotifications;
-    default:
-      return null;
-  }
-}
-
 // Run a scheduled poll for specific sources
 async function runScheduledPoll(schedule: PollSchedule): Promise<PollRun | null> {
   // Check if a poll is already running - skip to avoid duplicate poll runs
@@ -147,18 +133,8 @@ async function runScheduledPoll(schedule: PollSchedule): Promise<PollRun | null>
         const pollFn = getSourcePollFn(source);
         const posts = await pollFn();
 
-        // Get notifications for this source (if available)
-        const notificationFn = getNotificationPollFn(source);
-        let notifications: DigestPost[] = [];
-        if (notificationFn) {
-          notifications = await notificationFn();
-        }
-
-        // Combine posts and notifications
-        const allPosts = [...posts, ...notifications];
-
         // Filter to only new posts
-        const newPosts = await filterNewPosts(allPosts, source);
+        const newPosts = await filterNewPosts(posts, source);
 
         // Create digest if there are new posts
         if (newPosts.length > 0) {
@@ -342,18 +318,8 @@ export async function triggerSourcePoll(source: SourceType, pollRunId?: number):
     const pollFn = getSourcePollFn(source);
     const posts = await pollFn();
 
-    // Get notifications for this source (if available)
-    const notificationFn = getNotificationPollFn(source);
-    let notifications: DigestPost[] = [];
-    if (notificationFn) {
-      notifications = await notificationFn();
-    }
-
-    // Combine posts and notifications
-    const allPosts = [...posts, ...notifications];
-
     // Filter to only new posts
-    const newPosts = await filterNewPosts(allPosts, source);
+    const newPosts = await filterNewPosts(posts, source);
 
     // Create digest if there are new posts
     if (newPosts.length > 0) {
@@ -390,15 +356,8 @@ export async function triggerTestPoll(source: SourceType): Promise<DigestPost[]>
   const pollFn = getSourcePollFn(source);
   const posts = await pollFn();
 
-  const notificationFn = getNotificationPollFn(source);
-  let notifications: DigestPost[] = [];
-  if (notificationFn) {
-    notifications = await notificationFn();
-  }
-
-  const allPosts = [...posts, ...notifications];
-  logger.info(`Test poll for ${source}: ${allPosts.length} posts fetched (not persisted)`);
-  return allPosts;
+  logger.info(`Test poll for ${source}: ${posts.length} posts fetched (not persisted)`);
+  return posts;
 }
 
 // Manual trigger: poll all enabled sources

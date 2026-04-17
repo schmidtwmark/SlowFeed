@@ -8,7 +8,9 @@ import UIKit
 
 // MARK: - Conditional View Modifier
 
-private extension View {
+extension View {
+    /// Applies `transform` only when `condition` is true. Used by thumbnail
+    /// views to conditionally attach `matchedGeometryEffect`.
     @ViewBuilder
     func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
         if condition { transform(self) } else { self }
@@ -103,7 +105,7 @@ struct DigestView: View {
     @Environment(\.openURL) private var openURL
     @FocusState private var isFocused: Bool
     @Namespace private var imageNamespace
-    @State private var viewerURLs: [URL] = []
+    @State private var viewerImages: [PostMedia] = []
     @State private var viewerIndex: Int = 0
     @State private var showViewer = false
     @State private var debugJSON: String?
@@ -129,8 +131,8 @@ struct DigestView: View {
         }
     }
 
-    private func openImageViewer(urls: [URL], index: Int) {
-        viewerURLs = urls
+    private func openImageViewer(images: [PostMedia], index: Int) {
+        viewerImages = images
         viewerIndex = index
         withAnimation(.spring(duration: 0.4, bounce: 0.15)) { showViewer = true }
     }
@@ -227,7 +229,7 @@ struct DigestView: View {
 
             if showViewer {
                 ImageViewerOverlay(
-                    imageURLs: viewerURLs,
+                    images: viewerImages,
                     currentIndex: $viewerIndex,
                     namespace: imageNamespace,
                     onDismiss: {
@@ -451,7 +453,7 @@ struct GroupedPostsView: View {
     var source: SourceType
     var digestId: String?
     var imageNamespace: Namespace.ID?
-    var onSelectImage: (([URL], Int) -> Void)?
+    var onSelectImage: (([PostMedia], Int) -> Void)?
 
     private var groups: [PostGroup] {
         var groupMap: [(key: String, posts: [DigestPost])] = []
@@ -530,7 +532,7 @@ struct BlueskyThreadedView: View {
     var source: SourceType = .bluesky
     var digestId: String?
     var imageNamespace: Namespace.ID?
-    var onSelectImage: (([URL], Int) -> Void)?
+    var onSelectImage: (([PostMedia], Int) -> Void)?
 
     private var flatItems: [FlatThreadItem] {
         posts.flatMap { flattenThread($0) }
@@ -554,7 +556,7 @@ private struct BlueskyFlatPostRow: View {
     var source: SourceType = .bluesky
     var digestId: String?
     var imageNamespace: Namespace.ID?
-    var onSelectImage: (([URL], Int) -> Void)?
+    var onSelectImage: (([PostMedia], Int) -> Void)?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -579,7 +581,7 @@ struct QuotedPostBubble: View {
     let post: DigestPost
     var depth: Int = 0
     var imageNamespace: Namespace.ID?
-    var onSelectImage: (([URL], Int) -> Void)?
+    var onSelectImage: (([PostMedia], Int) -> Void)?
 
     @Environment(\.openURL) private var openURL
 
@@ -651,711 +653,6 @@ struct QuotedPostBubble: View {
     }
 }
 
-// MARK: - Post View
-
-struct PostView: View {
-    let post: DigestPost
-    var source: SourceType = .reddit
-    var digestId: String?
-    var imageNamespace: Namespace.ID?
-    var onSelectImage: (([URL], Int) -> Void)?
-    var quotedPost: DigestPost?
-
-    @Environment(\.openURL) private var openURL
-    @Environment(AppState.self) private var appState
-    @State private var debugJSON: String?
-
-    private var postURL: URL? {
-        guard let urlString = post.url, !urlString.isEmpty else { return nil }
-        // Normalize old.reddit.com → reddit.com for existing cached data
-        let normalized = urlString.replacingOccurrences(of: "://old.reddit.com", with: "://reddit.com")
-        return URL(string: normalized)
-    }
-
-    /// Strip legacy "r/subreddit: " prefix from Reddit titles
-    private var displayTitle: String {
-        post.title.replacingOccurrences(of: #"^r/\w+:\s*"#, with: "", options: .regularExpression)
-    }
-
-    /// True if the title just repeats the author + content
-    private var titleIsDuplicate: Bool {
-        guard let content = post.content, !content.isEmpty else { return false }
-        let titleLower = displayTitle.lowercased()
-        let contentStart = content.prefix(60).lowercased()
-        return titleLower.contains(contentStart) || contentStart.contains(titleLower)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Repost indicator at top
-            if let repostedBy = post.metadata?.repostedBy {
-                Label("Reposted by \(repostedBy)", systemImage: "arrow.2.squarepath")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            // Author row with avatar, metadata, and date
-            HStack(spacing: 8) {
-                if let avatarUrl = post.metadata?.avatarUrl, let url = URL(string: avatarUrl) {
-                    CachedImage(url: url) {
-                        Circle().fill(.quaternary)
-                    }
-                    .aspectRatio(contentMode: .fill)
-                    .clipShape(Circle())
-                    .frame(width: 28, height: 28)
-                }
-
-                if let displayName = post.metadata?.displayName, !displayName.isEmpty {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(displayName)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.primary)
-                        if let author = post.author, !author.isEmpty {
-                            Text(author)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } else if let author = post.author, !author.isEmpty {
-                    Text(author)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let subreddit = post.metadata?.subreddit {
-                    Text("r/\(subreddit)")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                if let channel = post.metadata?.channel {
-                    Text(channel)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-
-                if let channelName = post.metadata?.channelName {
-                    Text("#\(channelName)")
-                        .font(.caption)
-                        .foregroundStyle(.purple)
-                }
-
-                if post.isNotification == true {
-                    Image(systemName: "bell.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                Spacer()
-
-                if let date = post.publishedAt {
-                    Text(date.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            // Title - skip if duplicate
-            if !titleIsDuplicate {
-                Text(displayTitle)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-            }
-
-            // Content
-            if let content = post.content, !content.isEmpty {
-                Text(content)
-                    .font(.body)
-                    .foregroundStyle(.primary.opacity(0.85))
-                    .lineLimit(10)
-            }
-
-            // Media
-            if let media = post.media, !media.isEmpty {
-                MediaView(media: media, postTitle: post.title, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-            }
-
-            // External links
-            if let links = post.links, !links.isEmpty {
-                ForEach(links, id: \.url) { link in
-                    LinkCardView(link: link)
-                }
-            }
-
-            // Embeds
-            if let embeds = post.embeds, !embeds.isEmpty {
-                ForEach(Array(embeds.enumerated()), id: \.offset) { _, embed in
-                    EmbedView(embed: embed)
-                }
-            }
-
-            // Inline quoted post
-            if let quoted = quotedPost {
-                QuotedPostBubble(post: quoted, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
-            }
-
-            // Comments
-            if let comments = post.comments, !comments.isEmpty {
-                CommentsView(comments: comments)
-            }
-
-            // Bottom metadata row (score, comments, etc.)
-            HStack(spacing: 12) {
-                if let score = post.metadata?.score {
-                    Label("\(score)", systemImage: "arrow.up")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if let numComments = post.metadata?.numComments {
-                    Label("\(numComments)", systemImage: "bubble.right")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if let duration = post.metadata?.duration {
-                    Label(duration, systemImage: "clock")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-        }
-        .padding()
-        .background(appState.focusedPostId == post.postId && appState.keyboardFocusPane == .posts
-                     ? Color.accentColor.opacity(0.08)
-                     : Color.clear)
-        .overlay(alignment: .leading) {
-            if appState.focusedPostId == post.postId && appState.keyboardFocusPane == .posts {
-                Rectangle()
-                    .fill(Color.accentColor)
-                    .frame(width: 3)
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            appState.focusedPostId = post.postId
-            appState.keyboardFocusPane = .posts
-            if let url = postURL { openURL(url) }
-        }
-        .contextMenu {
-            if let url = postURL {
-                Button {
-                    openURL(url)
-                } label: {
-                    Label("Open", systemImage: "safari")
-                }
-
-                Button {
-                    #if os(macOS)
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
-                    #else
-                    UIPasteboard.general.string = url.absoluteString
-                    #endif
-                } label: {
-                    Label("Copy Link", systemImage: "doc.on.doc")
-                }
-
-                ShareLink("Share Link", item: url)
-            }
-
-            Divider()
-
-            Button {
-                Task { await appState.toggleSavePost(post, source: source, digestId: digestId) }
-            } label: {
-                if appState.savedPostIds.contains(post.postId) {
-                    Label("Unsave", systemImage: "bookmark.slash")
-                } else {
-                    Label("Save for Later", systemImage: "bookmark")
-                }
-            }
-
-            Divider()
-
-            Button {
-                debugJSON = prettyJSON(post)
-            } label: {
-                Label("Show Raw JSON", systemImage: "curlybraces")
-            }
-        }
-        .sheet(item: $debugJSON) { json in
-            DebugJSONView(title: "Post JSON", json: json)
-        }
-    }
-}
-
-// MARK: - Media View
-
-struct MediaView: View {
-    let media: [PostMedia]
-    let postTitle: String
-    var imageNamespace: Namespace.ID?
-    var onSelectImage: (([URL], Int) -> Void)?
-
-    @Environment(\.openURL) private var openURL
-
-    private var images: [PostMedia] { media.filter { $0.type == "image" } }
-    private var videos: [PostMedia] { media.filter { $0.type == "video" } }
-    private var allImageURLs: [URL] { images.compactMap { URL(string: $0.url) } }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if images.count == 1, let img = images.first, let url = URL(string: img.url) {
-                imageThumb(url: url, index: 0)
-                    .frame(maxWidth: 600)
-                    .contextMenu { mediaContextMenu(for: img) }
-            } else if images.count > 1 {
-                GeometryReader { geo in
-                    let itemWidth = min(geo.size.width - 24, 600.0)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 12) {
-                            ForEach(Array(images.enumerated()), id: \.offset) { index, img in
-                                if let url = URL(string: img.url) {
-                                    imageThumb(url: url, index: index)
-                                        .frame(width: itemWidth, height: min(itemWidth * 0.75, 400))
-                                        .contextMenu { mediaContextMenu(for: img) }
-                                }
-                            }
-                        }
-                        .scrollTargetLayout()
-                        .padding(.horizontal, 12)
-                    }
-                    .scrollTargetBehavior(.viewAligned)
-                }
-                .frame(height: min(400, 300))
-
-                // Gallery counter
-                Text("\(images.count) images")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-
-            ForEach(videos, id: \.url) { vid in
-                InlineVideoPlayer(media: vid)
-                    .frame(maxWidth: 600)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .contextMenu { mediaContextMenu(for: vid) }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func imageThumb(url: URL, index: Int) -> some View {
-        CachedImage(url: url) {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.quaternary)
-                .aspectRatio(4/3, contentMode: .fit)
-        }
-        .aspectRatio(contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .if(imageNamespace != nil) { view in
-            view.matchedGeometryEffect(id: url.absoluteString, in: imageNamespace!)
-        }
-        .onTapGesture { onSelectImage?(allImageURLs, index) }
-    }
-
-    @ViewBuilder
-    private func mediaContextMenu(for media: PostMedia) -> some View {
-        Button {
-            Task { await copyMedia(media) }
-        } label: {
-            Label("Copy Media", systemImage: "photo.on.rectangle")
-        }
-
-        Button {
-            Task { await shareMedia(media) }
-        } label: {
-            Label("Share Media", systemImage: "square.and.arrow.up")
-        }
-    }
-
-    private func downloadMedia(_ media: PostMedia) async -> Data? {
-        guard let url = URL(string: media.url) else { return nil }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            return data
-        } catch {
-            return nil
-        }
-    }
-
-    private func fileExtension(for media: PostMedia) -> String {
-        let urlExt = URL(string: media.url)?.pathExtension ?? ""
-        if !urlExt.isEmpty { return urlExt }
-        switch media.type {
-        case "video": return "mp4"
-        case "image": return "jpg"
-        default: return "bin"
-        }
-    }
-
-    private func writeTempFile(data: Data, media: PostMedia) -> URL {
-        let ext = fileExtension(for: media)
-        let filename = "slowfeed_media_\(UUID().uuidString.prefix(8)).\(ext)"
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-        try? data.write(to: tempURL)
-        return tempURL
-    }
-
-    private func copyMedia(_ media: PostMedia) async {
-        guard let data = await downloadMedia(media) else { return }
-        let isImage = media.type == "image"
-        let tempFileURL = writeTempFile(data: data, media: media)
-
-        await MainActor.run {
-            #if os(macOS)
-            let pb = NSPasteboard.general
-            pb.clearContents()
-            if isImage, let image = NSImage(data: data) {
-                pb.writeObjects([image])
-            } else {
-                pb.writeObjects([tempFileURL as NSURL])
-            }
-            #else
-            if isImage, let image = UIImage(data: data) {
-                UIPasteboard.general.image = image
-            } else {
-                UIPasteboard.general.url = tempFileURL
-            }
-            #endif
-        }
-    }
-
-    private func shareMedia(_ media: PostMedia) async {
-        guard let data = await downloadMedia(media) else { return }
-        let tempFileURL = writeTempFile(data: data, media: media)
-
-        await MainActor.run {
-            #if os(macOS)
-            let items: [Any]
-            if media.type == "image", let image = NSImage(data: data) {
-                items = [image]
-            } else {
-                items = [tempFileURL]
-            }
-            let picker = NSSharingServicePicker(items: items)
-            if let window = NSApp.keyWindow, let contentView = window.contentView {
-                picker.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
-            }
-            #else
-            let items: [Any]
-            if media.type == "image", let image = UIImage(data: data) {
-                items = [image]
-            } else {
-                items = [tempFileURL]
-            }
-            let activityVC = UIActivityViewController(activityItems: items, applicationActivities: nil)
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootVC = windowScene.windows.first?.rootViewController {
-                rootVC.present(activityVC, animated: true)
-            }
-            #endif
-        }
-    }
-}
-
-// MARK: - Inline Video Player
-
-#if os(macOS)
-struct NativePlayerView: NSViewRepresentable {
-    let player: AVPlayer
-
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
-        view.player = player
-        view.controlsStyle = .inline
-        view.showsFullScreenToggleButton = true
-        return view
-    }
-
-    func updateNSView(_ nsView: AVPlayerView, context: Context) {
-        nsView.player = player
-    }
-}
-#endif
-
-struct InlineVideoPlayer: View {
-    let media: PostMedia
-
-    @State private var player: AVPlayer?
-    @State private var audioPlayer: AVPlayer?
-
-    /// Whether the audio URL is actually a separate track (not the same as video)
-    private var hasSeparateAudio: Bool {
-        guard let audioUrl = media.audioUrl else { return false }
-        return audioUrl != media.url
-    }
-
-    var body: some View {
-        ZStack {
-            if let player {
-                #if os(macOS)
-                NativePlayerView(player: player)
-                    .aspectRatio(16/9, contentMode: .fit)
-                    .onDisappear { stopPlayback() }
-                #else
-                VideoPlayer(player: player)
-                    .aspectRatio(16/9, contentMode: .fit)
-                    .onDisappear { stopPlayback() }
-                #endif
-            } else {
-                // Thumbnail with play button
-                ZStack {
-                    if let thumbUrl = media.thumbnailUrl, let url = URL(string: thumbUrl) {
-                        CachedImage(url: url) {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(.quaternary)
-                                .aspectRatio(16/9, contentMode: .fit)
-                        }
-                        .aspectRatio(contentMode: .fit)
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(.quaternary)
-                            .aspectRatio(16/9, contentMode: .fit)
-                    }
-
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 52))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .shadow(radius: 4)
-                }
-                .onTapGesture { startPlayback() }
-            }
-        }
-    }
-
-    private func startPlayback() {
-        guard let videoURL = URL(string: media.url) else { return }
-
-        let mainPlayer = AVPlayer(url: videoURL)
-
-        if hasSeparateAudio, let audioURL = URL(string: media.audioUrl!) {
-            // Reddit DASH/CMAF: separate audio track
-            let separateAudioPlayer = AVPlayer(url: audioURL)
-            mainPlayer.play()
-            separateAudioPlayer.play()
-            self.audioPlayer = separateAudioPlayer
-
-            // Loop both on end
-            NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemDidPlayToEndTime,
-                object: mainPlayer.currentItem,
-                queue: .main
-            ) { _ in
-                mainPlayer.seek(to: .zero)
-                separateAudioPlayer.seek(to: .zero)
-                mainPlayer.play()
-                separateAudioPlayer.play()
-            }
-        } else {
-            // Standard video — audio is embedded
-            mainPlayer.play()
-        }
-
-        self.player = mainPlayer
-    }
-
-    private func stopPlayback() {
-        player?.pause()
-        audioPlayer?.pause()
-    }
-}
-
-// MARK: - Fullscreen Image Viewer Overlay
-
-struct ImageViewerOverlay: View {
-    let imageURLs: [URL]
-    @Binding var currentIndex: Int
-    let namespace: Namespace.ID
-    let onDismiss: () -> Void
-
-    // Pan & zoom
-    @State private var scale: CGFloat = 1.0
-    @State private var lastScale: CGFloat = 1.0
-    @State private var offset: CGSize = .zero
-    @State private var lastOffset: CGSize = .zero
-
-    // Swipe-to-dismiss
-    @State private var dismissDrag: CGSize = .zero
-    @State private var backgroundOpacity: Double = 1.0
-    @FocusState private var isFocused: Bool
-
-    private var safeIndex: Int {
-        guard !imageURLs.isEmpty else { return 0 }
-        return min(max(currentIndex, 0), imageURLs.count - 1)
-    }
-    private var currentURL: URL? {
-        guard !imageURLs.isEmpty else { return nil }
-        return imageURLs[safeIndex]
-    }
-    private var isDraggingToDismiss: Bool { scale <= 1.0 && dismissDrag != .zero }
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Color.black
-                    .opacity(backgroundOpacity)
-                    .ignoresSafeArea()
-                    .onTapGesture { onDismiss() }
-
-                // The image with matched geometry for animation
-                CachedImage(url: currentURL) {
-                    ProgressView().tint(.white)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                .aspectRatio(contentMode: .fit)
-                .matchedGeometryEffect(id: currentURL?.absoluteString ?? "", in: namespace)
-                .scaleEffect(scale)
-                .offset(
-                    x: offset.width + (isDraggingToDismiss ? dismissDrag.width * 0.3 : 0),
-                    y: offset.height + (isDraggingToDismiss ? dismissDrag.height : 0)
-                )
-                .scaleEffect(isDraggingToDismiss ? max(0.7, 1.0 - abs(dismissDrag.height) / 1000) : 1.0)
-                .gesture(combinedGesture(containerSize: geo.size))
-                .onTapGesture(count: 2) { location in
-                    withAnimation(.spring(duration: 0.3)) {
-                        if scale > 1.5 {
-                            resetZoom()
-                        } else {
-                            let newScale: CGFloat = 3.0
-                            let cx = geo.size.width / 2, cy = geo.size.height / 2
-                            scale = newScale; lastScale = newScale
-                            offset = CGSize(width: (cx - location.x) * (newScale - 1),
-                                            height: (cy - location.y) * (newScale - 1))
-                            lastOffset = offset
-                        }
-                    }
-                }
-
-                // Gallery arrows
-                if imageURLs.count > 1 {
-                    HStack {
-                        if currentIndex > 0 {
-                            navButton(systemName: "chevron.left.circle.fill") {
-                                resetZoom()
-                                withAnimation(.easeInOut(duration: 0.25)) { currentIndex -= 1 }
-                            }
-                            .padding(.leading, 16)
-                        }
-                        Spacer()
-                        if currentIndex < imageURLs.count - 1 {
-                            navButton(systemName: "chevron.right.circle.fill") {
-                                resetZoom()
-                                withAnimation(.easeInOut(duration: 0.25)) { currentIndex += 1 }
-                            }
-                            .padding(.trailing, 16)
-                        }
-                    }
-                }
-
-                // Chrome: close button + counter
-                VStack {
-                    HStack {
-                        Spacer()
-                        Button(action: onDismiss) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.title)
-                                .foregroundStyle(.white.opacity(0.8))
-                                .padding()
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    Spacer()
-                    if imageURLs.count > 1 {
-                        Text("\(currentIndex + 1) / \(imageURLs.count)")
-                            .font(.caption).fontWeight(.medium)
-                            .foregroundStyle(.white.opacity(0.8))
-                            .padding(.horizontal, 12).padding(.vertical, 4)
-                            .background(.black.opacity(0.4), in: Capsule())
-                            .padding(.bottom, 12)
-                    }
-                }
-                .opacity(backgroundOpacity)
-            }
-        }
-        .focusable()
-        .focused($isFocused)
-        .onAppear { isFocused = true }
-        #if os(macOS)
-        .onKeyPress(.escape) { onDismiss(); return .handled }
-        .onKeyPress(.leftArrow) {
-            if currentIndex > 0 { resetZoom(); withAnimation { currentIndex -= 1 } }
-            return .handled
-        }
-        .onKeyPress(.rightArrow) {
-            if currentIndex < imageURLs.count - 1 { resetZoom(); withAnimation { currentIndex += 1 } }
-            return .handled
-        }
-        #endif
-    }
-
-    private func navButton(systemName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.largeTitle)
-                .foregroundStyle(.white.opacity(0.7))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func resetZoom() {
-        scale = 1.0; lastScale = 1.0
-        offset = .zero; lastOffset = .zero
-    }
-
-    // MARK: - Simultaneous pinch + pan gesture (Photos-style)
-
-    private func combinedGesture(containerSize: CGSize) -> some Gesture {
-        SimultaneousGesture(
-            MagnifyGesture(),
-            DragGesture()
-        )
-        .onChanged { value in
-            // Pinch
-            if let magnification = value.first?.magnification {
-                scale = max(0.5, min(lastScale * magnification, 10.0))
-            }
-            // Drag
-            if let translation = value.second?.translation {
-                if scale > 1.01 {
-                    // Pan within zoomed image
-                    offset = CGSize(
-                        width: lastOffset.width + translation.width / scale,
-                        height: lastOffset.height + translation.height / scale
-                    )
-                } else if value.first == nil {
-                    // Only dragging (no pinch) at 1x → swipe to dismiss
-                    dismissDrag = translation
-                    let progress = min(abs(translation.height) / 300, 1.0)
-                    backgroundOpacity = Double(1.0 - progress * 0.6)
-                }
-            }
-        }
-        .onEnded { value in
-            // Finalize pinch
-            lastScale = scale
-            if scale < 1.0 {
-                withAnimation(.spring(duration: 0.3)) { resetZoom() }
-            }
-            // Finalize drag
-            if scale > 1.01 {
-                lastOffset = offset
-            } else if dismissDrag != .zero {
-                let vy = value.second?.velocity.height ?? 0
-                if abs(dismissDrag.height) > 120 || abs(vy) > 800 {
-                    onDismiss()
-                } else {
-                    withAnimation(.spring(duration: 0.3)) {
-                        dismissDrag = .zero
-                        backgroundOpacity = 1.0
-                    }
-                }
-            }
-        }
-    }
-}
 
 // MARK: - Link Card View
 
@@ -1592,7 +889,7 @@ extension String: @retroactive Identifiable {
     public var id: String { self }
 }
 
-private func prettyJSON<T: Encodable>(_ value: T) -> String {
+func prettyJSON<T: Encodable>(_ value: T) -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     encoder.dateEncodingStrategy = .iso8601

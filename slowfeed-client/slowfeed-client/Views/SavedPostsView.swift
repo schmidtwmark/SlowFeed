@@ -3,12 +3,12 @@ import SwiftUI
 struct SavedPostsView: View {
     @Environment(AppState.self) private var appState
     @Namespace private var imageNamespace
-    @State private var viewerURLs: [URL] = []
+    @State private var viewerImages: [PostMedia] = []
     @State private var viewerIndex: Int = 0
     @State private var showViewer = false
 
-    private func openImageViewer(urls: [URL], index: Int) {
-        viewerURLs = urls
+    private func openImageViewer(images: [PostMedia], index: Int) {
+        viewerImages = images
         viewerIndex = index
         withAnimation(.spring(duration: 0.4, bounce: 0.15)) { showViewer = true }
     }
@@ -68,7 +68,7 @@ struct SavedPostsView: View {
 
             if showViewer {
                 ImageViewerOverlay(
-                    imageURLs: viewerURLs,
+                    images: viewerImages,
                     currentIndex: $viewerIndex,
                     namespace: imageNamespace,
                     onDismiss: {
