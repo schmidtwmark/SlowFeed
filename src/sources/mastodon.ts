@@ -141,9 +141,10 @@ function statusToDigestPost(
 }
 
 /**
- * Poll the authenticated user's home timeline. Returns an empty array when
- * the source is disabled, unconfigured, or the request fails — failures are
- * logged but never thrown so a single bad source doesn't fail the whole poll.
+ * Poll the authenticated user's home timeline. Throws on any failure so the
+ * "Test Run" UI surfaces the actual error to the user (mirrors Bluesky /
+ * Reddit). Disabled-source is the one silent case: returns `[]` so a
+ * disabled source doesn't bring down a multi-source scheduled poll.
  */
 export async function pollMastodon(): Promise<DigestPost[]> {
   const config = getConfig();
@@ -152,9 +153,11 @@ export async function pollMastodon(): Promise<DigestPost[]> {
     logger.debug('Mastodon polling disabled');
     return [];
   }
-  if (!config.mastodon_instance_url || !config.mastodon_access_token) {
-    logger.warn('Mastodon enabled but instance URL or access token is missing');
-    return [];
+  if (!config.mastodon_instance_url) {
+    throw new Error('Mastodon instance URL is not set. Enter it in Settings → Mastodon.');
+  }
+  if (!config.mastodon_access_token) {
+    throw new Error('Mastodon access token is not set. Enter it in Settings → Mastodon.');
   }
 
   // Normalize the instance URL — strip trailing slash, add scheme if missing.
@@ -168,38 +171,50 @@ export async function pollMastodon(): Promise<DigestPost[]> {
 
   logger.info(`Polling Mastodon (${instanceHost}, limit=${limit})...`);
 
+  let response: Response;
   try {
-    const response = await fetch(url, {
+    response = await fetch(url, {
       headers: {
         Authorization: `Bearer ${config.mastodon_access_token}`,
         Accept: 'application/json',
       },
     });
-
-    if (!response.ok) {
-      logger.error(`Mastodon poll failed: ${response.status} ${response.statusText}`);
-      return [];
-    }
-
-    const statuses = (await response.json()) as MastodonStatus[];
-    if (!Array.isArray(statuses)) {
-      logger.error('Mastodon poll: unexpected response shape (not an array)');
-      return [];
-    }
-
-    const posts: DigestPost[] = statuses.map((s) => {
-      // When the status is a boost (reblog), promote the underlying status and
-      // surface the booster via `repostedBy` — same pattern as Bluesky.
-      if (s.reblog) {
-        return statusToDigestPost(s.reblog, instanceHost, s.account.display_name || s.account.acct);
-      }
-      return statusToDigestPost(s, instanceHost);
-    });
-
-    logger.info(`Mastodon poll complete: ${posts.length} posts`);
-    return posts;
   } catch (err) {
-    logger.error('Mastodon polling failed:', err);
-    return [];
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Mastodon request to ${instanceHost} failed: ${msg}`);
   }
+
+  if (!response.ok) {
+    // Grab a tiny slice of the body so auth and permissions errors are visible.
+    let detail = '';
+    try {
+      const text = await response.text();
+      detail = text ? `: ${text.slice(0, 200)}` : '';
+    } catch { /* ignore */ }
+    throw new Error(`Mastodon ${response.status} ${response.statusText}${detail}`);
+  }
+
+  let statuses: MastodonStatus[];
+  try {
+    const parsed = (await response.json()) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error('response was not a JSON array');
+    }
+    statuses = parsed as MastodonStatus[];
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Mastodon returned unexpected data: ${msg}`);
+  }
+
+  const posts: DigestPost[] = statuses.map((s) => {
+    // Boost (reblog): unwrap to the underlying status and surface the booster
+    // via `repostedBy` — same pattern as Bluesky.
+    if (s.reblog) {
+      return statusToDigestPost(s.reblog, instanceHost, s.account.display_name || s.account.acct);
+    }
+    return statusToDigestPost(s, instanceHost);
+  });
+
+  logger.info(`Mastodon poll complete: ${posts.length} posts from ${instanceHost}`);
+  return posts;
 }
