@@ -573,7 +573,7 @@ final class AppState {
             await refreshDigests()
 
             // Auto-select the first (newest) digest
-            if let first = digests.first {
+            if !digests.isEmpty {
                 await navigateToDigest(at: 0)
             }
 

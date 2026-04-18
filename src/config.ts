@@ -17,6 +17,12 @@ export interface Config {
   discord_token: string;
   discord_channels: string;
   discord_top_n: number;
+  mastodon_enabled: boolean;
+  /** Base URL of the Mastodon instance, e.g. "https://mastodon.social". */
+  mastodon_instance_url: string;
+  /** Personal access token (Settings → Development → Applications on the instance). */
+  mastodon_access_token: string;
+  mastodon_top_n: number;
   feed_title: string;
   feed_ttl_days: number;
   feed_token: string;
@@ -43,6 +49,10 @@ const DEFAULT_CONFIG: Config = {
   discord_token: '',
   discord_channels: '[]',
   discord_top_n: 20,
+  mastodon_enabled: false,
+  mastodon_instance_url: '',
+  mastodon_access_token: '',
+  mastodon_top_n: 20,
   feed_title: 'Slowfeed',
   feed_ttl_days: 14,
   feed_token: generateFeedToken(),

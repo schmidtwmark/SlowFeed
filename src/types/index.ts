@@ -1,5 +1,5 @@
 // Source types
-export type SourceType = 'reddit' | 'bluesky' | 'youtube' | 'discord';
+export type SourceType = 'reddit' | 'bluesky' | 'youtube' | 'discord' | 'mastodon';
 
 // Schedule types
 export interface PollSchedule {

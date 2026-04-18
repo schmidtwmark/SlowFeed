@@ -311,6 +311,12 @@ func formatPostTimestamp(_ date: Date, now: Date = .now, calendar: Calendar = .c
         .frame(width: 440)
 }
 
+#Preview("Mastodon") {
+    PostView(post: PreviewPostSamples.mastodonPost, source: .mastodon)
+        .environment(AppState())
+        .frame(width: 440)
+}
+
 #Preview("Timestamps — today / yesterday / older") {
     ScrollView {
         VStack(alignment: .leading, spacing: 0) {

@@ -31,6 +31,11 @@ struct SettingsView: View {
                     Label("Discord", systemImage: "message")
                 }
 
+            SourceSettingsView(source: .mastodon)
+                .tabItem {
+                    Label("Mastodon", systemImage: "at")
+                }
+
             ScheduleSettingsView()
                 .tabItem {
                     Label("Schedules", systemImage: "calendar.badge.clock")
@@ -94,6 +99,12 @@ struct SettingsView: View {
                         SourceSettingsView(source: .discord)
                     } label: {
                         Label("Discord", systemImage: "message")
+                    }
+
+                    NavigationLink {
+                        SourceSettingsView(source: .mastodon)
+                    } label: {
+                        Label("Mastodon", systemImage: "at")
                     }
                 }
 
@@ -238,6 +249,7 @@ struct SourceSettingsView: View {
     @State private var cookies = ""
     @State private var includeComments = false
     @State private var commentDepth = 3
+    @State private var mastodonInstanceURL = ""
     @State private var isSaving = false
     @State private var message: String?
     @State private var hasLoaded = false
@@ -265,6 +277,8 @@ struct SourceSettingsView: View {
                     youtubeSettings
                 case .discord:
                     discordSettings
+                case .mastodon:
+                    mastodonSettings
                 }
 
                 Section {
@@ -417,6 +431,33 @@ struct SourceSettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private var mastodonSettings: some View {
+        Section {
+            TextField("Instance URL", text: $mastodonInstanceURL, prompt: Text("https://mastodon.social"))
+                #if !os(macOS)
+                .textContentType(.URL)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                #endif
+
+            SecureField("Access Token", text: $appPassword)
+
+            Text("Create a personal access token in Settings → Development → Your applications on your instance. The token needs the `read` scope.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("Authentication")
+        }
+
+        Section {
+            Stepper("Top posts: \(topN)", value: $topN, in: 5...40, step: 5)
+        } header: {
+            Text("Options")
+        }
+    }
+
     private func loadConfig() {
         guard let config = appState.config else { return }
 
@@ -439,6 +480,11 @@ struct SourceSettingsView: View {
             enabled = config.discordEnabled
             appPassword = config.discordToken == "••••••••" ? "" : config.discordToken
             topN = config.discordTopN
+        case .mastodon:
+            enabled = config.mastodonEnabled
+            mastodonInstanceURL = config.mastodonInstanceURL
+            appPassword = config.mastodonAccessToken == "••••••••" ? "" : config.mastodonAccessToken
+            topN = config.mastodonTopN
         }
     }
 
@@ -474,6 +520,13 @@ struct SourceSettingsView: View {
             updates["discord_top_n"] = topN
             if !appPassword.isEmpty {
                 updates["discord_token"] = appPassword
+            }
+        case .mastodon:
+            updates["mastodon_enabled"] = enabled
+            updates["mastodon_instance_url"] = mastodonInstanceURL
+            updates["mastodon_top_n"] = topN
+            if !appPassword.isEmpty {
+                updates["mastodon_access_token"] = appPassword
             }
         }
 

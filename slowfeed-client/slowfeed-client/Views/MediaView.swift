@@ -282,67 +282,82 @@ struct InlineVideoPlayer: View {
     private func startPlayback() {
         guard let videoURL = URL(string: media.url) else { return }
 
-        let newPlayer: AVPlayer
         if hasSeparateAudio, let audioURL = URL(string: media.audioUrl!) {
             // Reddit DASH/CMAF: combine video-only + audio-only tracks into a
             // single AVPlayerItem via AVMutableComposition so they stay in sync.
-            newPlayer = makeCombinedPlayer(videoURL: videoURL, audioURL: audioURL) ?? AVPlayer(url: videoURL)
+            // The composition uses async track/duration/transform loaders, so
+            // we build it in a Task and fall back to a plain video player if
+            // either asset can't be loaded.
+            Task { @MainActor in
+                let combined = await Self.makeCombinedPlayer(videoURL: videoURL, audioURL: audioURL)
+                let player = combined ?? AVPlayer(url: videoURL)
+                install(player: player)
+            }
         } else {
             // Standard video — audio is embedded in the file.
-            newPlayer = AVPlayer(url: videoURL)
+            install(player: AVPlayer(url: videoURL))
         }
+    }
 
-        // Loop on end
+    /// Attach `player`, arm the loop observer, and start playback.
+    @MainActor
+    private func install(player: AVPlayer) {
         if let observer = loopObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         loopObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
-            object: newPlayer.currentItem,
+            object: player.currentItem,
             queue: .main
         ) { _ in
-            newPlayer.seek(to: .zero)
-            newPlayer.play()
+            player.seek(to: .zero)
+            player.play()
         }
-
-        newPlayer.play()
-        self.player = newPlayer
+        player.play()
+        self.player = player
     }
 
     /// Build an `AVPlayer` from a composition that merges the video track from
     /// `videoURL` with the audio track from `audioURL`. Returns nil if either
-    /// asset lacks the expected track.
-    private func makeCombinedPlayer(videoURL: URL, audioURL: URL) -> AVPlayer? {
-        let composition = AVMutableComposition()
+    /// asset lacks the expected track. Uses the async `load(...)` APIs so the
+    /// blocking `tracks(withMediaType:)` / `duration` / `preferredTransform`
+    /// deprecations go away.
+    private static func makeCombinedPlayer(videoURL: URL, audioURL: URL) async -> AVPlayer? {
         let videoAsset = AVURLAsset(url: videoURL)
         let audioAsset = AVURLAsset(url: audioURL)
 
-        guard
-            let videoTrack = videoAsset.tracks(withMediaType: .video).first,
-            let audioTrack = audioAsset.tracks(withMediaType: .audio).first
-        else {
-            return nil
-        }
-
-        let videoDuration = videoAsset.duration
-        let audioDuration = audioAsset.duration
-        let duration = CMTimeMinimum(videoDuration, audioDuration)
-        let range = CMTimeRange(start: .zero, duration: duration)
-
         do {
+            guard
+                let videoTrack = try await videoAsset.loadTracks(withMediaType: .video).first,
+                let audioTrack = try await audioAsset.loadTracks(withMediaType: .audio).first
+            else {
+                return nil
+            }
+
+            async let videoDurationLoad = videoAsset.load(.duration)
+            async let audioDurationLoad = audioAsset.load(.duration)
+            async let preferredTransformLoad = videoTrack.load(.preferredTransform)
+            let videoDuration = try await videoDurationLoad
+            let audioDuration = try await audioDurationLoad
+            let preferredTransform = try await preferredTransformLoad
+
+            let duration = CMTimeMinimum(videoDuration, audioDuration)
+            let range = CMTimeRange(start: .zero, duration: duration)
+
+            let composition = AVMutableComposition()
             if let compVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
                 try compVideo.insertTimeRange(range, of: videoTrack, at: .zero)
-                compVideo.preferredTransform = videoTrack.preferredTransform
+                compVideo.preferredTransform = preferredTransform
             }
             if let compAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
                 try compAudio.insertTimeRange(range, of: audioTrack, at: .zero)
             }
+
+            let item = AVPlayerItem(asset: composition)
+            return AVPlayer(playerItem: item)
         } catch {
             return nil
         }
-
-        let item = AVPlayerItem(asset: composition)
-        return AVPlayer(playerItem: item)
     }
 
     private func stopPlayback() {

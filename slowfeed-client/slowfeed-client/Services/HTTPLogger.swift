@@ -1,22 +1,31 @@
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "com.markschmidt.slowfeed-client", category: "HTTPLogger")
-
 @Observable
 final class HTTPLogger {
     static let shared = HTTPLogger()
+
+    /// `os.Logger` is thread-safe and safe to access across isolation domains;
+    /// declaring it `nonisolated` here silences the Swift 6 isolation warning
+    /// that fires when we log inside `Task.detached` below.
+    nonisolated private static let logger = Logger(
+        subsystem: "com.markschmidt.slowfeed-client",
+        category: "HTTPLogger"
+    )
 
     var entries: [HTTPLogEntry] = []
     var isEnabled: Bool {
         didSet { UserDefaults.standard.set(isEnabled, forKey: "httpLoggingEnabled") }
     }
 
-    private static var storageURL: URL {
+    /// URL is Sendable and the computation has no actor-bound state, so we
+    /// mark the accessor `nonisolated` and evaluate it lazily as a `static let`.
+    /// This lets `Task.detached` read it without crossing an actor boundary.
+    nonisolated private static let storageURL: URL = {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("com.markschmidt.slowfeed-client", isDirectory: true)
             .appendingPathComponent("http_logs.json")
-    }
+    }()
 
     private init() {
         // Default to enabled if never set
@@ -62,7 +71,7 @@ final class HTTPLogger {
             saveToDisk()
         }
 
-        logger.debug("\(method) \(url.absoluteString) → \(responseStatus) (\(String(format: "%.0f", duration * 1000))ms)")
+        Self.logger.debug("\(method) \(url.absoluteString) → \(responseStatus) (\(String(format: "%.0f", duration * 1000))ms)")
     }
 
     @MainActor
@@ -82,7 +91,7 @@ final class HTTPLogger {
                 try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try data.write(to: url, options: .atomic)
             } catch {
-                logger.error("Failed to save HTTP logs: \(error.localizedDescription)")
+                Self.logger.error("Failed to save HTTP logs: \(error.localizedDescription)")
             }
         }
     }
@@ -96,7 +105,7 @@ final class HTTPLogger {
             decoder.dateDecodingStrategy = .iso8601
             entries = try decoder.decode([HTTPLogEntry].self, from: data)
         } catch {
-            logger.error("Failed to load HTTP logs: \(error.localizedDescription)")
+            Self.logger.error("Failed to load HTTP logs: \(error.localizedDescription)")
         }
     }
 

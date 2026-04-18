@@ -433,6 +433,7 @@ export function createApiRouter(): Router {
         { id: 'bluesky', name: 'Bluesky', enabled: config.bluesky_enabled },
         { id: 'youtube', name: 'YouTube', enabled: config.youtube_enabled },
         { id: 'discord', name: 'Discord', enabled: config.discord_enabled },
+        { id: 'mastodon', name: 'Mastodon', enabled: config.mastodon_enabled },
       ];
       res.json(sources);
     } catch (err) {
@@ -452,6 +453,7 @@ export function createApiRouter(): Router {
         discord_token: config.discord_token ? '••••••••' : '',
         youtube_cookies: config.youtube_cookies ? '••••••••' : '',
         reddit_cookies: config.reddit_cookies ? '••••••••' : '',
+        mastodon_access_token: config.mastodon_access_token ? '••••••••' : '',
       };
       // Remove legacy password field if present
       delete (safeConfig as Record<string, unknown>).ui_password;
@@ -483,6 +485,10 @@ export function createApiRouter(): Router {
         'discord_token',
         'discord_channels',
         'discord_top_n',
+        'mastodon_enabled',
+        'mastodon_instance_url',
+        'mastodon_access_token',
+        'mastodon_top_n',
         'feed_ttl_days',
         // ui_password removed - using passkeys for authentication now
       ];
@@ -552,7 +558,7 @@ export function createApiRouter(): Router {
     try {
       const { source } = req.body;
 
-      if (source && ['reddit', 'bluesky', 'youtube', 'discord'].includes(source)) {
+      if (source && ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon'].includes(source)) {
         await triggerSourcePoll(source);
       } else {
         await triggerMainPoll();
@@ -573,8 +579,8 @@ export function createApiRouter(): Router {
     try {
       const source = (req.query.source || req.body?.source) as string;
 
-      if (!source || !['reddit', 'bluesky', 'youtube', 'discord'].includes(source)) {
-        res.status(400).json({ error: 'Valid source parameter required (reddit, bluesky, youtube, discord)' });
+      if (!source || !['reddit', 'bluesky', 'youtube', 'discord', 'mastodon'].includes(source)) {
+        res.status(400).json({ error: 'Valid source parameter required (reddit, bluesky, youtube, discord, mastodon)' });
         return;
       }
 
@@ -699,7 +705,7 @@ export function createApiRouter(): Router {
   router.delete('/api/data/:source', async (req, res) => {
     try {
       const source = req.params.source;
-      const validSources = ['reddit', 'bluesky', 'youtube', 'discord'];
+      const validSources = ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon'];
 
       if (!validSources.includes(source)) {
         res.status(400).json({ error: 'Invalid source' });
@@ -761,7 +767,7 @@ export function createApiRouter(): Router {
   // Test fetch for any source
   router.post('/api/test/:source', async (req, res) => {
     const source = req.params.source;
-    const validSources = ['reddit', 'bluesky', 'youtube', 'discord'];
+    const validSources = ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon'];
 
     if (!validSources.includes(source)) {
       res.status(400).json({ error: 'Invalid source' });

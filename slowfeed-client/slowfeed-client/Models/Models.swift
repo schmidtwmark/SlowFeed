@@ -7,6 +7,7 @@ enum SourceType: String, Codable, CaseIterable, Identifiable {
     case bluesky
     case youtube
     case discord
+    case mastodon
 
     var id: String { rawValue }
 
@@ -16,6 +17,7 @@ enum SourceType: String, Codable, CaseIterable, Identifiable {
         case .bluesky: return "Bluesky"
         case .youtube: return "YouTube"
         case .discord: return "Discord"
+        case .mastodon: return "Mastodon"
         }
     }
 
@@ -25,6 +27,7 @@ enum SourceType: String, Codable, CaseIterable, Identifiable {
         case .bluesky: return "cloud"
         case .youtube: return "play.rectangle"
         case .discord: return "message"
+        case .mastodon: return "at"
         }
     }
 
@@ -34,6 +37,7 @@ enum SourceType: String, Codable, CaseIterable, Identifiable {
         case .bluesky: return "#0085FF"
         case .youtube: return "#FF0000"
         case .discord: return "#5865F2"
+        case .mastodon: return "#6364FF"
         }
     }
 }
@@ -215,6 +219,11 @@ struct AppConfig: Codable, Equatable {
     var discordChannels: [String]
     var discordTopN: Int
 
+    var mastodonEnabled: Bool
+    var mastodonInstanceURL: String
+    var mastodonAccessToken: String
+    var mastodonTopN: Int
+
     var feedTtlDays: Int
 
     enum CodingKeys: String, CodingKey {
@@ -233,6 +242,10 @@ struct AppConfig: Codable, Equatable {
         case discordToken = "discord_token"
         case discordChannels = "discord_channels"
         case discordTopN = "discord_top_n"
+        case mastodonEnabled = "mastodon_enabled"
+        case mastodonInstanceURL = "mastodon_instance_url"
+        case mastodonAccessToken = "mastodon_access_token"
+        case mastodonTopN = "mastodon_top_n"
         case feedTtlDays = "feed_ttl_days"
     }
 
@@ -258,6 +271,11 @@ struct AppConfig: Codable, Equatable {
         discordToken = (try? container.decode(String.self, forKey: .discordToken)) ?? ""
         discordChannels = (try? container.decode([String].self, forKey: .discordChannels)) ?? []
         discordTopN = (try? container.decode(Int.self, forKey: .discordTopN)) ?? 20
+
+        mastodonEnabled = (try? container.decode(Bool.self, forKey: .mastodonEnabled)) ?? false
+        mastodonInstanceURL = (try? container.decode(String.self, forKey: .mastodonInstanceURL)) ?? ""
+        mastodonAccessToken = (try? container.decode(String.self, forKey: .mastodonAccessToken)) ?? ""
+        mastodonTopN = (try? container.decode(Int.self, forKey: .mastodonTopN)) ?? 20
 
         feedTtlDays = (try? container.decode(Int.self, forKey: .feedTtlDays)) ?? 14
     }

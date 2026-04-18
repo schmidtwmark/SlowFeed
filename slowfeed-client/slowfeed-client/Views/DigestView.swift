@@ -436,6 +436,7 @@ struct SourceBadge: View {
         case .bluesky: return .blue
         case .youtube: return .red
         case .discord: return .purple
+        case .mastodon: return .indigo
         }
     }
 }

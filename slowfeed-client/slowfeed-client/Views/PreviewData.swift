@@ -320,5 +320,20 @@ enum PreviewPostSamples {
             publishedAt: recentToday
         )
     }
+
+    /// Mastodon post — shape matches Bluesky (displayName + handle + no
+    /// title + no source chip). Included so we can eyeball the header layout
+    /// of a Mastodon post without running the server.
+    static var mastodonPost: DigestPost {
+        PreviewPost.make(
+            postId: "mastodon-1",
+            title: "",
+            content: "Finally finished migrating our analytics pipeline off the legacy ETL. Took four months but the new system is so much easier to reason about.",
+            url: "https://mastodon.social/@alice/12345",
+            author: "@alice@mastodon.social",
+            displayName: "Alice Engineering",
+            publishedAt: recentToday
+        )
+    }
 }
 #endif

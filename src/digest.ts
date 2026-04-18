@@ -44,7 +44,7 @@ export async function createDigest(
 
   const timestamp = Date.now();
   const digestId = generateDigestId(source, timestamp);
-  const displayNames: Record<string, string> = { reddit: 'Reddit', bluesky: 'Bluesky', youtube: 'YouTube', discord: 'Discord' };
+  const displayNames: Record<string, string> = { reddit: 'Reddit', bluesky: 'Bluesky', youtube: 'YouTube', discord: 'Discord', mastodon: 'Mastodon' };
   const title = `${displayNames[source] || source} Digest: ${posts.length} item${posts.length === 1 ? '' : 's'}`;
   const postIds = posts.map(p => p.postId);
 

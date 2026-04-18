@@ -274,7 +274,7 @@ export function validateScheduleInput(input: ScheduleInput): string[] {
   if (!input.sources || input.sources.length === 0) {
     errors.push('At least one source must be selected');
   } else {
-    const validSources = ['reddit', 'bluesky', 'youtube', 'discord'];
+    const validSources = ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon'];
     for (const source of input.sources) {
       if (!validSources.includes(source)) {
         errors.push(`Invalid source: ${source}`);
