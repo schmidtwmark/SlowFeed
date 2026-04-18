@@ -6,6 +6,12 @@ struct MainView: View {
 
     @State private var httpLogger = HTTPLogger.shared
 
+    /// Column visibility for the digests split view. On iOS compact this flips
+    /// to `.detailOnly` when a digest is pushed and back to `.all` /
+    /// `.doubleColumn` when the user pops — we use that as the cue to clear
+    /// the selection so the same row is re-tappable.
+    @State private var digestColumnVisibility: NavigationSplitViewVisibility = .automatic
+
     enum AppTab: String {
         case digests, saved, network, settings
     }
@@ -13,13 +19,24 @@ struct MainView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             SwiftUI.Tab("Digests", systemImage: "doc.text.fill", value: AppTab.digests) {
-                NavigationSplitView {
+                NavigationSplitView(columnVisibility: $digestColumnVisibility) {
                     DigestSidebar()
                 } detail: {
                     DigestDetailView()
                 }
                 #if os(macOS)
                 .frame(minWidth: 800, minHeight: 500)
+                #endif
+                #if !os(macOS)
+                .onChange(of: digestColumnVisibility) { _, newValue in
+                    // On iOS compact, returning to the sidebar (back gesture or
+                    // back button) flips visibility away from `.detailOnly`.
+                    // Clear the selection so re-tapping the same digest row
+                    // registers as a value change and navigates again.
+                    if newValue != .detailOnly {
+                        appState.currentDigest = nil
+                    }
+                }
                 #endif
             }
 

@@ -11,7 +11,10 @@ interface RedditPost {
   subreddit: string;
   url: string;
   permalink: string;
-  selftext: string;
+  /** HTML-formatted selftext scraped from the listing expando, or `''` for
+   *  non-self posts. The poll loop uses this as a fallback when the per-post
+   *  `.json` fetch fails or returns no `selftext_html`. */
+  selftextHtml: string;
   score: number;
   /** `null` when old.reddit didn't expose a count on the thing; the JSON pass
    *  fills this in when available. */
@@ -125,6 +128,18 @@ function extractPosts(html: string): RedditPost[] {
       previewUrl = decodeHtmlEntities(previewMatch[1]);
     }
 
+    // Extract selftext for self posts. old.reddit.com inlines the rendered
+    // post body in the expando's `data-cachedhtml` attribute (double-encoded:
+    // HTML-entity-escaped). We decode once to recover the real HTML; the poll
+    // loop runs it through `stripHtmlToPlainText` later.
+    let selftextHtml = '';
+    if (isSelf) {
+      const expandoMatch = thingBlock.match(/<div[^>]*class="[^"]*\bexpando\b[^"]*"[^>]*\bdata-cachedhtml="([^"]*)"/i);
+      if (expandoMatch && expandoMatch[1]) {
+        selftextHtml = decodeHtmlEntities(expandoMatch[1]);
+      }
+    }
+
     // For imgur single images, convert to direct image URL
     let finalUrl = postUrl.startsWith('/') ? `https://reddit.com${postUrl}` : postUrl;
     if (finalUrl.match(/^https?:\/\/imgur\.com\/[a-zA-Z0-9]+$/)) {
@@ -139,7 +154,7 @@ function extractPosts(html: string): RedditPost[] {
       subreddit,
       url: finalUrl,
       permalink: `https://reddit.com${permalink}`,
-      selftext: '',
+      selftextHtml,
       score,
       numComments: Number.isFinite(numComments) ? numComments : null,
       createdUtc: timestamp / 1000,
@@ -228,8 +243,15 @@ async function resolveRedditAudioUrl(
 }
 
 async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> {
+  // Route the JSON fetch through old.reddit.com — www/new.reddit.com sometimes
+  // 403s scrapers that lack a bearer token while old.reddit serves the same
+  // `.json` endpoint without auth.
+  const jsonUrl = permalink
+    .replace('https://reddit.com/', 'https://old.reddit.com/')
+    .replace('https://www.reddit.com/', 'https://old.reddit.com/')
+    + '.json';
+
   try {
-    const jsonUrl = `${permalink}.json`;
     const cookies = getRedditCookies();
 
     const headers: Record<string, string> = {
@@ -241,7 +263,10 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
     }
 
     const response = await fetch(jsonUrl, { headers });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      logger.debug(`Reddit post JSON fetch failed: ${response.status} ${jsonUrl}`);
+      return null;
+    }
 
     const json = await response.json() as Array<{
       data: {
@@ -386,7 +411,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
 
     return { selftextHtml, galleryImageUrls, galleryCaptions, videoUrl, videoAudioUrl, previewUrl, numComments };
   } catch (err) {
-    logger.debug(`Failed to fetch post JSON for ${permalink}: ${(err as Error).message}`);
+    logger.debug(`Failed to fetch post JSON from ${jsonUrl}: ${(err as Error).message}`);
     return null;
   }
 }
@@ -528,8 +553,14 @@ export async function pollReddit(): Promise<DigestPost[]> {
 
       // Selftext: extract embedded images first (before we strip HTML) so that
       // a self/text post with inline images surfaces both text AND media.
-      if (postJson?.selftextHtml) {
-        const decoded = decodeHtmlEntities(postJson.selftextHtml);
+      //
+      // Source preference: the per-post `.json` response when it came back,
+      // else the `data-cachedhtml` attribute we scraped from the listing. The
+      // fallback is important for self posts when Reddit 403s our JSON
+      // requests — without it, text posts arrive with title-only.
+      const selftextHtmlRaw = postJson?.selftextHtml || post.selftextHtml;
+      if (selftextHtmlRaw) {
+        const decoded = decodeHtmlEntities(selftextHtmlRaw);
         const inlineImages = extractImagesFromSelftext(decoded);
         const existingUrls = new Set(media.map(m => m.url));
         for (const img of inlineImages) {

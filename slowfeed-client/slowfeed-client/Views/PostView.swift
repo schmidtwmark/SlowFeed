@@ -77,8 +77,10 @@ struct PostView: View {
         VStack(alignment: .leading, spacing: 8) {
             PostHeaderView(post: post)
 
-            // Title — skip when duplicate of content or empty.
-            if !titleIsDuplicate, !displayTitle.isEmpty {
+            // Title — Reddit is the only source with a real editorial title.
+            // Bluesky / Discord / YouTube all have server-synthesized titles
+            // that just restate the author or content.
+            if source == .reddit, !titleIsDuplicate, !displayTitle.isEmpty {
                 Text(displayTitle)
                     .font(.headline)
                     .foregroundStyle(.primary)
