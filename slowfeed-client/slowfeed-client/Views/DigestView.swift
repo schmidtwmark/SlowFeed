@@ -111,10 +111,15 @@ struct DigestView: View {
     @State private var debugJSON: String?
     @State private var scrolledPostId: String?
 
-    /// All post IDs in order (including thread replies for Bluesky).
+    /// Whether this source carries threaded replies (Bluesky + Mastodon).
+    private var isThreadedSource: Bool {
+        digest.source == .bluesky || digest.source == .mastodon
+    }
+
+    /// All post IDs in order (including thread replies for threaded sources).
     private var allPostIds: [String] {
         guard let posts = digest.posts else { return [] }
-        if digest.source == .bluesky {
+        if isThreadedSource {
             return posts.flatMap { flattenThread($0) }.map(\.post.postId)
         } else {
             return posts.map(\.postId)
@@ -124,7 +129,7 @@ struct DigestView: View {
     /// Top-level post IDs only (skips thread replies). Used for shift+nav and iOS skip button.
     private var topLevelPostIds: [String] {
         guard let posts = digest.posts else { return [] }
-        if digest.source == .bluesky {
+        if isThreadedSource {
             return posts.flatMap { flattenThread($0) }.filter(\.isThreadRoot).map(\.post.postId)
         } else {
             return posts.map(\.postId)
@@ -156,7 +161,11 @@ struct DigestView: View {
 
                         if let posts = digest.posts, !posts.isEmpty {
                             VStack(alignment: .leading, spacing: 0) {
-                                if digest.source == .bluesky {
+                                if digest.source == .bluesky || digest.source == .mastodon {
+                                    // Threaded rendering: flattened post tree
+                                    // with depth indicators. Mastodon uses the
+                                    // same shape since `buildThreadTree` on
+                                    // the server produces `replies` chains.
                                     BlueskyThreadedView(posts: posts, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
                                 } else if digest.source == .reddit || digest.source == .discord {
                                     GroupedPostsView(posts: posts, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
@@ -481,22 +490,11 @@ struct GroupedPostsView: View {
     }
 
     var body: some View {
+        // The grouping still matters for ordering (posts from the same
+        // subreddit/channel stay adjacent), but no visible header — each post
+        // already carries its own chip in the header, so a label row on top
+        // was just noise.
         ForEach(groups) { group in
-            // Section header
-            HStack {
-                Text(group.name)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(group.posts.count)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal)
-            .padding(.top, 16)
-            .padding(.bottom, 4)
-
             ForEach(group.posts) { post in
                 PostView(post: post, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
                     .id(post.postId)

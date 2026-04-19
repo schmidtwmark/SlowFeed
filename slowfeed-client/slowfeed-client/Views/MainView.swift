@@ -6,12 +6,6 @@ struct MainView: View {
 
     @State private var httpLogger = HTTPLogger.shared
 
-    /// Column visibility for the digests split view. On iOS compact this flips
-    /// to `.detailOnly` when a digest is pushed and back to `.all` /
-    /// `.doubleColumn` when the user pops — we use that as the cue to clear
-    /// the selection so the same row is re-tappable.
-    @State private var digestColumnVisibility: NavigationSplitViewVisibility = .automatic
-
     enum AppTab: String {
         case digests, saved, network, settings
     }
@@ -19,24 +13,13 @@ struct MainView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             SwiftUI.Tab("Digests", systemImage: "doc.text.fill", value: AppTab.digests) {
-                NavigationSplitView(columnVisibility: $digestColumnVisibility) {
+                NavigationSplitView {
                     DigestSidebar()
                 } detail: {
                     DigestDetailView()
                 }
                 #if os(macOS)
                 .frame(minWidth: 800, minHeight: 500)
-                #endif
-                #if !os(macOS)
-                .onChange(of: digestColumnVisibility) { _, newValue in
-                    // On iOS compact, returning to the sidebar (back gesture or
-                    // back button) flips visibility away from `.detailOnly`.
-                    // Clear the selection so re-tapping the same digest row
-                    // registers as a value change and navigates again.
-                    if newValue != .detailOnly {
-                        appState.currentDigest = nil
-                    }
-                }
                 #endif
             }
 
@@ -82,17 +65,10 @@ struct MainView: View {
 
 struct DigestSidebar: View {
     @Environment(AppState.self) private var appState
+    @State private var selection: String?
 
     var body: some View {
-        List(selection: Binding(
-            get: { appState.currentDigest?.id },
-            set: { id in
-                if let id, let index = appState.digests.firstIndex(where: { $0.id == id }) {
-                    appState.keyboardFocusPane = .posts
-                    Task { await appState.navigateToDigest(at: index) }
-                }
-            }
-        )) {
+        List(selection: $selection) {
             ForEach(groupedDigests) { group in
                 Section(isExpanded: Binding(
                     get: { appState.expandedGroups.contains(group.id) },
@@ -146,6 +122,17 @@ struct DigestSidebar: View {
         #endif
         .refreshable {
             await appState.refreshDigests()
+        }
+        .onChange(of: selection) { _, id in
+            guard let id, id != appState.currentDigest?.id,
+                  let index = appState.digests.firstIndex(where: { $0.id == id }) else { return }
+            appState.keyboardFocusPane = .posts
+            Task { await appState.navigateToDigest(at: index) }
+        }
+        .onChange(of: appState.currentDigest?.id) { _, id in
+            // Keep the List's selection in sync when navigation is driven
+            // from elsewhere (keyboard shortcuts, auto-select on load, …).
+            if selection != id { selection = id }
         }
     }
 

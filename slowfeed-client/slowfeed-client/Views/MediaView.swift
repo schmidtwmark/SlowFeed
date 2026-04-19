@@ -57,7 +57,10 @@ struct MediaView: View {
 
             ForEach(videos, id: \.url) { vid in
                 InlineVideoPlayer(media: vid)
-                    .frame(maxWidth: 600)
+                    // 600pt cap on both axes: landscape videos fill the width,
+                    // vertical (9:16) videos cap at 600 tall instead of bloating
+                    // up to 1000+pt.
+                    .frame(maxWidth: 600, maxHeight: 600)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .contextMenu { mediaContextMenu(for: vid) }
             }
@@ -226,11 +229,24 @@ struct NativePlayerView: NSViewRepresentable {
 /// Inline video player. Reddit DASH/CMAF posts have audio in a separate file;
 /// we merge them into one `AVPlayerItem` via ``AVMutableComposition`` so the
 /// two tracks stay in sync (a pair of independent `AVPlayer` instances drifts).
+///
+/// The player's frame uses the video's natural aspect ratio (returned by the
+/// composition builder) rather than a hardcoded 16:9 — otherwise vertical
+/// Reddit videos (9:16 TikTok-style) render tiny inside a wide letterboxed
+/// frame. The thumbnail relies on the preview image's own intrinsic aspect
+/// ratio until we load the real video.
 struct InlineVideoPlayer: View {
     let media: PostMedia
 
     @State private var player: AVPlayer?
     @State private var loopObserver: NSObjectProtocol?
+    /// Set from the video track's natural size + `preferredTransform` during
+    /// playback setup. Falls back to 16:9 until playback actually starts.
+    @State private var aspectRatio: CGFloat = 16.0 / 9.0
+    /// Re-entrancy guard: the thumbnail can receive multiple taps while we're
+    /// building the composition, and each tap would otherwise spawn its own
+    /// player + audio stream.
+    @State private var isStartingPlayback = false
 
     /// Whether the audio URL is actually a separate track (not the same as video).
     private var hasSeparateAudio: Bool {
@@ -243,11 +259,11 @@ struct InlineVideoPlayer: View {
             if let player {
                 #if os(macOS)
                 NativePlayerView(player: player)
-                    .aspectRatio(16/9, contentMode: .fit)
+                    .aspectRatio(aspectRatio, contentMode: .fit)
                     .onDisappear { stopPlayback() }
                 #else
                 VideoPlayer(player: player)
-                    .aspectRatio(16/9, contentMode: .fit)
+                    .aspectRatio(aspectRatio, contentMode: .fit)
                     .onDisappear { stopPlayback() }
                 #endif
             } else {
@@ -260,16 +276,19 @@ struct InlineVideoPlayer: View {
     private var thumbnailPlaceholder: some View {
         ZStack {
             if let thumbUrl = media.thumbnailUrl, let url = URL(string: thumbUrl) {
+                // Thumbnail image sizes itself to its own intrinsic ratio, so
+                // vertical videos already preview correctly without us having
+                // to load the video asset just to set the placeholder aspect.
                 CachedImage(url: url) {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(.quaternary)
-                        .aspectRatio(16/9, contentMode: .fit)
+                        .aspectRatio(aspectRatio, contentMode: .fit)
                 }
                 .aspectRatio(contentMode: .fit)
             } else {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.quaternary)
-                    .aspectRatio(16/9, contentMode: .fit)
+                    .aspectRatio(aspectRatio, contentMode: .fit)
             }
 
             Image(systemName: "play.circle.fill")
@@ -279,23 +298,45 @@ struct InlineVideoPlayer: View {
         }
     }
 
-    private func startPlayback() {
-        guard let videoURL = URL(string: media.url) else { return }
+    /// Result of the async player builder: the player plus the video's natural
+    /// aspect ratio (computed from `naturalSize` + `preferredTransform`).
+    private struct Built {
+        let player: AVPlayer
+        let aspectRatio: CGFloat?
+    }
 
-        if hasSeparateAudio, let audioURL = URL(string: media.audioUrl!) {
-            // Reddit DASH/CMAF: combine video-only + audio-only tracks into a
-            // single AVPlayerItem via AVMutableComposition so they stay in sync.
-            // The composition uses async track/duration/transform loaders, so
-            // we build it in a Task and fall back to a plain video player if
-            // either asset can't be loaded.
-            Task { @MainActor in
-                let combined = await Self.makeCombinedPlayer(videoURL: videoURL, audioURL: audioURL)
-                let player = combined ?? AVPlayer(url: videoURL)
-                install(player: player)
+    private func startPlayback() {
+        // Guard against rapid double-taps on the thumbnail. Each tap would
+        // otherwise launch its own async task → its own AVPlayer → two audio
+        // streams playing at once.
+        guard player == nil, !isStartingPlayback else { return }
+        guard let videoURL = URL(string: media.url) else { return }
+        isStartingPlayback = true
+
+        Task { @MainActor in
+            defer { isStartingPlayback = false }
+
+            let built: Built
+            if hasSeparateAudio, let audioURL = URL(string: media.audioUrl!) {
+                // Reddit DASH/CMAF: combine video-only + audio-only tracks into
+                // a single AVPlayerItem via AVMutableComposition so they stay
+                // in sync. Falls back to a plain video-only player if the
+                // composition can't be built.
+                if let combined = await Self.makeCombinedPlayer(videoURL: videoURL, audioURL: audioURL) {
+                    built = combined
+                } else {
+                    built = Built(player: AVPlayer(url: videoURL), aspectRatio: nil)
+                }
+            } else {
+                // Standard video — audio is embedded in the file.
+                let ratio = await Self.loadAspectRatio(for: videoURL)
+                built = Built(player: AVPlayer(url: videoURL), aspectRatio: ratio)
             }
-        } else {
-            // Standard video — audio is embedded in the file.
-            install(player: AVPlayer(url: videoURL))
+
+            if let ratio = built.aspectRatio, ratio > 0 {
+                aspectRatio = ratio
+            }
+            install(player: built.player)
         }
     }
 
@@ -319,10 +360,9 @@ struct InlineVideoPlayer: View {
 
     /// Build an `AVPlayer` from a composition that merges the video track from
     /// `videoURL` with the audio track from `audioURL`. Returns nil if either
-    /// asset lacks the expected track. Uses the async `load(...)` APIs so the
-    /// blocking `tracks(withMediaType:)` / `duration` / `preferredTransform`
-    /// deprecations go away.
-    private static func makeCombinedPlayer(videoURL: URL, audioURL: URL) async -> AVPlayer? {
+    /// asset lacks the expected track. Also returns the video's natural aspect
+    /// ratio so the caller can size the frame correctly before attach.
+    private static func makeCombinedPlayer(videoURL: URL, audioURL: URL) async -> Built? {
         let videoAsset = AVURLAsset(url: videoURL)
         let audioAsset = AVURLAsset(url: audioURL)
 
@@ -337,9 +377,11 @@ struct InlineVideoPlayer: View {
             async let videoDurationLoad = videoAsset.load(.duration)
             async let audioDurationLoad = audioAsset.load(.duration)
             async let preferredTransformLoad = videoTrack.load(.preferredTransform)
+            async let naturalSizeLoad = videoTrack.load(.naturalSize)
             let videoDuration = try await videoDurationLoad
             let audioDuration = try await audioDurationLoad
             let preferredTransform = try await preferredTransformLoad
+            let naturalSize = try await naturalSizeLoad
 
             let duration = CMTimeMinimum(videoDuration, audioDuration)
             let range = CMTimeRange(start: .zero, duration: duration)
@@ -354,7 +396,32 @@ struct InlineVideoPlayer: View {
             }
 
             let item = AVPlayerItem(asset: composition)
-            return AVPlayer(playerItem: item)
+            let player = AVPlayer(playerItem: item)
+
+            let oriented = naturalSize.applying(preferredTransform)
+            let w = abs(oriented.width), h = abs(oriented.height)
+            let ratio: CGFloat? = (w > 0 && h > 0) ? w / h : nil
+
+            return Built(player: player, aspectRatio: ratio)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Load just the natural aspect ratio for a video URL — used when we
+    /// aren't building a composition (single-stream videos with embedded audio).
+    private static func loadAspectRatio(for url: URL) async -> CGFloat? {
+        let asset = AVURLAsset(url: url)
+        do {
+            guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
+            async let sizeLoad = track.load(.naturalSize)
+            async let transformLoad = track.load(.preferredTransform)
+            let size = try await sizeLoad
+            let transform = try await transformLoad
+            let oriented = size.applying(transform)
+            let w = abs(oriented.width), h = abs(oriented.height)
+            guard w > 0, h > 0 else { return nil }
+            return w / h
         } catch {
             return nil
         }
