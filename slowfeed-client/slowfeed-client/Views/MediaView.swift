@@ -36,7 +36,7 @@ struct MediaView: View {
                         LazyHStack(spacing: 12) {
                             ForEach(Array(images.enumerated()), id: \.offset) { index, img in
                                 if let url = URL(string: img.url) {
-                                    imageThumb(url: url, media: img, index: index)
+                                    imageThumb(url: url, media: img, index: index, galleryPosition: (index + 1, images.count))
                                         .frame(width: itemWidth, height: min(itemWidth * 0.75, 400))
                                         .contextMenu { mediaContextMenu(for: img) }
                                 }
@@ -48,11 +48,6 @@ struct MediaView: View {
                     .scrollTargetBehavior(.viewAligned)
                 }
                 .frame(height: min(400, 300))
-
-                // Gallery counter
-                Text("\(images.count) images")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
 
             ForEach(videos, id: \.url) { vid in
@@ -68,7 +63,12 @@ struct MediaView: View {
     }
 
     @ViewBuilder
-    private func imageThumb(url: URL, media: PostMedia, index: Int) -> some View {
+    private func imageThumb(
+        url: URL,
+        media: PostMedia,
+        index: Int,
+        galleryPosition: (current: Int, total: Int)? = nil
+    ) -> some View {
         let altText = (media.alt?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
         CachedImage(url: url) {
             RoundedRectangle(cornerRadius: 8)
@@ -83,6 +83,12 @@ struct MediaView: View {
         .overlay(alignment: .bottomLeading) {
             if altText != nil {
                 AltBadge()
+                    .padding(8)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if let pos = galleryPosition {
+                GalleryIndexBadge(current: pos.current, total: pos.total)
                     .padding(8)
             }
         }
@@ -206,6 +212,26 @@ struct AltBadge: View {
     }
 }
 
+// MARK: - Gallery Index Badge
+
+/// "1 / 3"-style pill shown in the top-right corner of each image in an
+/// inline gallery. Replaces the old "N images" text below the gallery.
+struct GalleryIndexBadge: View {
+    let current: Int
+    let total: Int
+
+    var body: some View {
+        Text("\(current) / \(total)")
+            .font(.caption2)
+            .fontWeight(.semibold)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(.black.opacity(0.55), in: Capsule())
+            .accessibilityLabel("Image \(current) of \(total)")
+    }
+}
+
 // MARK: - Inline Video Player
 
 #if os(macOS)
@@ -226,33 +252,20 @@ struct NativePlayerView: NSViewRepresentable {
 }
 #endif
 
-/// Inline video player. Reddit DASH/CMAF posts have audio in a separate file;
-/// we merge them into one `AVPlayerItem` via ``AVMutableComposition`` so the
-/// two tracks stay in sync (a pair of independent `AVPlayer` instances drifts).
+/// Inline video player. Hands the URL straight to `AVPlayer`, which natively
+/// plays HLS (`.m3u8`) and progressive MP4 — including Reddit videos via
+/// `hls_url`, since AVPlayer handles the muxed video+audio itself.
 ///
-/// The player's frame uses the video's natural aspect ratio (returned by the
-/// composition builder) rather than a hardcoded 16:9 — otherwise vertical
-/// Reddit videos (9:16 TikTok-style) render tiny inside a wide letterboxed
-/// frame. The thumbnail relies on the preview image's own intrinsic aspect
-/// ratio until we load the real video.
+/// The player's frame uses the video's natural aspect ratio loaded from the
+/// asset (honoring `preferredTransform`) rather than a hardcoded 16:9, so
+/// vertical videos render without letterboxing.
 struct InlineVideoPlayer: View {
     let media: PostMedia
 
     @State private var player: AVPlayer?
     @State private var loopObserver: NSObjectProtocol?
-    /// Set from the video track's natural size + `preferredTransform` during
-    /// playback setup. Falls back to 16:9 until playback actually starts.
+    /// Falls back to 16:9 until the asset's natural size loads.
     @State private var aspectRatio: CGFloat = 16.0 / 9.0
-    /// Re-entrancy guard: the thumbnail can receive multiple taps while we're
-    /// building the composition, and each tap would otherwise spawn its own
-    /// player + audio stream.
-    @State private var isStartingPlayback = false
-
-    /// Whether the audio URL is actually a separate track (not the same as video).
-    private var hasSeparateAudio: Bool {
-        guard let audioUrl = media.audioUrl else { return false }
-        return audioUrl != media.url
-    }
 
     var body: some View {
         ZStack {
@@ -276,9 +289,8 @@ struct InlineVideoPlayer: View {
     private var thumbnailPlaceholder: some View {
         ZStack {
             if let thumbUrl = media.thumbnailUrl, let url = URL(string: thumbUrl) {
-                // Thumbnail image sizes itself to its own intrinsic ratio, so
-                // vertical videos already preview correctly without us having
-                // to load the video asset just to set the placeholder aspect.
+                // Thumbnail sizes itself to its own intrinsic ratio, so
+                // vertical videos preview correctly without a pre-load.
                 CachedImage(url: url) {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(.quaternary)
@@ -298,118 +310,37 @@ struct InlineVideoPlayer: View {
         }
     }
 
-    /// Result of the async player builder: the player plus the video's natural
-    /// aspect ratio (computed from `naturalSize` + `preferredTransform`).
-    private struct Built {
-        let player: AVPlayer
-        let aspectRatio: CGFloat?
-    }
-
     private func startPlayback() {
-        // Guard against rapid double-taps on the thumbnail. Each tap would
-        // otherwise launch its own async task → its own AVPlayer → two audio
-        // streams playing at once.
-        guard player == nil, !isStartingPlayback else { return }
-        guard let videoURL = URL(string: media.url) else { return }
-        isStartingPlayback = true
+        guard player == nil, let videoURL = URL(string: media.url) else { return }
 
-        Task { @MainActor in
-            defer { isStartingPlayback = false }
+        let newPlayer = AVPlayer(url: videoURL)
 
-            let built: Built
-            if hasSeparateAudio, let audioURL = URL(string: media.audioUrl!) {
-                // Reddit DASH/CMAF: combine video-only + audio-only tracks into
-                // a single AVPlayerItem via AVMutableComposition so they stay
-                // in sync. Falls back to a plain video-only player if the
-                // composition can't be built.
-                if let combined = await Self.makeCombinedPlayer(videoURL: videoURL, audioURL: audioURL) {
-                    built = combined
-                } else {
-                    built = Built(player: AVPlayer(url: videoURL), aspectRatio: nil)
-                }
-            } else {
-                // Standard video — audio is embedded in the file.
-                let ratio = await Self.loadAspectRatio(for: videoURL)
-                built = Built(player: AVPlayer(url: videoURL), aspectRatio: ratio)
-            }
-
-            if let ratio = built.aspectRatio, ratio > 0 {
-                aspectRatio = ratio
-            }
-            install(player: built.player)
-        }
-    }
-
-    /// Attach `player`, arm the loop observer, and start playback.
-    @MainActor
-    private func install(player: AVPlayer) {
+        // Loop on end.
         if let observer = loopObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         loopObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
-            object: player.currentItem,
+            object: newPlayer.currentItem,
             queue: .main
         ) { _ in
-            player.seek(to: .zero)
-            player.play()
+            newPlayer.seek(to: .zero)
+            newPlayer.play()
         }
-        player.play()
-        self.player = player
-    }
 
-    /// Build an `AVPlayer` from a composition that merges the video track from
-    /// `videoURL` with the audio track from `audioURL`. Returns nil if either
-    /// asset lacks the expected track. Also returns the video's natural aspect
-    /// ratio so the caller can size the frame correctly before attach.
-    private static func makeCombinedPlayer(videoURL: URL, audioURL: URL) async -> Built? {
-        let videoAsset = AVURLAsset(url: videoURL)
-        let audioAsset = AVURLAsset(url: audioURL)
+        newPlayer.play()
+        player = newPlayer
 
-        do {
-            guard
-                let videoTrack = try await videoAsset.loadTracks(withMediaType: .video).first,
-                let audioTrack = try await audioAsset.loadTracks(withMediaType: .audio).first
-            else {
-                return nil
+        // Resize to the video's natural aspect ratio in the background.
+        Task { @MainActor in
+            if let ratio = await Self.loadAspectRatio(for: videoURL), ratio > 0 {
+                aspectRatio = ratio
             }
-
-            async let videoDurationLoad = videoAsset.load(.duration)
-            async let audioDurationLoad = audioAsset.load(.duration)
-            async let preferredTransformLoad = videoTrack.load(.preferredTransform)
-            async let naturalSizeLoad = videoTrack.load(.naturalSize)
-            let videoDuration = try await videoDurationLoad
-            let audioDuration = try await audioDurationLoad
-            let preferredTransform = try await preferredTransformLoad
-            let naturalSize = try await naturalSizeLoad
-
-            let duration = CMTimeMinimum(videoDuration, audioDuration)
-            let range = CMTimeRange(start: .zero, duration: duration)
-
-            let composition = AVMutableComposition()
-            if let compVideo = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
-                try compVideo.insertTimeRange(range, of: videoTrack, at: .zero)
-                compVideo.preferredTransform = preferredTransform
-            }
-            if let compAudio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-                try compAudio.insertTimeRange(range, of: audioTrack, at: .zero)
-            }
-
-            let item = AVPlayerItem(asset: composition)
-            let player = AVPlayer(playerItem: item)
-
-            let oriented = naturalSize.applying(preferredTransform)
-            let w = abs(oriented.width), h = abs(oriented.height)
-            let ratio: CGFloat? = (w > 0 && h > 0) ? w / h : nil
-
-            return Built(player: player, aspectRatio: ratio)
-        } catch {
-            return nil
         }
     }
 
-    /// Load just the natural aspect ratio for a video URL — used when we
-    /// aren't building a composition (single-stream videos with embedded audio).
+    /// Load the asset's natural aspect ratio, honoring `preferredTransform` so
+    /// portrait videos recorded sideways still present as portrait.
     private static func loadAspectRatio(for url: URL) async -> CGFloat? {
         let asset = AVURLAsset(url: url)
         do {
@@ -436,6 +367,137 @@ struct InlineVideoPlayer: View {
     }
 }
 
+// MARK: - Zoomable Image (iOS)
+
+#if !os(macOS)
+/// Photos-app-style zoomable image backed by UIScrollView. Handles pinch
+/// anchoring, pan within bounds with rubber-banding, bounce at zoom limits,
+/// and double-tap-to-zoom-at-location natively — none of which are
+/// reliable with SwiftUI's gesture primitives alone.
+///
+/// The parent owns the image view bounds; this representable fills them.
+/// A `zoomScale` binding is exposed so the overlay can use it to gate
+/// swipe-to-dismiss (only at 1x).
+struct ZoomableImage: UIViewRepresentable {
+    let image: UIImage?
+    @Binding var zoomScale: CGFloat
+    var onSingleTap: (() -> Void)? = nil
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let scroll = UIScrollView()
+        scroll.delegate = context.coordinator
+        scroll.minimumZoomScale = 1
+        scroll.maximumZoomScale = 6
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.showsVerticalScrollIndicator = false
+        scroll.bouncesZoom = true
+        scroll.decelerationRate = .fast
+        scroll.contentInsetAdjustmentBehavior = .never
+        scroll.backgroundColor = .clear
+
+        let imageView = UIImageView(image: image)
+        imageView.contentMode = .scaleAspectFit
+        imageView.isUserInteractionEnabled = true
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        scroll.addSubview(imageView)
+
+        // Pin the image view to both the content and the frame guides so it
+        // stays centered and resizes with the scroll view at 1x zoom.
+        NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            imageView.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+            imageView.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
+        ])
+
+        context.coordinator.imageView = imageView
+        context.coordinator.scrollView = scroll
+
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator,
+                                               action: #selector(Coordinator.handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        scroll.addGestureRecognizer(doubleTap)
+
+        let singleTap = UITapGestureRecognizer(target: context.coordinator,
+                                               action: #selector(Coordinator.handleSingleTap(_:)))
+        singleTap.numberOfTapsRequired = 1
+        singleTap.require(toFail: doubleTap)
+        scroll.addGestureRecognizer(singleTap)
+
+        return scroll
+    }
+
+    func updateUIView(_ uiView: UIScrollView, context: Context) {
+        if context.coordinator.imageView?.image != image {
+            context.coordinator.imageView?.image = image
+            uiView.setZoomScale(1, animated: false)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        weak var imageView: UIImageView?
+        weak var scrollView: UIScrollView?
+        var parent: ZoomableImage
+
+        init(parent: ZoomableImage) { self.parent = parent }
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            // Push the current zoom back up to SwiftUI so the overlay can
+            // disable swipe-to-dismiss while zoomed in.
+            let s = scrollView.zoomScale
+            if abs(parent.zoomScale - s) > 0.001 {
+                DispatchQueue.main.async { self.parent.zoomScale = s }
+            }
+        }
+
+        @objc func handleDoubleTap(_ gr: UITapGestureRecognizer) {
+            guard let scroll = scrollView, let imageView else { return }
+            if scroll.zoomScale > scroll.minimumZoomScale + 0.001 {
+                scroll.setZoomScale(scroll.minimumZoomScale, animated: true)
+            } else {
+                // Zoom to the tap location at 3x — matches Photos behavior.
+                let targetScale: CGFloat = 3
+                let location = gr.location(in: imageView)
+                let w = scroll.bounds.width / targetScale
+                let h = scroll.bounds.height / targetScale
+                let rect = CGRect(x: location.x - w / 2, y: location.y - h / 2, width: w, height: h)
+                scroll.zoom(to: rect, animated: true)
+            }
+        }
+
+        @objc func handleSingleTap(_ gr: UITapGestureRecognizer) {
+            parent.onSingleTap?()
+        }
+    }
+}
+
+/// Loads a `UIImage` for a URL (using the same NSCache the rest of the app
+/// shares) and calls back once it's available. Sync return for cache hits.
+struct LoadedUIImage {
+    static func cachedImage(for url: URL) -> UIImage? {
+        ImageCache.shared.image(for: url)
+    }
+
+    static func fetch(url: URL) async -> UIImage? {
+        if let cached = ImageCache.shared.image(for: url) { return cached }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let image = UIImage(data: data) else { return nil }
+            ImageCache.shared.store(image, for: url)
+            return image
+        } catch {
+            return nil
+        }
+    }
+}
+#endif
+
 // MARK: - Fullscreen Image Viewer Overlay
 
 /// Full-screen image viewer with pinch-to-zoom, swipe-to-dismiss, and (when
@@ -446,17 +508,28 @@ struct ImageViewerOverlay: View {
     let namespace: Namespace.ID
     let onDismiss: () -> Void
 
-    // Pan & zoom
-    @State private var scale: CGFloat = 1.0
-    @State private var lastScale: CGFloat = 1.0
-    @State private var offset: CGSize = .zero
-    @State private var lastOffset: CGSize = .zero
+    // iOS: zoom reported back by `ZoomableImage` (UIScrollView). We use this
+    // to gate swipe-to-dismiss — only allow it at minimum zoom.
+    @State private var zoomScale: CGFloat = 1
 
-    // Swipe-to-dismiss
+    // iOS: loaded UIImage for the current URL (UIScrollView needs a UIImage).
+    #if !os(macOS)
+    @State private var loadedImage: UIImage?
+    #endif
+
+    // Swipe-to-dismiss state.
     @State private var dismissDrag: CGSize = .zero
     @State private var backgroundOpacity: Double = 1.0
     @FocusState private var isFocused: Bool
     @State private var showAltText: Bool = false
+
+    // macOS only: simple scale/offset bag for the SwiftUI-based zoom.
+    #if os(macOS)
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+    #endif
 
     private var imageURLs: [URL] { images.compactMap { URL(string: $0.url) } }
     private var safeIndex: Int {
@@ -472,7 +545,15 @@ struct ImageViewerOverlay: View {
         let trimmed = images[safeIndex].alt?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (trimmed?.isEmpty == false) ? trimmed : nil
     }
-    private var isDraggingToDismiss: Bool { scale <= 1.0 && dismissDrag != .zero }
+
+    /// True when the user is dragging-to-dismiss at minimum zoom.
+    private var isDraggingToDismiss: Bool {
+        #if os(macOS)
+        return scale <= 1.0 && dismissDrag != .zero
+        #else
+        return abs(zoomScale - 1) < 0.01 && dismissDrag != .zero
+        #endif
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -482,41 +563,13 @@ struct ImageViewerOverlay: View {
                     .ignoresSafeArea()
                     .onTapGesture { onDismiss() }
 
-                // The image with matched geometry for animation
-                CachedImage(url: currentURL) {
-                    ProgressView().tint(.white)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                .aspectRatio(contentMode: .fit)
-                .matchedGeometryEffect(id: currentURL?.absoluteString ?? "", in: namespace)
-                .scaleEffect(scale)
-                .offset(
-                    x: offset.width + (isDraggingToDismiss ? dismissDrag.width * 0.3 : 0),
-                    y: offset.height + (isDraggingToDismiss ? dismissDrag.height : 0)
-                )
-                .scaleEffect(isDraggingToDismiss ? max(0.7, 1.0 - abs(dismissDrag.height) / 1000) : 1.0)
-                .gesture(combinedGesture(containerSize: geo.size))
-                .onTapGesture(count: 2) { location in
-                    withAnimation(.spring(duration: 0.3)) {
-                        if scale > 1.5 {
-                            resetZoom()
-                        } else {
-                            let newScale: CGFloat = 3.0
-                            let cx = geo.size.width / 2, cy = geo.size.height / 2
-                            scale = newScale; lastScale = newScale
-                            offset = CGSize(width: (cx - location.x) * (newScale - 1),
-                                            height: (cy - location.y) * (newScale - 1))
-                            lastOffset = offset
-                        }
-                    }
-                }
+                imageLayer(containerSize: geo.size)
 
                 // Gallery arrows
                 if imageURLs.count > 1 {
                     HStack {
                         if currentIndex > 0 {
                             navButton(systemName: "chevron.left.circle.fill") {
-                                resetZoom()
                                 showAltText = false
                                 withAnimation(.easeInOut(duration: 0.25)) { currentIndex -= 1 }
                             }
@@ -525,7 +578,6 @@ struct ImageViewerOverlay: View {
                         Spacer()
                         if currentIndex < imageURLs.count - 1 {
                             navButton(systemName: "chevron.right.circle.fill") {
-                                resetZoom()
                                 showAltText = false
                                 withAnimation(.easeInOut(duration: 0.25)) { currentIndex += 1 }
                             }
@@ -550,8 +602,90 @@ struct ImageViewerOverlay: View {
             if currentIndex < imageURLs.count - 1 { resetZoom(); withAnimation { currentIndex += 1 } }
             return .handled
         }
+        #else
+        .task(id: currentURL) {
+            // Load the UIImage for the UIScrollView wrapper. Uses the shared
+            // NSCache so if the thumbnail grid already fetched this image, we
+            // reuse the in-memory copy — no redundant download.
+            guard let url = currentURL else { return }
+            loadedImage = LoadedUIImage.cachedImage(for: url)
+            if loadedImage == nil {
+                loadedImage = await LoadedUIImage.fetch(url: url)
+            }
+        }
         #endif
     }
+
+    /// Platform-split image layer: UIScrollView-backed on iOS for Photos-app
+    /// fidelity (proper pinch anchoring, pan bounds, double-tap-at-location,
+    /// bounce at limits) and the existing SwiftUI gesture approach on macOS
+    /// (mouse input → the custom gesture code plays nicely enough there).
+    @ViewBuilder
+    private func imageLayer(containerSize: CGSize) -> some View {
+        #if os(macOS)
+        CachedImage(url: currentURL) {
+            ProgressView().tint(.white)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .aspectRatio(contentMode: .fit)
+        .matchedGeometryEffect(id: currentURL?.absoluteString ?? "", in: namespace)
+        .scaleEffect(scale)
+        .offset(x: offset.width, y: offset.height)
+        .gesture(macOSZoomGesture(containerSize: containerSize))
+        .onTapGesture(count: 2) { location in
+            withAnimation(.spring(duration: 0.3)) {
+                if scale > 1.5 {
+                    resetZoom()
+                } else {
+                    let newScale: CGFloat = 3.0
+                    let cx = containerSize.width / 2, cy = containerSize.height / 2
+                    scale = newScale; lastScale = newScale
+                    offset = CGSize(width: (cx - location.x) * (newScale - 1),
+                                    height: (cy - location.y) * (newScale - 1))
+                    lastOffset = offset
+                }
+            }
+        }
+        #else
+        ZoomableImage(image: loadedImage, zoomScale: $zoomScale, onSingleTap: onDismiss)
+            .matchedGeometryEffect(id: currentURL?.absoluteString ?? "", in: namespace)
+            .offset(
+                x: isDraggingToDismiss ? dismissDrag.width * 0.3 : 0,
+                y: isDraggingToDismiss ? dismissDrag.height : 0
+            )
+            .scaleEffect(isDraggingToDismiss ? max(0.7, 1.0 - abs(dismissDrag.height) / 1000) : 1.0)
+            // Swipe-to-dismiss runs on the parent; the scroll view consumes
+            // its own pan when zoomed in, so this gesture only fires at 1x.
+            .simultaneousGesture(dismissDragGesture())
+        #endif
+    }
+
+    #if !os(macOS)
+    private func dismissDragGesture() -> some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                guard abs(zoomScale - 1) < 0.01 else { return }
+                // Only vertical drag dismisses; horizontal is ambiguous with
+                // scroll view's own recognizer so we ignore it.
+                guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                dismissDrag = value.translation
+                let progress = min(abs(value.translation.height) / 300, 1.0)
+                backgroundOpacity = Double(1.0 - progress * 0.6)
+            }
+            .onEnded { value in
+                guard dismissDrag != .zero else { return }
+                let vy = value.velocity.height
+                if abs(dismissDrag.height) > 120 || abs(vy) > 800 {
+                    onDismiss()
+                } else {
+                    withAnimation(.spring(duration: 0.3)) {
+                        dismissDrag = .zero
+                        backgroundOpacity = 1.0
+                    }
+                }
+            }
+    }
+    #endif
 
     /// Close button + counter + tap-to-expand ALT caption.
     private var chrome: some View {
@@ -619,61 +753,53 @@ struct ImageViewerOverlay: View {
         .buttonStyle(.plain)
     }
 
+    #if os(macOS)
     private func resetZoom() {
         scale = 1.0; lastScale = 1.0
         offset = .zero; lastOffset = .zero
     }
 
-    // MARK: - Simultaneous pinch + pan gesture (Photos-style)
-
-    private func combinedGesture(containerSize: CGSize) -> some Gesture {
-        SimultaneousGesture(
-            MagnifyGesture(),
-            DragGesture()
-        )
-        .onChanged { value in
-            // Pinch
-            if let magnification = value.first?.magnification {
-                scale = max(0.5, min(lastScale * magnification, 10.0))
-            }
-            // Drag
-            if let translation = value.second?.translation {
-                if scale > 1.01 {
-                    // Pan within zoomed image
-                    offset = CGSize(
-                        width: lastOffset.width + translation.width / scale,
-                        height: lastOffset.height + translation.height / scale
-                    )
-                } else if value.first == nil {
-                    // Only dragging (no pinch) at 1x → swipe to dismiss
-                    dismissDrag = translation
-                    let progress = min(abs(translation.height) / 300, 1.0)
-                    backgroundOpacity = Double(1.0 - progress * 0.6)
+    /// Pinch + pan + swipe-to-dismiss for macOS (trackpad / mouse wheel).
+    private func macOSZoomGesture(containerSize: CGSize) -> some Gesture {
+        SimultaneousGesture(MagnifyGesture(), DragGesture())
+            .onChanged { value in
+                if let magnification = value.first?.magnification {
+                    scale = max(0.5, min(lastScale * magnification, 10.0))
                 }
-            }
-        }
-        .onEnded { value in
-            // Finalize pinch
-            lastScale = scale
-            if scale < 1.0 {
-                withAnimation(.spring(duration: 0.3)) { resetZoom() }
-            }
-            // Finalize drag
-            if scale > 1.01 {
-                lastOffset = offset
-            } else if dismissDrag != .zero {
-                let vy = value.second?.velocity.height ?? 0
-                if abs(dismissDrag.height) > 120 || abs(vy) > 800 {
-                    onDismiss()
-                } else {
-                    withAnimation(.spring(duration: 0.3)) {
-                        dismissDrag = .zero
-                        backgroundOpacity = 1.0
+                if let translation = value.second?.translation {
+                    if scale > 1.01 {
+                        offset = CGSize(
+                            width: lastOffset.width + translation.width / scale,
+                            height: lastOffset.height + translation.height / scale
+                        )
+                    } else if value.first == nil {
+                        dismissDrag = translation
+                        let progress = min(abs(translation.height) / 300, 1.0)
+                        backgroundOpacity = Double(1.0 - progress * 0.6)
                     }
                 }
             }
-        }
+            .onEnded { value in
+                lastScale = scale
+                if scale < 1.0 {
+                    withAnimation(.spring(duration: 0.3)) { resetZoom() }
+                }
+                if scale > 1.01 {
+                    lastOffset = offset
+                } else if dismissDrag != .zero {
+                    let vy = value.second?.velocity.height ?? 0
+                    if abs(dismissDrag.height) > 120 || abs(vy) > 800 {
+                        onDismiss()
+                    } else {
+                        withAnimation(.spring(duration: 0.3)) {
+                            dismissDrag = .zero
+                            backgroundOpacity = 1.0
+                        }
+                    }
+                }
+            }
     }
+    #endif
 }
 
 // MARK: - Previews
@@ -711,9 +837,8 @@ struct ImageViewerOverlay: View {
     MediaView(
         media: [PreviewPost.MediaSpec(
             type: "video",
-            url: "https://example.com/fake.mp4",
-            thumbnailUrl: "https://picsum.photos/seed/slowfeed5/800/450",
-            audioUrl: "https://example.com/fake_audio.mp4"
+            url: "https://example.com/fake.m3u8",
+            thumbnailUrl: "https://picsum.photos/seed/slowfeed5/800/450"
         )].map(mediaSpecToPostMedia),
         postTitle: "Video"
     )

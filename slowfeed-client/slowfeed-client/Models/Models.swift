@@ -112,7 +112,6 @@ struct PostMedia: Codable {
     let type: String           // "image", "video", "file"
     let url: String
     let thumbnailUrl: String?
-    let audioUrl: String?      // separate audio track (Reddit DASH videos)
     let alt: String?
     let filename: String?
     let mimeType: String?

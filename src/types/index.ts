@@ -51,7 +51,6 @@ export interface PostMedia {
   type: 'image' | 'video' | 'file';
   url: string;
   thumbnailUrl?: string;    // poster/preview for videos, thumb for files
-  audioUrl?: string;        // separate audio track (Reddit DASH videos)
   alt?: string;
   filename?: string;
   mimeType?: string;

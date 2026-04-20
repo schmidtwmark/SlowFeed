@@ -71,13 +71,11 @@ enum PreviewPost {
         var type: String = "image"
         var url: String
         var thumbnailUrl: String? = nil
-        var audioUrl: String? = nil
         var alt: String? = nil
 
         func dictionary() -> [String: Any] {
             var d: [String: Any] = ["type": type, "url": url]
             if let thumbnailUrl { d["thumbnailUrl"] = thumbnailUrl }
-            if let audioUrl { d["audioUrl"] = audioUrl }
             if let alt { d["alt"] = alt }
             return d
         }

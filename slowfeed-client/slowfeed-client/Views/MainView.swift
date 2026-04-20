@@ -124,7 +124,13 @@ struct DigestSidebar: View {
             await appState.refreshDigests()
         }
         .onChange(of: selection) { _, id in
-            guard let id, id != appState.currentDigest?.id,
+            // Re-navigate on every selection change, even when it matches
+            // `currentDigest?.id` — on iPhone compact, `NavigationSplitView`
+            // clears the List's selection on pop, so a re-tap of the same
+            // row is a real nil → id transition and should re-push the
+            // detail. A stale `id == currentDigest?.id` guard here is what
+            // produced MAR-30.
+            guard let id,
                   let index = appState.digests.firstIndex(where: { $0.id == id }) else { return }
             appState.keyboardFocusPane = .posts
             Task { await appState.navigateToDigest(at: index) }

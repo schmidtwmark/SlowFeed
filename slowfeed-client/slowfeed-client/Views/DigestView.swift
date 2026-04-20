@@ -19,7 +19,13 @@ extension View {
 
 // MARK: - Cached Image Loader (replaces AsyncImage for reliability)
 
-private final class ImageCache {
+#if os(macOS)
+typealias PlatformImage = NSImage
+#else
+typealias PlatformImage = UIImage
+#endif
+
+final class ImageCache {
     static let shared = ImageCache()
     private let cache = NSCache<NSURL, PlatformImage>()
 
@@ -35,12 +41,6 @@ private final class ImageCache {
         cache.setObject(image, forKey: url as NSURL)
     }
 }
-
-#if os(macOS)
-private typealias PlatformImage = NSImage
-#else
-private typealias PlatformImage = UIImage
-#endif
 
 struct CachedImage<Placeholder: View>: View {
     let url: URL?

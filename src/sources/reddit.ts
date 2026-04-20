@@ -175,71 +175,15 @@ interface RedditPostJson {
   galleryImageUrls: string[];
   /** Per-image captions from media_metadata, parallel to galleryImageUrls. */
   galleryCaptions: (string | null)[];
+  /**
+   * Preferred video URL. HLS manifest when Reddit exposes one (AVPlayer plays
+   * this natively with audio), otherwise the muted `fallback_url` MP4 for
+   * GIFs / legacy posts.
+   */
   videoUrl: string | null;
-  videoAudioUrl: string | null;
   previewUrl: string | null;
   /** `null` when the JSON didn't include it; otherwise an authoritative count. */
   numComments: number | null;
-}
-
-/**
- * Try a list of audio URL candidates derived from the video's fallback_url.
- * v.redd.it has used several suffixes over the years — DASH_AUDIO_128/64,
- * CMAF_AUDIO_128/64, and the legacy DASH_audio.mp4 — so we HEAD-probe each.
- * Returns the first URL that responds 200, or null if none do.
- */
-async function resolveRedditAudioUrl(
-  videoUrl: string,
-  dashUrl: string | undefined,
-): Promise<string | null> {
-  const candidates: string[] = [];
-  const pushSub = (pattern: RegExp, replacements: string[]) => {
-    if (!pattern.test(videoUrl)) return;
-    for (const r of replacements) {
-      const withExt = videoUrl.replace(pattern, `${r}.mp4`);
-      const noExt = videoUrl.replace(new RegExp(pattern.source.replace('\\.mp4', '') + '(?=\\?|$)'), r);
-      if (!candidates.includes(withExt)) candidates.push(withExt);
-      if (!candidates.includes(noExt) && noExt !== withExt) candidates.push(noExt);
-    }
-  };
-  // DASH format: DASH_720.mp4 → DASH_AUDIO_128.mp4 / DASH_AUDIO_64.mp4 / DASH_audio.mp4
-  pushSub(/DASH_\d+\.mp4/, ['DASH_AUDIO_128', 'DASH_AUDIO_64', 'DASH_audio']);
-  // CMAF format: CMAF_720.mp4 → CMAF_AUDIO_128.mp4 / CMAF_AUDIO_64.mp4
-  pushSub(/CMAF_\d+\.mp4/, ['CMAF_AUDIO_128', 'CMAF_AUDIO_64']);
-
-  for (const url of candidates) {
-    try {
-      const res = await fetch(url, { method: 'HEAD', headers: { 'User-Agent': USER_AGENT } });
-      if (res.ok) return url;
-    } catch {
-      // network error – try next
-    }
-  }
-
-  // Fallback: parse the DASH manifest for an AdaptationSet with mimeType="audio/*"
-  if (dashUrl) {
-    try {
-      const res = await fetch(dashUrl, { headers: { 'User-Agent': USER_AGENT } });
-      if (res.ok) {
-        const mpd = await res.text();
-        // Extract the audio representation's BaseURL; pick the highest bandwidth.
-        const audioSet = mpd.match(/<AdaptationSet[^>]*mimeType="audio\/[^"]+"[\s\S]*?<\/AdaptationSet>/i);
-        if (audioSet) {
-          const baseMatches = [...audioSet[0].matchAll(/<BaseURL[^>]*>([^<]+)<\/BaseURL>/gi)];
-          if (baseMatches.length > 0) {
-            const base = baseMatches[baseMatches.length - 1][1].trim();
-            const absolute = new URL(base, dashUrl).toString();
-            const probe = await fetch(absolute, { method: 'HEAD', headers: { 'User-Agent': USER_AGENT } });
-            if (probe.ok) return absolute;
-          }
-        }
-      }
-    } catch {
-      // fall through
-    }
-  }
-
-  return null;
 }
 
 async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> {
@@ -291,6 +235,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
             media?: {
               reddit_video?: {
                 fallback_url?: string;
+                hls_url?: string;
                 dash_url?: string;
                 is_gif?: boolean;
               };
@@ -298,6 +243,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
             secure_media?: {
               reddit_video?: {
                 fallback_url?: string;
+                hls_url?: string;
                 dash_url?: string;
                 is_gif?: boolean;
               };
@@ -306,6 +252,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
               media?: {
                 reddit_video?: {
                   fallback_url?: string;
+                  hls_url?: string;
                   dash_url?: string;
                   is_gif?: boolean;
                 };
@@ -313,6 +260,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
               secure_media?: {
                 reddit_video?: {
                   fallback_url?: string;
+                  hls_url?: string;
                   dash_url?: string;
                   is_gif?: boolean;
                 };
@@ -379,22 +327,21 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
       }
     }
 
-    // Extract video URL. v.redd.it serves video-only DASH/CMAF streams with
-    // audio as a separate file. We probe a few known audio variants to find
-    // one that exists (Reddit uses different suffixes at different times).
+    // Video URL. Reddit exposes three variants: `hls_url` (HLS manifest,
+    // pre-muxed audio + video — AVPlayer plays it natively), `dash_url` (DASH,
+    // unsupported on Apple platforms), and `fallback_url` (video-only MP4
+    // with audio as a separate file). Prefer HLS; only fall back to the muted
+    // MP4 for GIFs, which have no audio anyway.
     let videoUrl: string | null = null;
-    let videoAudioUrl: string | null = null;
     const redditVideo = postData.media?.reddit_video
       || postData.secure_media?.reddit_video
       || crosspost?.media?.reddit_video
       || crosspost?.secure_media?.reddit_video;
 
-    if (redditVideo?.fallback_url) {
+    if (redditVideo?.hls_url) {
+      videoUrl = redditVideo.hls_url;
+    } else if (redditVideo?.fallback_url) {
       videoUrl = redditVideo.fallback_url;
-      const isGif = redditVideo.is_gif === true;
-      if (!isGif) {
-        videoAudioUrl = await resolveRedditAudioUrl(videoUrl, redditVideo.dash_url);
-      }
     }
 
     // Extract preview URL (for videos and other content)
@@ -409,7 +356,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
 
     const numComments = typeof postData.num_comments === 'number' ? postData.num_comments : null;
 
-    return { selftextHtml, galleryImageUrls, galleryCaptions, videoUrl, videoAudioUrl, previewUrl, numComments };
+    return { selftextHtml, galleryImageUrls, galleryCaptions, videoUrl, previewUrl, numComments };
   } catch (err) {
     logger.debug(`Failed to fetch post JSON from ${jsonUrl}: ${(err as Error).message}`);
     return null;
@@ -516,27 +463,31 @@ export async function pollReddit(): Promise<DigestPost[]> {
       // Fetch JSON data for rich content (galleries, videos, selftext)
       const postJson = await fetchPostJson(post.permalink);
 
-      // Gallery posts: each image becomes a media entry. Use Reddit's per-image
-      // caption from media_metadata if present; fall back to a positional label.
+      // Gallery posts: each image becomes a media entry. Only set `alt`
+      // when Reddit actually has a per-image caption — the post title /
+      // "title (N/M)" fallback we used to emit wasn't real alt text, so the
+      // client's ALT badge was lighting up on every Reddit image.
       if (post.isGallery && postJson && postJson.galleryImageUrls.length > 0) {
         for (let i = 0; i < postJson.galleryImageUrls.length; i++) {
           const caption = postJson.galleryCaptions[i];
           media.push({
             type: 'image',
             url: postJson.galleryImageUrls[i],
-            alt: caption ?? `${post.title} (${i + 1}/${postJson.galleryImageUrls.length})`,
+            ...(caption ? { alt: caption } : {}),
           });
         }
       } else if (post.isImage) {
-        // Single image post
+        // Single image post — Reddit doesn't expose alt text for these, so
+        // leave the field empty.
         media.push({
           type: 'image',
           url: post.url,
-          alt: post.title,
         });
       }
 
-      // Video posts
+      // Video posts — the URL is an HLS manifest when Reddit exposes one,
+      // otherwise the muted fallback MP4 (GIFs). AVPlayer plays both natively;
+      // no separate audio track handling needed.
       if (post.isVideo) {
         const videoUrl = postJson?.videoUrl;
         const videoPreview = postJson?.previewUrl || post.previewUrl;
@@ -546,7 +497,6 @@ export async function pollReddit(): Promise<DigestPost[]> {
             type: 'video',
             url: videoUrl,
             thumbnailUrl: videoPreview || undefined,
-            audioUrl: postJson?.videoAudioUrl || undefined,
           });
         }
       }
