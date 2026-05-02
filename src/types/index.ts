@@ -84,6 +84,12 @@ export interface PostEmbed {
 export interface PostMetadata {
   // Common
   avatarUrl?: string;
+  /** Set when the upstream source flags this post as NSFW / sensitive
+   *  (Reddit `over_18`, Bluesky labels, Mastodon `sensitive`, Discord
+   *  channel `nsfw`). The client blurs media for these unless the user
+   *  has disabled the "Blur NSFW media" setting or explicitly tapped to
+   *  reveal. */
+  nsfw?: boolean;
 
   // Reddit
   score?: number;

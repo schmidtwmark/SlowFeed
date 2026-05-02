@@ -101,7 +101,8 @@ struct PostView: View {
                 MediaView(media: media,
                           postTitle: post.title,
                           imageNamespace: imageNamespace,
-                          onSelectImage: onSelectImage)
+                          onSelectImage: onSelectImage,
+                          isNSFW: post.metadata?.nsfw == true)
             }
 
             // External links
@@ -132,6 +133,11 @@ struct PostView: View {
 
             metadataFooter
         }
+        // Hard-clamp the post card to the available width — without this
+        // any inner content with intrinsic width (long URLs, hardcoded
+        // image maxWidth) can push the digest list wider than the screen on
+        // iPhone, producing horizontal scroll.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(isFocused ? Color.accentColor.opacity(0.08) : Color.clear)
         .overlay(alignment: .leading) {

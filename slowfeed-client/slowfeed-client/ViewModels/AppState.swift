@@ -48,6 +48,15 @@ final class AppState {
         }
     }
 
+    /// When true, media on posts whose `metadata.nsfw == true` is rendered
+    /// blurred with a tap-to-reveal overlay. Defaults to true. Stored in
+    /// `UserDefaults` so it persists across launches.
+    var blurNSFW: Bool = true {
+        didSet {
+            UserDefaults.standard.set(blurNSFW, forKey: "blurNSFW")
+        }
+    }
+
     // Digest state
     var digests: [DigestSummary] = []
     var currentDigest: Digest?
@@ -111,6 +120,12 @@ final class AppState {
     init() {
         serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
         sessionId = UserDefaults.standard.string(forKey: "sessionId")
+        // Default `blurNSFW` to true when never set; otherwise honor the saved value.
+        if UserDefaults.standard.object(forKey: "blurNSFW") == nil {
+            blurNSFW = true
+        } else {
+            blurNSFW = UserDefaults.standard.bool(forKey: "blurNSFW")
+        }
 
         if let sessionId {
             apiClient.setSession(sessionId)

@@ -165,6 +165,9 @@ struct PostMetadata: Codable {
     let repostedBy: String?
     let rootUri: String?
     let parentUri: String?
+    /// True when the upstream source flagged this post as NSFW / sensitive.
+    /// Drives the blur in `MediaView` when the `Blur NSFW media` setting is on.
+    let nsfw: Bool?
 }
 
 // MARK: - Test Poll Response

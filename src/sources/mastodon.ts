@@ -49,6 +49,8 @@ interface MastodonStatus {
   reblog?: MastodonStatus | null;
   media_attachments: MastodonMediaAttachment[];
   spoiler_text?: string;
+  /** True when the author marked the post as sensitive (NSFW). */
+  sensitive?: boolean;
   /** Non-null when this status is a reply — ID of the parent status. */
   in_reply_to_id?: string | null;
   /** Instance ID of the author of the parent status, when it's a reply. */
@@ -173,6 +175,7 @@ function statusToDigestPost(
       avatarUrl: status.account.avatar || undefined,
       displayName: status.account.display_name || undefined,
       repostedBy,
+      ...(status.sensitive === true ? { nsfw: true } : {}),
     },
     media: media.length > 0 ? media : undefined,
     quotedPost,

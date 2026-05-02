@@ -184,6 +184,8 @@ interface RedditPostJson {
   previewUrl: string | null;
   /** `null` when the JSON didn't include it; otherwise an authoritative count. */
   numComments: number | null;
+  /** Reddit's `over_18` flag — true when the subreddit or post is NSFW. */
+  isNSFW: boolean;
 }
 
 async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> {
@@ -220,6 +222,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
             selftext?: string;
             thumbnail?: string;
             num_comments?: number;
+            over_18?: boolean;
             preview?: {
               images?: Array<{
                 source?: { url?: string; width?: number; height?: number };
@@ -355,8 +358,9 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
     }
 
     const numComments = typeof postData.num_comments === 'number' ? postData.num_comments : null;
+    const isNSFW = postData.over_18 === true;
 
-    return { selftextHtml, galleryImageUrls, galleryCaptions, videoUrl, previewUrl, numComments };
+    return { selftextHtml, galleryImageUrls, galleryCaptions, videoUrl, previewUrl, numComments, isNSFW };
   } catch (err) {
     logger.debug(`Failed to fetch post JSON from ${jsonUrl}: ${(err as Error).message}`);
     return null;
@@ -558,6 +562,7 @@ export async function pollReddit(): Promise<DigestPost[]> {
           score: post.score,
           subreddit: post.subreddit,
           ...(typeof commentCount === 'number' ? { numComments: commentCount } : {}),
+          ...(postJson?.isNSFW ? { nsfw: true } : {}),
         },
         ...(media.length > 0 ? { media } : {}),
         ...(links.length > 0 ? { links } : {}),

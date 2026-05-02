@@ -17,8 +17,22 @@ struct MediaView: View {
     let postTitle: String
     var imageNamespace: Namespace.ID?
     var onSelectImage: (([PostMedia], Int) -> Void)?
+    /// True when the parent post is flagged NSFW. Combined with
+    /// `appState.blurNSFW` this drives the per-post blur. Defaults to
+    /// `false` so non-NSFW posts (and callers that don't care) never blur.
+    var isNSFW: Bool = false
 
     @Environment(\.openURL) private var openURL
+    @Environment(AppState.self) private var appState
+    /// Per-MediaView (i.e. per-post) reveal flag. Tap-to-reveal lasts only as
+    /// long as this view stays in memory; revisiting the post re-blurs.
+    @State private var nsfwRevealed: Bool = false
+
+    /// True iff blur should currently be applied. Encapsulates the AppState
+    /// preference + the per-post reveal toggle so callsites stay terse.
+    private var shouldBlurNSFW: Bool {
+        isNSFW && appState.blurNSFW && !nsfwRevealed
+    }
 
     private var images: [PostMedia] { media.filter { $0.type == "image" } }
     private var videos: [PostMedia] { media.filter { $0.type == "video" } }
@@ -47,6 +61,9 @@ struct MediaView: View {
                     }
                     .scrollTargetBehavior(.viewAligned)
                 }
+                // Pin width to the parent so the GeometryReader doesn't try
+                // to take its parent's intrinsic content width on iPhone.
+                .frame(maxWidth: .infinity)
                 .frame(height: min(400, 300))
             }
 
@@ -57,6 +74,13 @@ struct MediaView: View {
                     // up to 1000+pt.
                     .frame(maxWidth: 600, maxHeight: 600)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .blur(radius: shouldBlurNSFW ? 32 : 0)
+                    .overlay {
+                        if shouldBlurNSFW {
+                            NSFWRevealOverlay { nsfwRevealed = true }
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
                     .contextMenu { mediaContextMenu(for: vid) }
             }
         }
@@ -80,20 +104,32 @@ struct MediaView: View {
         .if(imageNamespace != nil) { view in
             view.matchedGeometryEffect(id: url.absoluteString, in: imageNamespace!)
         }
+        .blur(radius: shouldBlurNSFW ? 32 : 0)
+        // Pin a click region the size of the image so the reveal overlay
+        // and the open-fullscreen tap don't both fire.
+        .overlay {
+            if shouldBlurNSFW {
+                NSFWRevealOverlay { nsfwRevealed = true }
+            }
+        }
         .overlay(alignment: .bottomLeading) {
-            if altText != nil {
+            if altText != nil, !shouldBlurNSFW {
                 AltBadge()
                     .padding(8)
             }
         }
         .overlay(alignment: .topTrailing) {
-            if let pos = galleryPosition {
+            if let pos = galleryPosition, !shouldBlurNSFW {
                 GalleryIndexBadge(current: pos.current, total: pos.total)
                     .padding(8)
             }
         }
         .accessibilityLabel(altText ?? "Image")
-        .onTapGesture { onSelectImage?(images, index) }
+        .onTapGesture {
+            // When blurred, the overlay handles taps. Otherwise open viewer.
+            guard !shouldBlurNSFW else { return }
+            onSelectImage?(images, index)
+        }
     }
 
     @ViewBuilder
@@ -229,6 +265,39 @@ struct GalleryIndexBadge: View {
             .padding(.vertical, 2)
             .background(.black.opacity(0.55), in: Capsule())
             .accessibilityLabel("Image \(current) of \(total)")
+    }
+}
+
+// MARK: - NSFW Reveal Overlay
+
+/// Center-stamped "Show NSFW Content" affordance shown over a blurred image
+/// or video thumbnail. Tapping anywhere on the overlay reveals the media for
+/// the rest of this view's lifetime (no persisted reveal — privacy default).
+struct NSFWRevealOverlay: View {
+    var onReveal: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.15)
+            VStack(spacing: 8) {
+                Image(systemName: "eye.slash.fill")
+                    .font(.title)
+                Text("Sensitive Content")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text("Tap to show")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { onReveal() }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Sensitive content. Tap to reveal.")
     }
 }
 
@@ -654,9 +723,12 @@ struct ImageViewerOverlay: View {
                 y: isDraggingToDismiss ? dismissDrag.height : 0
             )
             .scaleEffect(isDraggingToDismiss ? max(0.7, 1.0 - abs(dismissDrag.height) / 1000) : 1.0)
-            // Swipe-to-dismiss runs on the parent; the scroll view consumes
-            // its own pan when zoomed in, so this gesture only fires at 1x.
+            // Both gestures only fire at minimum zoom; the scroll view
+            // consumes its own pan when zoomed in. The orientation guards
+            // (`|dy| > |dx|` vs `|dx| > |dy|`) keep them from competing on
+            // the same drag.
             .simultaneousGesture(dismissDragGesture())
+            .simultaneousGesture(swipeToPageGesture())
         #endif
     }
 
@@ -682,6 +754,31 @@ struct ImageViewerOverlay: View {
                         dismissDrag = .zero
                         backgroundOpacity = 1.0
                     }
+                }
+            }
+    }
+
+    /// Horizontal swipe between gallery images. Mirrors the chevron buttons.
+    /// Only fires at minimum zoom (UIScrollView eats horizontal pan when
+    /// zoomed in) and only when the drag is more horizontal than vertical
+    /// (so it can't conflict with `dismissDragGesture`).
+    private func swipeToPageGesture() -> some Gesture {
+        DragGesture(minimumDistance: 30)
+            .onEnded { value in
+                guard abs(zoomScale - 1) < 0.01 else { return }
+                let dx = value.translation.width
+                let dy = value.translation.height
+                guard abs(dx) > abs(dy) else { return }
+                let vx = value.velocity.width
+                let triggered = abs(dx) > 60 || abs(vx) > 500
+                guard triggered else { return }
+
+                if dx < 0, currentIndex < imageURLs.count - 1 {
+                    showAltText = false
+                    withAnimation(.easeInOut(duration: 0.25)) { currentIndex += 1 }
+                } else if dx > 0, currentIndex > 0 {
+                    showAltText = false
+                    withAnimation(.easeInOut(duration: 0.25)) { currentIndex -= 1 }
                 }
             }
     }

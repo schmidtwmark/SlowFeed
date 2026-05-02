@@ -206,29 +206,40 @@ struct DigestView: View {
             }
             .allowsHitTesting(!showViewer)
 
-            // Floating skip button (iOS)
+            // Floating skip button (iOS).
+            //
+            // Tap = next root post (relative to currently-visible scroll
+            // position, not the stale keyboard focus).
+            // Long press = jump up — to the top of the current root if a
+            // reply is on screen, else to the previous root.
+            //
+            // Implemented as a label + composed gesture rather than a Button
+            // so we can use `LongPressGesture.exclusively(before: TapGesture)`.
+            // A Button + simultaneousGesture(LongPress) fires both the tap
+            // and long-press handlers on release, which produced MAR-58's
+            // "snaps back forward" behavior.
             #if os(iOS)
             if !showViewer, let posts = digest.posts, !posts.isEmpty {
                 VStack {
                     Spacer()
                     HStack {
                         Spacer()
-                        Button {
-                            navigateTopLevelPost(direction: 1)
-                        } label: {
-                            Image(systemName: "chevron.down")
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.white)
-                                .frame(width: 48, height: 48)
-                                .background(.thinMaterial.opacity(0.9), in: Circle())
-                                .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
-                        }
-                        .simultaneousGesture(
-                            LongPressGesture(minimumDuration: 0.4).onEnded { _ in
-                                navigateTopLevelPost(direction: -1)
-                            }
-                        )
+                        Image(systemName: "chevron.down")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.white)
+                            .frame(width: 48, height: 48)
+                            .background(.thinMaterial.opacity(0.9), in: Circle())
+                            .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
+                            .contentShape(Circle())
+                            .gesture(
+                                LongPressGesture(minimumDuration: 0.4)
+                                    .onEnded { _ in jumpUp() }
+                                    .exclusively(before:
+                                        TapGesture()
+                                            .onEnded { navigateTopLevelPost(direction: 1) }
+                                    )
+                            )
                     }
                     .padding(.trailing, 20)
                     .padding(.bottom, 20)
@@ -368,17 +379,19 @@ struct DigestView: View {
     }
     #endif
 
-    /// Navigate to next/previous top-level post (used by iOS floating button)
+    /// Navigate to next/previous top-level post (used by iOS floating button).
+    /// Prefers `scrolledPostId` over `focusedPostId` — scroll is the most
+    /// recent user signal, so tapping the down-arrow after scrolling should
+    /// advance from what's on screen, not from a stale keyboard focus.
     func navigateTopLevelPost(direction: Int) {
         let ids = topLevelPostIds
         guard !ids.isEmpty else { return }
 
-        guard let currentId = appState.focusedPostId ?? scrolledPostId else {
+        guard let currentId = scrolledPostId ?? appState.focusedPostId else {
             appState.focusedPostId = direction > 0 ? ids.first : ids.last
             return
         }
 
-        // Find nearest top-level post in the given direction
         let all = allPostIds
         if let currentIdx = all.firstIndex(of: currentId) {
             if direction > 0 {
@@ -398,6 +411,46 @@ struct DigestView: View {
             }
         } else {
             appState.focusedPostId = direction > 0 ? ids.first : ids.last
+        }
+    }
+
+    /// Long-press behavior on the floating skip button:
+    /// - If the visible post is a reply (not a root), scroll to the root of
+    ///   the thread it belongs to.
+    /// - Otherwise, scroll to the previous root post.
+    /// Matches the spec in MAR-58.
+    func jumpUp() {
+        let roots = topLevelPostIds
+        guard !roots.isEmpty else { return }
+
+        let currentId = scrolledPostId ?? appState.focusedPostId
+        let all = allPostIds
+
+        guard let currentId,
+              let currentIdx = all.firstIndex(of: currentId) else {
+            appState.focusedPostId = roots.first
+            return
+        }
+
+        if !roots.contains(currentId) {
+            // We're sitting on a reply. Find the most recent root at or
+            // before this index — that's the root of the current thread.
+            let rootBefore = roots.last(where: { rootId in
+                guard let rootIdx = all.firstIndex(of: rootId) else { return false }
+                return rootIdx <= currentIdx
+            })
+            if let rootBefore {
+                appState.focusedPostId = rootBefore
+                return
+            }
+        }
+
+        // Already on (or above) a root — go to the previous root.
+        if let prev = roots.last(where: { rootId in
+            guard let rootIdx = all.firstIndex(of: rootId) else { return false }
+            return rootIdx < currentIdx
+        }) {
+            appState.focusedPostId = prev
         }
     }
 
@@ -599,16 +652,22 @@ struct QuotedPostBubble: View {
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     if let author = post.author {
                         Text(author)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 } else if let author = post.author {
                     Text(author)
                         .font(.caption)
                         .fontWeight(.medium)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
                 Spacer()
                 if let date = post.publishedAt {
@@ -628,7 +687,7 @@ struct QuotedPostBubble: View {
 
             // Media
             if let media = post.media, !media.isEmpty {
-                MediaView(media: media, postTitle: post.title, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+                MediaView(media: media, postTitle: post.title, imageNamespace: imageNamespace, onSelectImage: onSelectImage, isNSFW: post.metadata?.nsfw == true)
             }
 
             // Nested quoted post (cap at 2 levels)
@@ -676,12 +735,14 @@ struct LinkCardView: View {
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .lineLimit(2)
+                    .truncationMode(.middle)
 
                 if let desc = link.description {
                     Text(desc)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+                        .truncationMode(.tail)
                 }
             }
             .padding(10)
@@ -860,6 +921,8 @@ struct CommentsView: View {
                             .font(.caption)
                             .fontWeight(.medium)
                             .foregroundStyle(.blue)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                         if comment.score != 0 {
                             Text("\(comment.score) pts")
                                 .font(.caption2)

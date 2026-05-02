@@ -179,6 +179,17 @@ struct GeneralSettingsView: View {
                 }
 
                 Section {
+                    Toggle("Blur NSFW media", isOn: Binding(
+                        get: { appState.blurNSFW },
+                        set: { appState.blurNSFW = $0 }
+                    ))
+                } header: {
+                    Text("Sensitive Content")
+                } footer: {
+                    Text("Posts marked NSFW (Reddit), sensitive (Mastodon), labelled (Bluesky), or in age-restricted Discord channels show a tap-to-reveal blur over their media.")
+                }
+
+                Section {
                     Button("Save") {
                         save()
                     }

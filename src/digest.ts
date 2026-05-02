@@ -69,12 +69,18 @@ export async function createDigest(
 
   // Serialize posts to JSON, stripping characters that PostgreSQL JSONB rejects:
   // - Null bytes (\u0000)
-  // - Lone surrogates (\uD800-\uDFFF)
+  // - *Lone* (unpaired) UTF-16 surrogates. We must preserve *paired*
+  //   surrogates because that's how JavaScript represents every supplementary
+  //   character, including emoji. The previous [\uD800-\uDFFF] blanket
+  //   regex stripped both halves of every emoji and turned solo-emoji
+  //   Bluesky posts into empty strings (MAR-60).
   const postsJsonStr = JSON.stringify(postsJson)
     .replace(/\u0000/g, '')
     .replace(/\\u0000/g, '')
-    .replace(/[\uD800-\uDFFF]/g, '')
-    .replace(/\\u[dD][89a-fA-F][0-9a-fA-F]{2}/g, '');
+    // High surrogate (U+D800-U+DBFF) not followed by a low surrogate.
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+    // Low surrogate (U+DC00-U+DFFF) not preceded by a high surrogate.
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
 
   try {
     await query(

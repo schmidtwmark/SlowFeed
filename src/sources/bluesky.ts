@@ -123,6 +123,22 @@ function extractMediaAndLinks(post: AppBskyFeedDefs.PostView): { media: PostMedi
  * Convert a PostView into a tree-node DigestPost.
  * Recursively handles quotedPost. Does NOT handle replies (caller does that).
  */
+/** Bluesky NSFW labels — `porn`, `sexual`, `nudity`, `graphic-media`. */
+const NSFW_LABEL_VALUES = new Set(['porn', 'sexual', 'nudity', 'graphic-media']);
+
+/** True if the post (or any of its embedded media) carries an NSFW label. */
+function isNSFWPost(post: AppBskyFeedDefs.PostView): boolean {
+  const labels = (post.labels as Array<{ val?: string }> | undefined) ?? [];
+  if (labels.some(l => l.val && NSFW_LABEL_VALUES.has(l.val))) return true;
+
+  // Embeds (especially media-only posts) carry their own labels.
+  const embed = post.embed as { images?: Array<{ alt?: string }>; record?: { labels?: Array<{ val?: string }> } } | undefined;
+  const embedLabels = (embed?.record?.labels as Array<{ val?: string }> | undefined) ?? [];
+  if (embedLabels.some(l => l.val && NSFW_LABEL_VALUES.has(l.val))) return true;
+
+  return false;
+}
+
 function postViewToNode(post: AppBskyFeedDefs.PostView, repostedBy?: string): DigestPost {
   const record = post.record as { text?: string };
   const url = getPostUrl(post);
@@ -134,6 +150,7 @@ function postViewToNode(post: AppBskyFeedDefs.PostView, repostedBy?: string): Di
   const quotedPost = quotedView ? postViewToNode(quotedView) : undefined;
 
   const displayName = post.author.displayName || undefined;
+  const nsfw = isNSFWPost(post);
 
   return {
     postId,
@@ -146,6 +163,7 @@ function postViewToNode(post: AppBskyFeedDefs.PostView, repostedBy?: string): Di
       avatarUrl: post.author.avatar || undefined,
       displayName,
       repostedBy,
+      ...(nsfw ? { nsfw: true } : {}),
     },
     media: media.length > 0 ? media : undefined,
     links: links.length > 0 ? links : undefined,

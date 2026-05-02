@@ -16,6 +16,8 @@ interface DiscordChannel {
   name: string;
   type: number;
   guild_id?: string;
+  /** True when the channel is marked Age-Restricted in Discord. */
+  nsfw?: boolean;
 }
 
 interface DiscordMessage {
@@ -62,6 +64,9 @@ interface SelectedChannel {
   guildName: string;
   channelId: string;
   channelName: string;
+  /** Marked Age-Restricted in Discord. Older saved configs don't have this
+   *  field — treat absent as `false`. */
+  channelNSFW?: boolean;
 }
 
 function getDiscordToken(): string {
@@ -332,6 +337,7 @@ export async function pollDiscord(): Promise<DigestPost[]> {
             guildName: channel.guildName,
             channelName: channel.channelName,
             replyToMessageId: message.message_reference?.message_id,
+            ...(channel.channelNSFW === true ? { nsfw: true } : {}),
           },
           ...(media.length > 0 ? { media } : {}),
           ...(embeds.length > 0 ? { embeds } : {}),
