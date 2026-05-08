@@ -77,10 +77,19 @@ export async function createDigest(
   const postsJsonStr = JSON.stringify(postsJson)
     .replace(/\u0000/g, '')
     .replace(/\\u0000/g, '')
-    // High surrogate (U+D800-U+DBFF) not followed by a low surrogate.
+    // Lone surrogates as raw UTF-16 code units in the stringified output.
+    // High (U+D800-U+DBFF) not followed by a low surrogate, and low
+    // (U+DC00-U+DFFF) not preceded by a high. Paired surrogates (emoji
+    // and other supplementary chars) survive both regexes.
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
-    // Low surrogate (U+DC00-U+DFFF) not preceded by a high surrogate.
-    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+    // Lone surrogates as JSON \uD8XX *text escapes* — JSON.stringify
+    // emits these for any unpaired surrogate it sees in the input. PG
+    // JSONB rejects them as invalid UTF-8 ('invalid input syntax for
+    // type json'). Match both high (D8-DB) and low (DC-DF) ranges.
+    // Paired surrogates aren't escaped by JSON.stringify — they're
+    // emitted as literal characters — so this regex doesn't touch them.
+    .replace(/\\u[dD][89a-fA-F][0-9a-fA-F]{2}/g, '');
 
   try {
     await query(
