@@ -90,10 +90,11 @@ struct PostView: View {
 
             // Body
             if let content = post.content, !content.isEmpty {
-                Text(content)
+                Text(content.linkified())
                     .font(.body)
                     .foregroundStyle(.primary.opacity(0.85))
                     .lineLimit(10)
+                    .tint(.accentColor)
             }
 
             // Media

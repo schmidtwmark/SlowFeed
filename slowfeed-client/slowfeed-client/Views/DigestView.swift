@@ -679,10 +679,11 @@ struct QuotedPostBubble: View {
 
             // Content
             if let content = post.content, !content.isEmpty {
-                Text(content)
+                Text(content.linkified())
                     .font(.subheadline)
                     .foregroundStyle(.primary.opacity(0.8))
                     .lineLimit(8)
+                    .tint(.accentColor)
             }
 
             // Media
@@ -929,9 +930,10 @@ struct CommentsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    Text(comment.body)
+                    Text(comment.body.linkified())
                         .font(.caption)
                         .lineLimit(4)
+                        .tint(.accentColor)
                 }
                 .padding(.leading, 8)
                 .overlay(
