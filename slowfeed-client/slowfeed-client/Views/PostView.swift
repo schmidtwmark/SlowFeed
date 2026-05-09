@@ -21,6 +21,9 @@ struct PostView: View {
     @Environment(\.openURL) private var openURL
     @Environment(AppState.self) private var appState
     @State private var debugJSON: String?
+    /// Drives the programmatic push to ``RSSReaderView`` when the user taps
+    /// a long RSS post (or the explicit "Read more" link inside `rssBody`).
+    @State private var showReader = false
 
     private var postURL: URL? {
         guard let urlString = post.url, !urlString.isEmpty else { return nil }
@@ -77,10 +80,10 @@ struct PostView: View {
         VStack(alignment: .leading, spacing: 8) {
             PostHeaderView(post: post)
 
-            // Title — Reddit and YouTube both have real editorial titles.
+            // Title — Reddit, YouTube, and RSS all have real editorial titles.
             // Bluesky / Discord / Mastodon titles are server-synthesized and
             // just restate the author or content, so they stay hidden.
-            if (source == .reddit || source == .youtube),
+            if (source == .reddit || source == .youtube || source == .rss),
                !titleIsDuplicate,
                !displayTitle.isEmpty {
                 Text(displayTitle)
@@ -89,7 +92,9 @@ struct PostView: View {
             }
 
             // Body
-            if let content = post.content, !content.isEmpty {
+            if source == .rss {
+                rssBody
+            } else if let content = post.content, !content.isEmpty {
                 Text(content.linkified())
                     .font(.body)
                     .foregroundStyle(.primary.opacity(0.85))
@@ -149,14 +154,72 @@ struct PostView: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture {
-            appState.focusedPostId = post.postId
-            appState.keyboardFocusPane = .posts
-            if let url = postURL { openURL(url) }
-        }
+        .onTapGesture { handleCardTap() }
         .contextMenu { contextMenu }
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Post JSON", json: json)
+        }
+        // Programmatic push to the RSS reader. The whole card is a tap
+        // target — for long RSS posts the tap navigates here rather than
+        // opening the original URL in the browser.
+        .navigationDestination(isPresented: $showReader) {
+            RSSReaderView(post: post)
+        }
+    }
+
+    /// Tap on the post card. RSS overrides the default open-original-URL
+    /// behavior to match the user's "tap a long post → reader view" spec.
+    private func handleCardTap() {
+        appState.focusedPostId = post.postId
+        appState.keyboardFocusPane = .posts
+
+        if source == .rss, let content = post.content,
+           content.count > Self.rssShortPostThreshold {
+            showReader = true
+            return
+        }
+
+        if let url = postURL { openURL(url) }
+    }
+
+    // MARK: - RSS body
+
+    /// Anything below this length renders inline; longer posts render a
+    /// preview + "Read more" that pushes the full reader. Roughly 250 words.
+    private static let rssShortPostThreshold: Int = 1500
+
+    /// Body for RSS posts. Short posts render the entire stripped text
+    /// inline; longer ones get a preview with a `NavigationLink` to
+    /// ``RSSReaderView`` for the full HTML.
+    @ViewBuilder
+    private var rssBody: some View {
+        if let content = post.content, !content.isEmpty {
+            let isShort = content.count <= Self.rssShortPostThreshold
+            if isShort {
+                Text(content)
+                    .font(.body)
+                    .foregroundStyle(.primary.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(content)
+                        .font(.body)
+                        .foregroundStyle(.primary.opacity(0.85))
+                        .lineLimit(8)
+                    Button {
+                        showReader = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Read more")
+                                .fontWeight(.medium)
+                            Image(systemName: "arrow.right")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 

@@ -102,6 +102,8 @@ struct PostHeaderView: View {
             HeaderChip(text: "r/\(subreddit)", color: .orange)
         } else if let channelName = post.metadata?.channelName, !channelName.isEmpty {
             HeaderChip(text: "#\(channelName)", color: .purple)
+        } else if let feedTitle = post.metadata?.feedTitle, !feedTitle.isEmpty {
+            HeaderChip(text: feedTitle, color: .orange)
         }
     }
 }
@@ -109,13 +111,14 @@ struct PostHeaderView: View {
 // MARK: - Primary chip rule
 
 extension DigestPost {
-    /// True when the header should render a chip on the right (Reddit subreddit
-    /// or Discord channel). Bluesky and YouTube don't get a chip — Bluesky
-    /// has no equivalent category, and YouTube's channel is already shown as
-    /// the author. When this is true ``PostView`` moves the date to the footer.
+    /// True when the header should render a chip on the right (Reddit
+    /// subreddit, Discord channel, or RSS feed title). Bluesky / YouTube /
+    /// Mastodon don't get a chip. When this is true ``PostView`` moves the
+    /// published date to the footer.
     var showsPrimaryHeaderChip: Bool {
         if let s = metadata?.subreddit, !s.isEmpty { return true }
         if let n = metadata?.channelName, !n.isEmpty { return true }
+        if let f = metadata?.feedTitle, !f.isEmpty { return true }
         return false
     }
 }

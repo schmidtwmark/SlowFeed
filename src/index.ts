@@ -42,8 +42,13 @@ async function main() {
 
   // Middleware
   app.use(compression());
-  app.use(express.json());
+  // Bigger limit so OPML imports (which can carry hundreds of feeds) and
+  // reasonably large config payloads aren't truncated.
+  app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
+  // Accept raw XML/text bodies for OPML import — the iOS file picker uploads
+  // the OPML file as `text/xml` or `application/xml`.
+  app.use(express.text({ type: ['application/xml', 'text/xml', 'text/x-opml'], limit: '10mb' }));
 
   // Prevent caching of API responses
   app.use('/api', (_req, res, next) => {

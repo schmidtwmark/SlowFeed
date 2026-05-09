@@ -8,6 +8,7 @@ enum SourceType: String, Codable, CaseIterable, Identifiable {
     case youtube
     case discord
     case mastodon
+    case rss
 
     var id: String { rawValue }
 
@@ -18,6 +19,7 @@ enum SourceType: String, Codable, CaseIterable, Identifiable {
         case .youtube: return "YouTube"
         case .discord: return "Discord"
         case .mastodon: return "Mastodon"
+        case .rss: return "RSS"
         }
     }
 
@@ -28,6 +30,7 @@ enum SourceType: String, Codable, CaseIterable, Identifiable {
         case .youtube: return "play.rectangle"
         case .discord: return "message"
         case .mastodon: return "at"
+        case .rss: return "dot.radiowaves.left.and.right"
         }
     }
 
@@ -38,6 +41,7 @@ enum SourceType: String, Codable, CaseIterable, Identifiable {
         case .youtube: return "#FF0000"
         case .discord: return "#5865F2"
         case .mastodon: return "#6364FF"
+        case .rss: return "#FFA500"
         }
     }
 }
@@ -168,6 +172,13 @@ struct PostMetadata: Codable {
     /// True when the upstream source flagged this post as NSFW / sensitive.
     /// Drives the blur in `MediaView` when the `Blur NSFW media` setting is on.
     let nsfw: Bool?
+    // RSS
+    /// Title of the source feed (e.g. "Daring Fireball"). Used for the
+    /// header chip slot on RSS posts and as a secondary author label.
+    let feedTitle: String?
+    /// Full HTML body for RSS posts. The inline render uses the plain
+    /// `content` field; the reader view renders this when present.
+    let contentHTML: String?
 }
 
 // MARK: - Test Poll Response
@@ -199,6 +210,40 @@ struct SourceInfo: Codable, Identifiable {
     let enabled: Bool
 }
 
+// MARK: - RSS
+
+struct RSSFeed: Codable, Identifiable, Hashable {
+    let id: Int
+    let feedUrl: String
+    let title: String
+    let siteUrl: String?
+    let enabled: Bool
+    let lastFetchedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, enabled
+        case feedUrl
+        case siteUrl
+        case lastFetchedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        feedUrl = (try? container.decode(String.self, forKey: .feedUrl)) ?? ""
+        siteUrl = try? container.decode(String?.self, forKey: .siteUrl)
+        lastFetchedAt = try? container.decode(Date?.self, forKey: .lastFetchedAt)
+    }
+}
+
+struct OPMLImportResult: Codable {
+    let inserted: Int
+    let skipped: Int
+    let total: Int
+}
+
 // MARK: - Configuration
 
 struct AppConfig: Codable, Equatable {
@@ -226,6 +271,8 @@ struct AppConfig: Codable, Equatable {
     var mastodonAccessToken: String
     var mastodonTopN: Int
 
+    var rssEnabled: Bool
+
     var feedTtlDays: Int
 
     enum CodingKeys: String, CodingKey {
@@ -248,6 +295,7 @@ struct AppConfig: Codable, Equatable {
         case mastodonInstanceURL = "mastodon_instance_url"
         case mastodonAccessToken = "mastodon_access_token"
         case mastodonTopN = "mastodon_top_n"
+        case rssEnabled = "rss_enabled"
         case feedTtlDays = "feed_ttl_days"
     }
 
@@ -278,6 +326,8 @@ struct AppConfig: Codable, Equatable {
         mastodonInstanceURL = (try? container.decode(String.self, forKey: .mastodonInstanceURL)) ?? ""
         mastodonAccessToken = (try? container.decode(String.self, forKey: .mastodonAccessToken)) ?? ""
         mastodonTopN = (try? container.decode(Int.self, forKey: .mastodonTopN)) ?? 20
+
+        rssEnabled = (try? container.decode(Bool.self, forKey: .rssEnabled)) ?? false
 
         feedTtlDays = (try? container.decode(Int.self, forKey: .feedTtlDays)) ?? 14
     }

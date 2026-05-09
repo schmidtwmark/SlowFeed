@@ -10,6 +10,8 @@ import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
 import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, updateScrollPosition, getDigestPosts, stripHtml } from '../digest.js';
 import { savePost, unsavePost, getSavedPosts, getSavedPostIds } from '../saved-posts.js';
+import { listFeeds, addFeed, deleteFeed, updateFeed, parseOPML, addFeedsBulk } from '../feeds.js';
+import RSSParser from 'rss-parser';
 import type { ScheduleInput, SourceType, DigestPost } from '../types/index.js';
 import {
   hasPasskeys,
@@ -434,6 +436,7 @@ export function createApiRouter(): Router {
         { id: 'youtube', name: 'YouTube', enabled: config.youtube_enabled },
         { id: 'discord', name: 'Discord', enabled: config.discord_enabled },
         { id: 'mastodon', name: 'Mastodon', enabled: config.mastodon_enabled },
+        { id: 'rss', name: 'RSS', enabled: config.rss_enabled },
       ];
       res.json(sources);
     } catch (err) {
@@ -489,6 +492,7 @@ export function createApiRouter(): Router {
         'mastodon_instance_url',
         'mastodon_access_token',
         'mastodon_top_n',
+        'rss_enabled',
         'feed_ttl_days',
         // ui_password removed - using passkeys for authentication now
       ];
@@ -558,7 +562,7 @@ export function createApiRouter(): Router {
     try {
       const { source } = req.body;
 
-      if (source && ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon'].includes(source)) {
+      if (source && ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon', 'rss'].includes(source)) {
         await triggerSourcePoll(source);
       } else {
         await triggerMainPoll();
@@ -579,7 +583,7 @@ export function createApiRouter(): Router {
     try {
       const source = (req.query.source || req.body?.source) as string;
 
-      if (!source || !['reddit', 'bluesky', 'youtube', 'discord', 'mastodon'].includes(source)) {
+      if (!source || !['reddit', 'bluesky', 'youtube', 'discord', 'mastodon', 'rss'].includes(source)) {
         res.status(400).json({ error: 'Valid source parameter required (reddit, bluesky, youtube, discord, mastodon)' });
         return;
       }
@@ -685,6 +689,118 @@ export function createApiRouter(): Router {
     }
   });
 
+  // ---- RSS ----
+  // List subscribed feeds.
+  router.get('/api/rss/feeds', async (_req, res) => {
+    try {
+      res.json(await listFeeds());
+    } catch (err) {
+      logger.error('Error listing RSS feeds:', err);
+      res.status(500).json({ error: 'Failed to list feeds' });
+    }
+  });
+
+  // Add a single feed by URL. If `title` is omitted we fetch the feed once
+  // to derive it; if the fetch fails the URL itself is used as the title so
+  // the user can still save the row and retry later.
+  router.post('/api/rss/feeds', async (req, res) => {
+    try {
+      const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+      if (!url) {
+        res.status(400).json({ error: 'url is required' });
+        return;
+      }
+
+      let title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+      let siteUrl: string | undefined;
+      if (!title) {
+        try {
+          const parser = new RSSParser();
+          const parsed = await parser.parseURL(url);
+          title = (parsed.title || '').trim() || url;
+          siteUrl = parsed.link || undefined;
+        } catch (err) {
+          logger.warn(`Failed to derive title for ${url}: ${(err as Error).message}`);
+          title = url;
+        }
+      }
+
+      const feed = await addFeed(url, title, siteUrl);
+      res.json(feed);
+    } catch (err) {
+      logger.error('Error adding RSS feed:', err);
+      res.status(500).json({ error: 'Failed to add feed' });
+    }
+  });
+
+  router.delete('/api/rss/feeds/:id', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) {
+        res.status(400).json({ error: 'Invalid id' });
+        return;
+      }
+      const deleted = await deleteFeed(id);
+      if (!deleted) {
+        res.status(404).json({ error: 'Feed not found' });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      logger.error('Error deleting RSS feed:', err);
+      res.status(500).json({ error: 'Failed to delete feed' });
+    }
+  });
+
+  router.patch('/api/rss/feeds/:id', async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) {
+        res.status(400).json({ error: 'Invalid id' });
+        return;
+      }
+      const patch: { title?: string; enabled?: boolean } = {};
+      if (typeof req.body?.title === 'string') patch.title = req.body.title.trim();
+      if (typeof req.body?.enabled === 'boolean') patch.enabled = req.body.enabled;
+      const updated = await updateFeed(id, patch);
+      if (!updated) {
+        res.status(404).json({ error: 'Feed not found' });
+        return;
+      }
+      res.json(updated);
+    } catch (err) {
+      logger.error('Error updating RSS feed:', err);
+      res.status(500).json({ error: 'Failed to update feed' });
+    }
+  });
+
+  // OPML import. Body is the OPML XML text; we accept it either as
+  // `application/xml`/`text/xml` (raw) or as `{ opml: "..." }` JSON to keep
+  // the iOS DocumentPicker → fetch path simple.
+  router.post('/api/rss/feeds/import-opml', async (req, res) => {
+    try {
+      let opml: string;
+      if (typeof req.body === 'string') {
+        opml = req.body;
+      } else if (typeof req.body?.opml === 'string') {
+        opml = req.body.opml;
+      } else {
+        res.status(400).json({ error: 'OPML body required' });
+        return;
+      }
+      const entries = parseOPML(opml);
+      if (entries.length === 0) {
+        res.status(400).json({ error: 'No feeds found in OPML' });
+        return;
+      }
+      const result = await addFeedsBulk(entries);
+      res.json({ ...result, total: entries.length });
+    } catch (err) {
+      logger.error('Error importing OPML:', err);
+      res.status(500).json({ error: 'Failed to import OPML' });
+    }
+  });
+
   // Get logs
   router.get('/api/logs', (req, res) => {
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
@@ -705,7 +821,7 @@ export function createApiRouter(): Router {
   router.delete('/api/data/:source', async (req, res) => {
     try {
       const source = req.params.source;
-      const validSources = ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon'];
+      const validSources = ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon', 'rss'];
 
       if (!validSources.includes(source)) {
         res.status(400).json({ error: 'Invalid source' });
@@ -767,7 +883,7 @@ export function createApiRouter(): Router {
   // Test fetch for any source
   router.post('/api/test/:source', async (req, res) => {
     const source = req.params.source;
-    const validSources = ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon'];
+    const validSources = ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon', 'rss'];
 
     if (!validSources.includes(source)) {
       res.status(400).json({ error: 'Invalid source' });

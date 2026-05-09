@@ -167,6 +167,16 @@ struct DigestView: View {
                                     // same shape since `buildThreadTree` on
                                     // the server produces `replies` chains.
                                     BlueskyThreadedView(posts: posts, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
+                                } else if digest.source == .rss {
+                                    // RSS items are already in reverse-chron
+                                    // order from the server. Flat list, no
+                                    // grouping by feed (every post's header
+                                    // chip already shows the feed title).
+                                    ForEach(posts) { post in
+                                        PostView(post: post, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
+                                            .id(post.postId)
+                                        Divider()
+                                    }
                                 } else if digest.source == .reddit || digest.source == .discord {
                                     GroupedPostsView(posts: posts, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
                                 } else {
@@ -499,6 +509,7 @@ struct SourceBadge: View {
         case .youtube: return .red
         case .discord: return .purple
         case .mastodon: return .indigo
+        case .rss: return .yellow
         }
     }
 }

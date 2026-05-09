@@ -424,4 +424,60 @@ final class APIClient {
         }
         return json
     }
+
+    // MARK: - RSS
+
+    func listRSSFeeds() async throws -> [RSSFeed] {
+        try await request("/api/rss/feeds")
+    }
+
+    func addRSSFeed(url: String, title: String? = nil) async throws -> RSSFeed {
+        var payload: [String: String] = ["url": url]
+        if let title, !title.isEmpty { payload["title"] = title }
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        return try await request("/api/rss/feeds", method: "POST", body: body)
+    }
+
+    func deleteRSSFeed(id: Int) async throws {
+        try await requestVoid("/api/rss/feeds/\(id)", method: "DELETE")
+    }
+
+    func updateRSSFeed(id: Int, enabled: Bool? = nil, title: String? = nil) async throws -> RSSFeed {
+        var payload: [String: Any] = [:]
+        if let enabled { payload["enabled"] = enabled }
+        if let title { payload["title"] = title }
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        return try await request("/api/rss/feeds/\(id)", method: "PATCH", body: body)
+    }
+
+    /// Upload OPML XML. The server accepts either `application/xml` raw or a
+    /// JSON `{ opml: "..." }` envelope; we use raw XML so we don't have to
+    /// escape the file contents into a JSON string.
+    func importOPML(_ opmlData: Data) async throws -> OPMLImportResult {
+        guard let baseURL else { throw APIError.invalidURL }
+        guard let url = URL(string: "/api/rss/feeds/import-opml", relativeTo: baseURL) else {
+            throw APIError.invalidURL
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/xml", forHTTPHeaderField: "Content-Type")
+        if let sessionId { req.setValue(sessionId, forHTTPHeaderField: "X-Session-Id") }
+        req.httpBody = opmlData
+
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let httpResp = response as? HTTPURLResponse else {
+            throw APIError.networkError(NSError(domain: "Invalid response", code: 0))
+        }
+        if httpResp.statusCode >= 400 {
+            if let err = try? decoder.decode(ErrorResponse.self, from: data) {
+                throw APIError.serverError(err.error)
+            }
+            throw APIError.serverError("Server error: \(httpResp.statusCode)")
+        }
+        do {
+            return try decoder.decode(OPMLImportResult.self, from: data)
+        } catch {
+            throw APIError.decodingError(error)
+        }
+    }
 }

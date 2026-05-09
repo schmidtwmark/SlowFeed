@@ -7,3 +7,4 @@ data/
 *.xcuserstate
 test.sh
 cookies/
+.claude/

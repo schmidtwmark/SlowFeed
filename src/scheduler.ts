@@ -8,6 +8,7 @@ import { pollBluesky } from './sources/bluesky.js';
 import { pollYouTube } from './sources/youtube.js';
 import { pollDiscord } from './sources/discord.js';
 import { pollMastodon } from './sources/mastodon.js';
+import { pollRSS } from './sources/rss.js';
 import { getEnabledSchedules, scheduleToCron } from './schedules.js';
 import { filterNewPosts, createDigest, pruneOldDigests } from './digest.js';
 import type { PollSchedule, PollRun, SourceType, DigestPost } from './types/index.js';
@@ -43,6 +44,7 @@ const pollStatus: Map<string, PollStatus> = new Map([
   ['youtube', { source: 'youtube', lastPoll: null, lastError: null, isPolling: false }],
   ['discord', { source: 'discord', lastPoll: null, lastError: null, isPolling: false }],
   ['mastodon', { source: 'mastodon', lastPoll: null, lastError: null, isPolling: false }],
+  ['rss', { source: 'rss', lastPoll: null, lastError: null, isPolling: false }],
 ]);
 
 const scheduleStatus: Map<number, ScheduleStatus> = new Map();
@@ -96,6 +98,8 @@ function getSourcePollFn(source: SourceType): () => Promise<DigestPost[]> {
       return pollDiscord;
     case 'mastodon':
       return pollMastodon;
+    case 'rss':
+      return pollRSS;
   }
 }
 
@@ -376,6 +380,7 @@ export async function triggerMainPoll(): Promise<PollRun | null> {
   if (config.youtube_enabled) sources.push('youtube');
   if (config.discord_enabled) sources.push('discord');
   if (config.mastodon_enabled) sources.push('mastodon');
+  if (config.rss_enabled) sources.push('rss');
 
   if (sources.length === 0) {
     logger.info('No sources enabled');

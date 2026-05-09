@@ -271,6 +271,7 @@ struct DigestRow: View {
         case .youtube: return .red
         case .discord: return .purple
         case .mastodon: return .indigo
+        case .rss: return .yellow
         }
     }
 }

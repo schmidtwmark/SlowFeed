@@ -1,5 +1,5 @@
 // Source types
-export type SourceType = 'reddit' | 'bluesky' | 'youtube' | 'discord' | 'mastodon';
+export type SourceType = 'reddit' | 'bluesky' | 'youtube' | 'discord' | 'mastodon' | 'rss';
 
 // Schedule types
 export interface PollSchedule {
@@ -114,6 +114,14 @@ export interface PostMetadata {
   repostedBy?: string;
   rootUri?: string;
   parentUri?: string;
+
+  // RSS
+  /** Title of the source feed (e.g. "Daring Fireball"). Shown in the post
+   *  header chip slot, similar to subreddit / channel. */
+  feedTitle?: string;
+  /** Full HTML body for RSS posts. The inline render uses the
+   *  HTML-stripped `content` field; the reader view renders this. */
+  contentHTML?: string;
 }
 
 // Digest types

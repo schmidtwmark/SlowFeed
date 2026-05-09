@@ -36,6 +36,11 @@ struct SettingsView: View {
                     Label("Mastodon", systemImage: "at")
                 }
 
+            RSSSettingsView()
+                .tabItem {
+                    Label("RSS", systemImage: "dot.radiowaves.left.and.right")
+                }
+
             ScheduleSettingsView()
                 .tabItem {
                     Label("Schedules", systemImage: "calendar.badge.clock")
@@ -105,6 +110,12 @@ struct SettingsView: View {
                         SourceSettingsView(source: .mastodon)
                     } label: {
                         Label("Mastodon", systemImage: "at")
+                    }
+
+                    NavigationLink {
+                        RSSSettingsView()
+                    } label: {
+                        Label("RSS", systemImage: "dot.radiowaves.left.and.right")
                     }
                 }
 
@@ -290,6 +301,12 @@ struct SourceSettingsView: View {
                     discordSettings
                 case .mastodon:
                     mastodonSettings
+                case .rss:
+                    // RSS uses its own dedicated `RSSSettingsView` (feed list,
+                    // OPML import) and is reached via a different navigation
+                    // link in the main settings menu — this case is never
+                    // hit, but Swift requires it for exhaustiveness.
+                    EmptyView()
                 }
 
                 Section {
@@ -496,6 +513,10 @@ struct SourceSettingsView: View {
             mastodonInstanceURL = config.mastodonInstanceURL
             appPassword = config.mastodonAccessToken == "••••••••" ? "" : config.mastodonAccessToken
             topN = config.mastodonTopN
+        case .rss:
+            // Handled by RSSSettingsView — `SourceSettingsView` is never
+            // instantiated for .rss.
+            break
         }
     }
 
@@ -539,6 +560,9 @@ struct SourceSettingsView: View {
             if !appPassword.isEmpty {
                 updates["mastodon_access_token"] = appPassword
             }
+        case .rss:
+            // Handled by RSSSettingsView.
+            break
         }
 
         Task {

@@ -29,6 +29,7 @@
     "googleapis": "^140.0.1",
     "node-cron": "^3.0.3",
     "pg": "^8.11.5",
+    "rss-parser": "^3.13.0",
     "snoowrap": "^1.23.0",
     "winston": "^3.11.0"
   },

@@ -23,6 +23,9 @@ export interface Config {
   /** Personal access token (Settings → Development → Applications on the instance). */
   mastodon_access_token: string;
   mastodon_top_n: number;
+  /** Whether RSS polling is on. Per-feed enable/disable lives in the
+   *  `rss_feeds` table, not here. */
+  rss_enabled: boolean;
   feed_title: string;
   feed_ttl_days: number;
   feed_token: string;
@@ -53,6 +56,7 @@ const DEFAULT_CONFIG: Config = {
   mastodon_instance_url: '',
   mastodon_access_token: '',
   mastodon_top_n: 20,
+  rss_enabled: false,
   feed_title: 'Slowfeed',
   feed_ttl_days: 14,
   feed_token: generateFeedToken(),
