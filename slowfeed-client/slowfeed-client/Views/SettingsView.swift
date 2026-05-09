@@ -974,7 +974,7 @@ struct ScheduleEditorView: View {
     let onSave: () async -> Void
 
     @State private var name = ""
-    @State private var timeOfDay = "08:00"
+    @State private var time = Self.defaultTime
     @State private var timezone = TimeZone.current.identifier
     @State private var selectedDays: Set<Int> = [1, 2, 3, 4, 5] // Mon-Fri
     @State private var selectedSources: Set<SourceType> = [.reddit, .bluesky]
@@ -984,12 +984,27 @@ struct ScheduleEditorView: View {
 
     private static let dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
+    private static var defaultTime: Date {
+        Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: Date()) ?? Date()
+    }
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    private static func parseTime(_ string: String) -> Date {
+        timeFormatter.date(from: string) ?? defaultTime
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     TextField("Name", text: $name)
-                    TextField("Time (HH:MM)", text: $timeOfDay)
+                    DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
                     TextField("Timezone", text: $timezone)
                     Toggle("Enabled", isOn: $enabled)
                 }
@@ -1042,7 +1057,7 @@ struct ScheduleEditorView: View {
         .onAppear {
             if let schedule {
                 name = schedule.name
-                timeOfDay = schedule.timeOfDay
+                time = Self.parseTime(schedule.timeOfDay)
                 timezone = schedule.timezone
                 selectedDays = Set(schedule.daysOfWeek)
                 selectedSources = Set(schedule.sources)
@@ -1061,7 +1076,7 @@ struct ScheduleEditorView: View {
         let input = ScheduleInput(
             name: name,
             days_of_week: selectedDays.sorted(),
-            time_of_day: timeOfDay,
+            time_of_day: Self.timeFormatter.string(from: time),
             timezone: timezone,
             sources: selectedSources.sorted { $0.rawValue < $1.rawValue },
             enabled: enabled
