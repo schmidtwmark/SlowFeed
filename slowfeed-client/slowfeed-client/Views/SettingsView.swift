@@ -804,13 +804,43 @@ struct ScheduleSettingsView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(schedules) { schedule in
-                        ScheduleRow(schedule: schedule, onEdit: {
-                            editingSchedule = schedule
-                        }, onRun: {
-                            await runSchedule(schedule)
-                        }, onDelete: {
-                            await deleteSchedule(schedule)
-                        })
+                        ScheduleRow(schedule: schedule)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                editingSchedule = schedule
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    Task { await deleteSchedule(schedule) }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                            .swipeActions(edge: .leading) {
+                                Button {
+                                    Task { await runSchedule(schedule) }
+                                } label: {
+                                    Label("Run Now", systemImage: "play.fill")
+                                }
+                                .tint(.green)
+                            }
+                            .contextMenu {
+                                Button {
+                                    editingSchedule = schedule
+                                } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+                                Button {
+                                    Task { await runSchedule(schedule) }
+                                } label: {
+                                    Label("Run Now", systemImage: "play.fill")
+                                }
+                                Button(role: .destructive) {
+                                    Task { await deleteSchedule(schedule) }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                     }
                 }
             } header: {
@@ -887,11 +917,6 @@ struct ScheduleSettingsView: View {
 
 struct ScheduleRow: View {
     let schedule: PollSchedule
-    let onEdit: () -> Void
-    let onRun: () async -> Void
-    let onDelete: () async -> Void
-
-    @State private var isRunning = false
 
     private static let dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
@@ -932,35 +957,6 @@ struct ScheduleRow: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
-
-            HStack(spacing: 12) {
-                Button("Edit") { onEdit() }
-                    .buttonStyle(.borderless)
-
-                Button {
-                    isRunning = true
-                    Task {
-                        await onRun()
-                        isRunning = false
-                    }
-                } label: {
-                    if isRunning {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Text("Run Now")
-                    }
-                }
-                .buttonStyle(.borderless)
-                .disabled(isRunning)
-
-                Button("Delete", role: .destructive) {
-                    Task { await onDelete() }
-                }
-                .buttonStyle(.borderless)
-            }
-            .font(.caption)
-            .padding(.top, 2)
         }
         .padding(.vertical, 4)
     }
