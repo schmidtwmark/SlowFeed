@@ -110,6 +110,10 @@ struct DigestView: View {
     @State private var showViewer = false
     @State private var debugJSON: String?
     @State private var scrolledPostId: String?
+    /// Identifier-only navigation target for the RSS reader. Holding the
+    /// post ID (not the class) keeps Hashable conformance trivial and
+    /// avoids re-pushing on view re-evaluation.
+    @State private var readerPostId: String?
 
     /// Whether this source carries threaded replies (Bluesky + Mastodon).
     private var isThreadedSource: Bool {
@@ -140,6 +144,13 @@ struct DigestView: View {
         viewerImages = images
         viewerIndex = index
         withAnimation(.spring(duration: 0.4, bounce: 0.15)) { showViewer = true }
+    }
+
+    /// Trigger the RSS reader push for a given post. Wired into RSS
+    /// `PostView` instances so the navigation destination registered on
+    /// `DigestView` (and not inside the ForEach) does the actual push.
+    private func openRSSReader(for post: DigestPost) {
+        readerPostId = post.postId
     }
 
     var body: some View {
@@ -173,7 +184,7 @@ struct DigestView: View {
                                     // grouping by feed (every post's header
                                     // chip already shows the feed title).
                                     ForEach(posts) { post in
-                                        PostView(post: post, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
+                                        PostView(post: post, source: digest.source, digestId: digest.id, imageNamespace: imageNamespace, onSelectImage: openImageViewer, onOpenReader: openRSSReader)
                                             .id(post.postId)
                                         Divider()
                                     }
@@ -291,6 +302,16 @@ struct DigestView: View {
         }
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Digest JSON", json: json)
+        }
+        // RSS reader destination, registered once at the top of the
+        // NavigationStack rather than inside each PostView (which is
+        // unreliable when the modifier is inside a ForEach).
+        .navigationDestination(item: $readerPostId) { postId in
+            if let post = digest.posts?.first(where: { $0.postId == postId }) {
+                RSSReaderView(post: post)
+            } else {
+                Text("Post not found").foregroundStyle(.secondary)
+            }
         }
         .navigationTitle(digest.source.displayName)
         #if os(macOS)

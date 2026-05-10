@@ -17,13 +17,15 @@ struct PostView: View {
     var imageNamespace: Namespace.ID?
     var onSelectImage: (([PostMedia], Int) -> Void)?
     var quotedPost: DigestPost?
+    /// Callback invoked when this card wants to push the RSS reader.
+    /// Owned by `DigestView` so the destination is registered once at the
+    /// NavigationStack root rather than per-post inside a ForEach
+    /// (which produced a dead "Read more" / dead long-card tap).
+    var onOpenReader: ((DigestPost) -> Void)?
 
     @Environment(\.openURL) private var openURL
     @Environment(AppState.self) private var appState
     @State private var debugJSON: String?
-    /// Drives the programmatic push to ``RSSReaderView`` when the user taps
-    /// a long RSS post (or the explicit "Read more" link inside `rssBody`).
-    @State private var showReader = false
 
     private var postURL: URL? {
         guard let urlString = post.url, !urlString.isEmpty else { return nil }
@@ -161,11 +163,6 @@ struct PostView: View {
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Post JSON", json: json)
         }
-        // RSS reader for long posts. Pushed onto the surrounding
-        // NavigationStack (provided by DigestDetailView).
-        .navigationDestination(isPresented: $showReader) {
-            RSSReaderView(post: post)
-        }
     }
 
     /// Tap on the post card. RSS overrides the default open-original-URL
@@ -176,7 +173,7 @@ struct PostView: View {
 
         if source == .rss, let content = post.content,
            content.count > Self.rssShortPostThreshold {
-            showReader = true
+            onOpenReader?(post)
             return
         }
 
@@ -208,7 +205,7 @@ struct PostView: View {
                         .foregroundStyle(.primary.opacity(0.85))
                         .lineLimit(8)
                     Button {
-                        showReader = true
+                        onOpenReader?(post)
                     } label: {
                         HStack(spacing: 4) {
                             Text("Read more")

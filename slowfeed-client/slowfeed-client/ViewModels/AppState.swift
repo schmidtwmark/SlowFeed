@@ -244,7 +244,24 @@ final class AppState {
         do {
             let loadedDigests = try await apiClient.getDigests(source: selectedSource)
             await MainActor.run {
-                digests = loadedDigests
+                // Preserve local read state across refresh. markAsRead is
+                // fire-and-forget on a background Task, so it can race with
+                // a refresh — without this, a refresh issued right after
+                // reading the last digests would resurrect them as unread
+                // and prevent the group from auto-collapsing.
+                let localReadAt: [String: Date] = Dictionary(uniqueKeysWithValues:
+                    digests.compactMap { d in d.readAt.map { (d.id, $0) } }
+                )
+                digests = loadedDigests.map { d in
+                    if d.readAt == nil, let readAt = localReadAt[d.id] {
+                        return DigestSummary(
+                            id: d.id, source: d.source, title: d.title,
+                            postCount: d.postCount, pollRunId: d.pollRunId,
+                            publishedAt: d.publishedAt, readAt: readAt
+                        )
+                    }
+                    return d
+                }
                 digestCache = [:]
                 expandDigestGroups()
                 isRefreshing = false
@@ -629,12 +646,19 @@ final class AppState {
             groupAllRead[groupKey] = (groupAllRead[groupKey] ?? true) && digest.isRead
         }
 
+        // Build the new set first, then assign once. A single property write
+        // (with animation) reliably nudges Section(isExpanded:) bindings to
+        // re-read; piecewise insert/remove on the live Set sometimes does not.
+        var newExpanded = expandedGroups
         for (groupKey, allRead) in groupAllRead {
             if allRead {
-                expandedGroups.remove(groupKey)
+                newExpanded.remove(groupKey)
             } else {
-                expandedGroups.insert(groupKey)
+                newExpanded.insert(groupKey)
             }
+        }
+        if newExpanded != expandedGroups {
+            withAnimation { expandedGroups = newExpanded }
         }
     }
 }
