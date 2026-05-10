@@ -83,9 +83,11 @@ struct PostView: View {
             // Title — Reddit, YouTube, and RSS all have real editorial titles.
             // Bluesky / Discord / Mastodon titles are server-synthesized and
             // just restate the author or content, so they stay hidden.
-            if (source == .reddit || source == .youtube || source == .rss),
-               !titleIsDuplicate,
-               !displayTitle.isEmpty {
+            // RSS titles are always editorial; the duplicate check only
+            // applies to Reddit/YouTube where it can fire on quoted bodies.
+            if !displayTitle.isEmpty,
+               source == .rss
+                || ((source == .reddit || source == .youtube) && !titleIsDuplicate) {
                 Text(displayTitle)
                     .font(.headline)
                     .foregroundStyle(.primary)
@@ -159,11 +161,18 @@ struct PostView: View {
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Post JSON", json: json)
         }
-        // Programmatic push to the RSS reader. The whole card is a tap
-        // target — for long RSS posts the tap navigates here rather than
-        // opening the original URL in the browser.
-        .navigationDestination(isPresented: $showReader) {
+        // RSS reader for long posts. Presented as a sheet so it works
+        // regardless of whether the surrounding view is inside a
+        // NavigationStack (DigestDetailView on macOS isn't).
+        .sheet(isPresented: $showReader) {
+            #if os(macOS)
             RSSReaderView(post: post)
+                .frame(minWidth: 600, minHeight: 500)
+            #else
+            NavigationStack {
+                RSSReaderView(post: post)
+            }
+            #endif
         }
     }
 
