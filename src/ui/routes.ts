@@ -774,6 +774,50 @@ export function createApiRouter(): Router {
     }
   });
 
+  // Dry-run a feed URL. Fetches and parses the URL but does NOT persist
+  // anything — used by the client to preview what items a feed will
+  // produce before the user commits to subscribing.
+  router.post('/api/rss/feeds/test', async (req, res) => {
+    try {
+      const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+      if (!url) {
+        res.status(400).json({ error: 'url is required' });
+        return;
+      }
+
+      const parser = new RSSParser();
+      let parsed;
+      try {
+        parsed = await parser.parseURL(url);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(422).json({ error: `Failed to fetch or parse feed: ${msg}` });
+        return;
+      }
+
+      const items = (parsed.items ?? []).slice(0, 10).map((item) => {
+        const snippet = (item.contentSnippet || item.content || '').trim();
+        return {
+          title: (item.title || '').trim() || '(untitled)',
+          snippet: snippet.length > 280 ? snippet.slice(0, 277) + '…' : snippet,
+          url: item.link || null,
+          publishedAt: item.isoDate || item.pubDate || null,
+        };
+      });
+
+      res.json({
+        title: (parsed.title || '').trim() || url,
+        siteUrl: parsed.link || null,
+        description: (parsed.description || '').trim() || null,
+        itemCount: parsed.items?.length ?? 0,
+        items,
+      });
+    } catch (err) {
+      logger.error('Error testing RSS feed:', err);
+      res.status(500).json({ error: 'Failed to test feed' });
+    }
+  });
+
   // OPML import. Body is the OPML XML text; we accept it either as
   // `application/xml`/`text/xml` (raw) or as `{ opml: "..." }` JSON to keep
   // the iOS DocumentPicker → fetch path simple.

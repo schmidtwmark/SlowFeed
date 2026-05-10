@@ -438,6 +438,15 @@ final class APIClient {
         return try await request("/api/rss/feeds", method: "POST", body: body)
     }
 
+    /// Dry-run a feed URL — fetches and parses without persisting anything,
+    /// returning the feed title and a preview of its latest items so the
+    /// user can decide whether to actually subscribe.
+    func testRSSFeed(url: String) async throws -> RSSFeedTestResult {
+        let payload = ["url": url]
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        return try await request("/api/rss/feeds/test", method: "POST", body: body)
+    }
+
     func deleteRSSFeed(id: Int) async throws {
         try await requestVoid("/api/rss/feeds/\(id)", method: "DELETE")
     }

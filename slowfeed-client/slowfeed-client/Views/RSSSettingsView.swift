@@ -21,6 +21,8 @@ struct RSSSettingsView: View {
     @State private var newFeedURL: String = ""
     @State private var newFeedError: String?
     @State private var isSubmitting = false
+    @State private var isTesting = false
+    @State private var testResult: RSSFeedTestResult?
 
     @State private var showImporter = false
     @State private var importMessage: String?
@@ -146,11 +148,90 @@ struct RSSSettingsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         #endif
+                        .onChange(of: newFeedURL) { _, _ in
+                            // Clear stale preview when the URL changes.
+                            testResult = nil
+                        }
+
+                    Button {
+                        Task { await testNewFeed() }
+                    } label: {
+                        if isTesting {
+                            HStack {
+                                ProgressView().controlSize(.small)
+                                Text("Testing…")
+                            }
+                        } else {
+                            Label("Test Feed", systemImage: "wand.and.stars")
+                        }
+                    }
+                    .disabled(isTesting || newFeedURL.trimmingCharacters(in: .whitespaces).isEmpty)
                 } footer: {
-                    Text("Paste an RSS or Atom feed URL. The title will be derived from the feed.")
+                    Text("Paste an RSS or Atom feed URL. Tap Test to preview items before subscribing.")
                 }
+
                 if let newFeedError {
-                    Text(newFeedError).foregroundStyle(.red).font(.caption)
+                    Section {
+                        Text(newFeedError).foregroundStyle(.red).font(.caption)
+                    }
+                }
+
+                if let testResult {
+                    Section {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(testResult.title)
+                                .font(.headline)
+                            if let site = testResult.siteUrl, !site.isEmpty {
+                                Text(site)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            if let desc = testResult.description, !desc.isEmpty {
+                                Text(desc)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                            Text("\(testResult.itemCount) item\(testResult.itemCount == 1 ? "" : "s") in feed")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    } header: {
+                        Text("Feed")
+                    }
+
+                    Section {
+                        if testResult.items.isEmpty {
+                            Text("No items in this feed.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(testResult.items) { item in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.title)
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .lineLimit(2)
+                                    if !item.snippet.isEmpty {
+                                        Text(item.snippet)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(3)
+                                    }
+                                    if let date = item.publishedAt {
+                                        Text(date.formatted(date: .abbreviated, time: .shortened))
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    } header: {
+                        Text("Latest Items (Preview)")
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -169,14 +250,30 @@ struct RSSSettingsView: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 480, minHeight: 220)
+        .frame(minWidth: 520, minHeight: 360)
         #endif
+    }
+
+    private func testNewFeed() async {
+        let trimmed = newFeedURL.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        isTesting = true
+        newFeedError = nil
+        testResult = nil
+        defer { isTesting = false }
+        do {
+            let result = try await appState.apiClient.testRSSFeed(url: trimmed)
+            await MainActor.run { testResult = result }
+        } catch {
+            await MainActor.run { newFeedError = error.localizedDescription }
+        }
     }
 
     private func closeAddSheet() {
         isAdding = false
         newFeedURL = ""
         newFeedError = nil
+        testResult = nil
     }
 
     private func submitNewFeed() async {

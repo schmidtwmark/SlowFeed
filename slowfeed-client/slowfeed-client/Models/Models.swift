@@ -244,6 +244,25 @@ struct OPMLImportResult: Codable {
     let total: Int
 }
 
+/// Result of a dry-run feed fetch — used by Add Feed to preview what
+/// items a URL will produce before the user commits to subscribing.
+struct RSSFeedTestResult: Codable {
+    let title: String
+    let siteUrl: String?
+    let description: String?
+    let itemCount: Int
+    let items: [RSSFeedTestItem]
+}
+
+struct RSSFeedTestItem: Codable, Identifiable {
+    let title: String
+    let snippet: String
+    let url: String?
+    let publishedAt: Date?
+
+    var id: String { (url ?? "") + title + (publishedAt?.description ?? "") }
+}
+
 // MARK: - Configuration
 
 struct AppConfig: Codable, Equatable {
