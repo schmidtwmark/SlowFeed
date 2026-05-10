@@ -70,36 +70,21 @@ struct DigestSidebar: View {
     var body: some View {
         List(selection: $selection) {
             ForEach(groupedDigests) { group in
-                Section(isExpanded: Binding(
-                    get: { appState.expandedGroups.contains(group.id) },
-                    set: { expanded in
-                        if expanded {
-                            appState.expandedGroups.insert(group.id)
-                        } else {
-                            appState.expandedGroups.remove(group.id)
-                        }
-                    }
-                )) {
+                // Header row — looks like one of the digest rows below it
+                // and tapping it expands or collapses that group's source
+                // rows. No `Section` chrome around it: the header IS a
+                // first-class row in the list.
+                GroupHeaderRow(
+                    group: group,
+                    isExpanded: appState.expandedGroups.contains(group.id),
+                    toggle: { toggleExpansion(group.id) }
+                )
+
+                if appState.expandedGroups.contains(group.id) {
                     ForEach(group.digests) { digest in
                         DigestRow(digest: digest, isSelected: appState.currentDigest?.id == digest.id)
                             .tag(digest.id)
                     }
-                } header: {
-                    HStack(spacing: 8) {
-                        Text(group.label)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.primary)
-                            .textCase(nil)
-
-                        Spacer()
-
-                        Text("\(group.totalPosts) posts")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .textCase(nil)
-                    }
-                    .padding(.vertical, 2)
                 }
             }
         }
@@ -143,6 +128,16 @@ struct DigestSidebar: View {
             // Keep the List's selection in sync when navigation is driven
             // from elsewhere (keyboard shortcuts, auto-select on load, …).
             if selection != id { selection = id }
+        }
+    }
+
+    private func toggleExpansion(_ groupId: String) {
+        withAnimation {
+            if appState.expandedGroups.contains(groupId) {
+                appState.expandedGroups.remove(groupId)
+            } else {
+                appState.expandedGroups.insert(groupId)
+            }
         }
     }
 
@@ -217,6 +212,47 @@ struct DigestGroup: Identifiable {
     let label: String
     let digests: [DigestSummary]
     let totalPosts: Int
+
+    var hasUnread: Bool { digests.contains { !$0.isRead } }
+}
+
+/// First-class row that doubles as the section header for a poll-run
+/// group. Tap toggles the group's expansion. Visually mirrors
+/// `DigestRow`'s shape (icon + label + trailing post count) so the
+/// sidebar reads as a flat list of rows where some rows happen to
+/// have children underneath them.
+struct GroupHeaderRow: View {
+    let group: DigestGroup
+    let isExpanded: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 12) {
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .frame(width: 12)
+
+                Text(group.label)
+                    .font(.subheadline)
+                    .fontWeight(group.hasUnread ? .semibold : .regular)
+                    .foregroundStyle(group.hasUnread ? .primary : .secondary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text("\(group.totalPosts) posts")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 struct DigestRow: View {
