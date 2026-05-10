@@ -85,17 +85,21 @@ struct DigestSidebar: View {
                             .tag(digest.id)
                     }
                 } header: {
-                    HStack {
+                    HStack(spacing: 8) {
                         Text(group.label)
                             .font(.subheadline)
                             .fontWeight(.semibold)
+                            .foregroundStyle(.primary)
+                            .textCase(nil)
 
                         Spacer()
 
                         Text("\(group.totalPosts) posts")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .textCase(nil)
                     }
+                    .padding(.vertical, 2)
                 }
             }
         }
@@ -221,29 +225,25 @@ struct DigestRow: View {
     @State private var debugJSON: String?
 
     var body: some View {
-        HStack(spacing: 10) {
-            // Source color indicator
-            Circle()
-                .fill(sourceColor)
-                .frame(width: 8, height: 8)
+        HStack(spacing: 12) {
+            // Per-source SF Symbol. Read = grayscale (.secondary), unread
+            // = its source color. Replaces the old leading colored dot
+            // and trailing blue unread dot.
+            Image(systemName: sourceIcon)
+                .font(.body)
+                .foregroundStyle(digest.isRead ? Color.secondary : sourceColor)
+                .frame(width: 22)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(digest.source.displayName)
-                    .font(.subheadline)
-                    .fontWeight(digest.isRead ? .regular : .semibold)
-
-                Text("\(digest.postCount) posts")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text(digest.source.displayName)
+                .font(.subheadline)
+                .fontWeight(digest.isRead ? .regular : .semibold)
+                .foregroundStyle(digest.isRead ? .secondary : .primary)
 
             Spacer()
 
-            if !digest.isRead {
-                Circle()
-                    .fill(.blue)
-                    .frame(width: 8, height: 8)
-            }
+            Text("\(digest.postCount) posts")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
         .contextMenu {
@@ -261,6 +261,19 @@ struct DigestRow: View {
         }
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Digest Summary", json: json)
+        }
+    }
+
+    /// Match the icons used in the Settings source tabs so source identity
+    /// is consistent across the app.
+    private var sourceIcon: String {
+        switch digest.source {
+        case .reddit: return "bubble.left.and.bubble.right.fill"
+        case .bluesky: return "cloud.fill"
+        case .youtube: return "play.rectangle.fill"
+        case .discord: return "message.fill"
+        case .mastodon: return "at"
+        case .rss: return "dot.radiowaves.left.and.right"
         }
     }
 

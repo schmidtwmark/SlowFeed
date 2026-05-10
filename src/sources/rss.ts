@@ -56,6 +56,13 @@ function stripHtml(html: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, ' ')
+    // Publisher HTML is often pretty-printed with deep indentation; once
+    // tags are gone those tabs/spaces survive and render as huge
+    // indents in the client preview. Collapse runs of intra-line
+    // whitespace to a single space, then trim each line, then collapse
+    // blank-line runs.
+    .replace(/[ \t\r\f\v]+/g, ' ')
+    .replace(/^ +| +$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
