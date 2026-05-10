@@ -608,8 +608,16 @@ final class AppState {
 
     // MARK: - Sidebar Groups
 
+    /// Walk every digest, partition by sidebar group key, and update
+    /// `expandedGroups` so that:
+    ///   - groups with at least one unread digest are expanded
+    ///   - groups where every digest is read are collapsed
+    /// Called after `refreshDigests()` so the user's eye lands on what's new.
     func expandDigestGroups() {
         let calendar = Calendar.current
+        // Per-group: true until proven otherwise that all member digests are read.
+        var groupAllRead: [String: Bool] = [:]
+
         for digest in digests {
             let groupKey: String
             if let pollRunId = digest.pollRunId {
@@ -618,7 +626,15 @@ final class AppState {
                 let components = calendar.dateComponents([.year, .month, .day, .hour], from: digest.publishedAt)
                 groupKey = "time_\(components.year!)_\(components.month!)_\(components.day!)_\(components.hour!)"
             }
-            expandedGroups.insert(groupKey)
+            groupAllRead[groupKey] = (groupAllRead[groupKey] ?? true) && digest.isRead
+        }
+
+        for (groupKey, allRead) in groupAllRead {
+            if allRead {
+                expandedGroups.remove(groupKey)
+            } else {
+                expandedGroups.insert(groupKey)
+            }
         }
     }
 }

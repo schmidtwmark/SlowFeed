@@ -285,8 +285,13 @@ struct DigestDetailView: View {
     var body: some View {
         ZStack {
             if let digest = appState.currentDigest {
-                DigestView(digest: digest)
-                    .id(digest.id)
+                // NavigationStack so PostView can push RSSReaderView via
+                // .navigationDestination. NavigationSplitView's detail
+                // pane doesn't supply one on its own.
+                NavigationStack {
+                    DigestView(digest: digest)
+                        .id(digest.id)
+                }
             } else if appState.isLoading {
                 ProgressView("Loading...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

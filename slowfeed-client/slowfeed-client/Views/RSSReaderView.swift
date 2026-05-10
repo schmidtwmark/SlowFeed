@@ -11,7 +11,6 @@ struct RSSReaderView: View {
     let post: DigestPost
 
     @Environment(\.openURL) private var openURL
-    @Environment(\.dismiss) private var dismiss
 
     private var html: String? {
         let s = post.metadata?.contentHTML?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -84,25 +83,6 @@ struct RSSReaderView: View {
         }
         #if !os(macOS)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { dismiss() }
-            }
-        }
-        #else
-        .overlay(alignment: .topTrailing) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title2)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .padding(12)
-            .keyboardShortcut(.escape, modifiers: [])
-        }
         #endif
     }
 

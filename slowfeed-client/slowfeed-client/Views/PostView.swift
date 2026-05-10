@@ -161,18 +161,10 @@ struct PostView: View {
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Post JSON", json: json)
         }
-        // RSS reader for long posts. Presented as a sheet so it works
-        // regardless of whether the surrounding view is inside a
-        // NavigationStack (DigestDetailView on macOS isn't).
-        .sheet(isPresented: $showReader) {
-            #if os(macOS)
+        // RSS reader for long posts. Pushed onto the surrounding
+        // NavigationStack (provided by DigestDetailView).
+        .navigationDestination(isPresented: $showReader) {
             RSSReaderView(post: post)
-                .frame(minWidth: 600, minHeight: 500)
-            #else
-            NavigationStack {
-                RSSReaderView(post: post)
-            }
-            #endif
         }
     }
 
