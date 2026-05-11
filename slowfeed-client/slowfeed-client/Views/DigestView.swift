@@ -228,16 +228,23 @@ struct DigestView: View {
                 .scrollIndicators(.hidden)
                 .onChange(of: appState.focusedPostId) { _, newId in
                     guard let newId, appState.keyboardFocusPane == .posts else { return }
+                    // Drive the scroll through the .scrollPosition binding
+                    // so both the displayed scroll position AND
+                    // `scrolledPostId` (which navigation uses as its
+                    // cursor) update in sync. Going through proxy.scrollTo
+                    // moved the view but left scrolledPostId stale, so
+                    // subsequent next-button taps tried to advance from
+                    // "behind" the post we'd just navigated to and
+                    // appeared to do nothing.
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo(newId, anchor: .top)
+                        scrolledPostId = newId
                     }
                     appState.saveScrollPosition(digestId: digest.id, postId: newId)
                 }
                 .onAppear {
                     // Restore saved scroll position on initial load
                     if let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
-                        appState.focusedPostId = savedPostId
-                        proxy.scrollTo(savedPostId, anchor: .top)
+                        scrolledPostId = savedPostId
                     }
                 }
             }
