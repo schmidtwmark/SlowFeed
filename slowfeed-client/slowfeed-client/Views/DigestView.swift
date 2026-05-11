@@ -390,13 +390,12 @@ struct DigestView: View {
         let ids = skipThreadReplies ? topLevelPostIds : allPostIds
         guard !ids.isEmpty else { return .ignored }
 
-        // If no post focused yet, start from whatever is currently visible
-        guard let currentId = appState.focusedPostId else {
-            if let visible = scrolledPostId, ids.contains(visible) {
-                appState.focusedPostId = visible
-            } else {
-                appState.focusedPostId = direction > 0 ? ids.first : ids.last
-            }
+        // Prefer the currently-visible post over the previously focused
+        // one — scroll is the most recent user signal, so j/k should
+        // advance from what's on screen, not from a stale keyboard
+        // cursor the user has since scrolled past.
+        guard let currentId = scrolledPostId ?? appState.focusedPostId else {
+            appState.focusedPostId = direction > 0 ? ids.first : ids.last
             return .handled
         }
 
@@ -506,10 +505,15 @@ struct DigestView: View {
         }
     }
 
+    /// Persist the topmost visible post for cross-launch scroll restore.
+    /// Does NOT touch `appState.focusedPostId` — updating focus mid-scroll
+    /// triggers the `.onChange(of: focusedPostId) { proxy.scrollTo(...) }`
+    /// handler, which yanks the scroll view mid-gesture and feels broken.
+    /// Navigation actions (next button, keyboard) read `scrolledPostId`
+    /// directly to find the user's current position.
     private func handleScrollChange(_ newId: String?) {
         guard appState.keyboardFocusPane == .posts, let newId else { return }
         if allPostIds.contains(newId) {
-            appState.focusedPostId = newId
             appState.saveScrollPosition(digestId: digest.id, postId: newId)
         }
     }
