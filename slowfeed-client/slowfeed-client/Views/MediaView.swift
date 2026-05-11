@@ -589,8 +589,14 @@ struct ZoomableImage: UIViewRepresentable {
 /// (sharing the app's NSCache) and owns its own zoom state, so each image
 /// in the gallery can be pinched independently and swiping resets to 1×
 /// on each page.
+///
+/// The `namespace` parameter is non-nil only on the *currently visible*
+/// page so the matched-geometry transition into / out of the viewer
+/// only fires once (multiple destinations for the same id confuse
+/// SwiftUI's effect).
 struct PagedZoomableImage: View {
     let url: URL
+    var namespace: Namespace.ID?
     var onSingleTap: () -> Void
 
     @State private var image: UIImage?
@@ -601,6 +607,7 @@ struct PagedZoomableImage: View {
             Color.black
             if let image {
                 ZoomableImage(image: image, zoomScale: $zoomScale, onSingleTap: onSingleTap)
+                    .modifier(MatchedGeometryIfPresent(id: url.absoluteString, namespace: namespace))
             } else {
                 ProgressView().tint(.white)
             }
@@ -611,6 +618,22 @@ struct PagedZoomableImage: View {
                 return
             }
             image = await LoadedUIImage.fetch(url: url)
+        }
+    }
+}
+
+/// Applies `.matchedGeometryEffect` only when a namespace was supplied —
+/// SwiftUI's modifier requires a real namespace, so we can't pass it
+/// optionally inline.
+private struct MatchedGeometryIfPresent: ViewModifier {
+    let id: String
+    let namespace: Namespace.ID?
+
+    func body(content: Content) -> some View {
+        if let namespace {
+            content.matchedGeometryEffect(id: id, in: namespace)
+        } else {
+            content
         }
     }
 }
@@ -649,14 +672,20 @@ struct ImageViewerOverlay: View {
     @FocusState private var isFocused: Bool
     @State private var showAltText: Bool = false
 
-    // macOS only: SwiftUI-based zoom + swipe-to-dismiss state.
-    // iOS uses TabView(.page) + per-page ZoomableImage instead, so it
-    // doesn't need any of this on the parent.
+    // macOS-specific zoom + swipe-to-dismiss state. iOS uses
+    // TabView(.page) + per-page ZoomableImage and tracks its own
+    // dismiss drag below.
     #if os(macOS)
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
+    @State private var dismissDrag: CGSize = .zero
+    @State private var backgroundOpacity: Double = 1.0
+    #else
+    /// iOS swipe-down-to-dismiss state. The TabView only handles
+    /// horizontal pan, so a `.simultaneousGesture` here can capture
+    /// vertical pan without fighting the page swipe.
     @State private var dismissDrag: CGSize = .zero
     @State private var backgroundOpacity: Double = 1.0
     #endif
@@ -747,26 +776,71 @@ struct ImageViewerOverlay: View {
     /// Each page owns its own zoom state so you can pinch one image,
     /// swipe past it, and the next image starts at 1× — matching
     /// Photos. (MAR-67)
+    ///
+    /// Vertical drag dismisses the viewer (Photos-style) — the TabView
+    /// only consumes horizontal pan, and each page's UIScrollView only
+    /// pans vertically when zoomed in, so a top-level
+    /// `simultaneousGesture` capturing vertical drags doesn't fight
+    /// either of them.
     private var iOSBody: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.black
+                .opacity(backgroundOpacity)
+                .ignoresSafeArea()
 
             TabView(selection: $currentIndex) {
                 ForEach(Array(imageURLs.enumerated()), id: \.offset) { idx, url in
-                    PagedZoomableImage(url: url, onSingleTap: onDismiss)
-                        .tag(idx)
-                        .ignoresSafeArea()
+                    PagedZoomableImage(
+                        url: url,
+                        namespace: idx == safeIndex ? namespace : nil,
+                        onSingleTap: onDismiss
+                    )
+                    .tag(idx)
+                    .ignoresSafeArea()
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
+            .offset(y: dismissDrag.height)
+            .scaleEffect(dismissScale)
+            .simultaneousGesture(dismissDragGesture())
 
             chrome
+                .opacity(backgroundOpacity)
         }
         .focusable()
         .focused($isFocused)
         .onAppear { isFocused = true }
         .onChange(of: currentIndex) { _, _ in showAltText = false }
+    }
+
+    private var dismissScale: CGFloat {
+        guard dismissDrag != .zero else { return 1.0 }
+        return max(0.7, 1.0 - abs(dismissDrag.height) / 1000)
+    }
+
+    private func dismissDragGesture() -> some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                // Only respond to vertical-dominant pans so we don't
+                // hijack the TabView's horizontal page swipe.
+                guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                dismissDrag = value.translation
+                let progress = min(abs(value.translation.height) / 300, 1.0)
+                backgroundOpacity = Double(1.0 - progress * 0.6)
+            }
+            .onEnded { value in
+                guard dismissDrag != .zero else { return }
+                let vy = value.velocity.height
+                if abs(dismissDrag.height) > 120 || abs(vy) > 800 {
+                    onDismiss()
+                } else {
+                    withAnimation(.spring(duration: 0.3)) {
+                        dismissDrag = .zero
+                        backgroundOpacity = 1.0
+                    }
+                }
+            }
     }
     #endif
 
@@ -785,6 +859,12 @@ struct ImageViewerOverlay: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .aspectRatio(contentMode: .fit)
+        // Force the image to fill the GeometryReader's bounds before
+        // aspect-fitting. Without this, Image(nsImage:).resizable() +
+        // aspect-fit lets the layout collapse around the image's
+        // intrinsic size and the viewer renders the photo at e.g. 200pt
+        // square in the middle of a black screen.
+        .frame(width: containerSize.width, height: containerSize.height)
         .matchedGeometryEffect(id: currentURL?.absoluteString ?? "", in: namespace)
         .scaleEffect(scale)
         .offset(x: offset.width, y: offset.height)
@@ -870,7 +950,12 @@ struct ImageViewerOverlay: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.largeTitle)
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(.white.opacity(0.85))
+                // Explicit hit target — without this the click-through area
+                // is just the thin SF Symbol glyph, which competes with the
+                // imageLayer's MagnifyGesture/DragGesture and often loses.
+                .frame(width: 48, height: 48)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

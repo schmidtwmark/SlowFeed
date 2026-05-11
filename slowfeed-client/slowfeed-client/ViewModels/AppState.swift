@@ -57,6 +57,16 @@ final class AppState {
         }
     }
 
+    /// Where post URLs open by default — the in-app SFSafariViewController
+    /// (iOS only; macOS always opens Safari) or the system browser.
+    /// `PostView`'s long-press menu always offers both options regardless
+    /// of this setting.
+    var browserPreference: BrowserPreference = .inApp {
+        didSet {
+            UserDefaults.standard.set(browserPreference.rawValue, forKey: "browserPreference")
+        }
+    }
+
     // Digest state
     var digests: [DigestSummary] = []
     var currentDigest: Digest?
@@ -125,6 +135,11 @@ final class AppState {
             blurNSFW = true
         } else {
             blurNSFW = UserDefaults.standard.bool(forKey: "blurNSFW")
+        }
+
+        if let raw = UserDefaults.standard.string(forKey: "browserPreference"),
+           let pref = BrowserPreference(rawValue: raw) {
+            browserPreference = pref
         }
 
         if let sessionId {
@@ -257,6 +272,7 @@ final class AppState {
                         return DigestSummary(
                             id: d.id, source: d.source, title: d.title,
                             postCount: d.postCount, pollRunId: d.pollRunId,
+                            pollRunName: d.pollRunName,
                             publishedAt: d.publishedAt, readAt: readAt
                         )
                     }
@@ -350,6 +366,7 @@ final class AppState {
                     title: existing.title,
                     postCount: existing.postCount,
                     pollRunId: existing.pollRunId,
+                    pollRunName: existing.pollRunName,
                     publishedAt: existing.publishedAt,
                     readAt: Date()
                 )

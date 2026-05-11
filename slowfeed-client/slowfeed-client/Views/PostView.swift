@@ -26,6 +26,11 @@ struct PostView: View {
     @Environment(\.openURL) private var openURL
     @Environment(AppState.self) private var appState
     @State private var debugJSON: String?
+    #if os(iOS)
+    /// In-app SFSafariViewController target. Set to a non-nil URL to
+    /// present the sheet; the sheet sets it back to nil on dismiss.
+    @State private var safariTarget: SafariSheetTarget?
+    #endif
 
     private var postURL: URL? {
         guard let urlString = post.url, !urlString.isEmpty else { return nil }
@@ -163,6 +168,12 @@ struct PostView: View {
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Post JSON", json: json)
         }
+        #if os(iOS)
+        .sheet(item: $safariTarget) { target in
+            SafariView(url: target.url)
+                .ignoresSafeArea()
+        }
+        #endif
     }
 
     /// Tap on the post card. RSS overrides the default open-original-URL
@@ -177,7 +188,24 @@ struct PostView: View {
             return
         }
 
-        if let url = postURL { openURL(url) }
+        if let url = postURL { openPostURL(url, forceExternal: false) }
+    }
+
+    /// Open a post URL honoring the user's `browserPreference`. When
+    /// `forceExternal` is true (the long-press "Open in Safari" menu
+    /// item), bypass the preference and always hand off to the system
+    /// browser. macOS only has the system browser, so the preference
+    /// is effectively a no-op there.
+    private func openPostURL(_ url: URL, forceExternal: Bool) {
+        #if os(iOS)
+        if !forceExternal && appState.browserPreference == .inApp {
+            safariTarget = SafariSheetTarget(url: url)
+        } else {
+            openURL(url)
+        }
+        #else
+        openURL(url)
+        #endif
     }
 
     // MARK: - RSS body
@@ -278,7 +306,20 @@ struct PostView: View {
     @ViewBuilder
     private var contextMenu: some View {
         if let url = postURL {
-            Button { openURL(url) } label: { Label("Open", systemImage: "safari") }
+            // "Open" honors the browser preference (in-app vs Safari).
+            // "Open in Safari" always hands off to the system browser
+            // regardless of the preference, so the user can override
+            // per-post via long-press.
+            Button { openPostURL(url, forceExternal: false) } label: {
+                Label("Open", systemImage: "safari")
+            }
+            #if os(iOS)
+            if appState.browserPreference == .inApp {
+                Button { openPostURL(url, forceExternal: true) } label: {
+                    Label("Open in Safari", systemImage: "safari.fill")
+                }
+            }
+            #endif
 
             Button {
                 #if os(macOS)

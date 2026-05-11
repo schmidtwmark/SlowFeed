@@ -325,6 +325,7 @@ export function createApiRouter(): Router {
         title: d.title,
         postCount: d.post_count,
         pollRunId: d.poll_run_id,
+        pollRunName: d.poll_run_name,
         publishedAt: d.published_at,
         readAt: d.read_at,
       }));

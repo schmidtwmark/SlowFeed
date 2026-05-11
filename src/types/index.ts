@@ -152,6 +152,11 @@ export interface DigestItem {
   source: SourceType;
   schedule_id: number | null;
   poll_run_id: number | null;
+  /** Schedule name captured at poll-run time (poll_runs.schedule_name).
+   *  Null when the digest predates the JOIN (legacy rows) or when the
+   *  poll run has no schedule_name. The sidebar uses this to label
+   *  groups instead of a raw timestamp. */
+  poll_run_name: string | null;
   title: string;
   content: string;               // Legacy HTML - generated on demand now
   post_count: number;

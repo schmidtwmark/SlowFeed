@@ -158,6 +158,7 @@ export async function createDigest(
     id: digestId, source,
     schedule_id: scheduleId ?? null,
     poll_run_id: pollRunId ?? null,
+    poll_run_name: null,
     title, content,
     post_count: posts.length,
     post_ids: postIds,
@@ -203,23 +204,31 @@ function parsePostsJson(raw: unknown): DigestItem['posts_json'] {
 }
 
 export async function getDigestItems(source?: SourceType): Promise<DigestItem[]> {
+  // LEFT JOIN poll_runs so each digest can surface the schedule_name
+  // captured at poll-run time. The sidebar uses this to label groups
+  // with the schedule the user picked (e.g. "Morning Brew") instead
+  // of a raw timestamp.
   let sql = `
-    SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at, read_at, last_read_post_id
-    FROM digest_items
+    SELECT d.id, d.source, d.schedule_id, d.poll_run_id, d.title, d.content,
+           d.post_count, d.post_ids, d.posts_json, d.published_at, d.created_at,
+           d.read_at, d.last_read_post_id, pr.schedule_name AS poll_run_name
+    FROM digest_items d
+    LEFT JOIN poll_runs pr ON pr.id = d.poll_run_id
   `;
   const params: string[] = [];
   if (source) {
-    sql += ' WHERE source = $1';
+    sql += ' WHERE d.source = $1';
     params.push(source);
   }
-  sql += ' ORDER BY published_at DESC LIMIT 500';
+  sql += ' ORDER BY d.published_at DESC LIMIT 500';
 
-  const { rows } = await query<DigestItemRow>(sql, params);
+  const { rows } = await query<DigestItemRow & { poll_run_name: string | null }>(sql, params);
   return rows.map(row => ({
     id: row.id,
     source: row.source as SourceType,
     schedule_id: row.schedule_id,
     poll_run_id: row.poll_run_id,
+    poll_run_name: row.poll_run_name ?? null,
     title: row.title,
     content: row.content,
     post_count: row.post_count,
@@ -233,9 +242,13 @@ export async function getDigestItems(source?: SourceType): Promise<DigestItem[]>
 }
 
 export async function getDigestById(id: string): Promise<DigestItem | null> {
-  const { rows } = await query<DigestItemRow>(
-    `SELECT id, source, schedule_id, poll_run_id, title, content, post_count, post_ids, posts_json, published_at, created_at, read_at, last_read_post_id
-     FROM digest_items WHERE id = $1`,
+  const { rows } = await query<DigestItemRow & { poll_run_name: string | null }>(
+    `SELECT d.id, d.source, d.schedule_id, d.poll_run_id, d.title, d.content,
+            d.post_count, d.post_ids, d.posts_json, d.published_at, d.created_at,
+            d.read_at, d.last_read_post_id, pr.schedule_name AS poll_run_name
+     FROM digest_items d
+     LEFT JOIN poll_runs pr ON pr.id = d.poll_run_id
+     WHERE d.id = $1`,
     [id]
   );
   if (rows.length === 0) return null;
@@ -246,6 +259,7 @@ export async function getDigestById(id: string): Promise<DigestItem | null> {
     source: row.source as SourceType,
     schedule_id: row.schedule_id,
     poll_run_id: row.poll_run_id,
+    poll_run_name: row.poll_run_name ?? null,
     title: row.title,
     content: row.content,
     post_count: row.post_count,

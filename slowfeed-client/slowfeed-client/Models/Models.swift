@@ -54,6 +54,10 @@ struct DigestSummary: Codable, Identifiable, Equatable {
     let title: String
     let postCount: Int
     let pollRunId: Int?
+    /// Schedule name captured at poll-run time. Used by the sidebar
+    /// `GroupHeaderRow` as the human label for the group ("Morning
+    /// Brew" rather than "9:00 AM").
+    let pollRunName: String?
     let publishedAt: Date
     let readAt: Date?
 
@@ -63,6 +67,7 @@ struct DigestSummary: Codable, Identifiable, Equatable {
         case id, source, title
         case postCount = "postCount"
         case pollRunId = "pollRunId"
+        case pollRunName = "pollRunName"
         case publishedAt = "publishedAt"
         case readAt = "readAt"
     }

@@ -162,7 +162,7 @@ struct DigestSidebar: View {
     private var groupedDigests: [DigestGroup] {
         let calendar = Calendar.current
 
-        // Group digests by poll run ID, falling back to hour-based grouping
+        // Group digests by poll run ID, falling back to hour-based grouping.
         var groups: [String: [DigestSummary]] = [:]
         var groupDates: [String: Date] = [:]
 
@@ -171,13 +171,11 @@ struct DigestSidebar: View {
             if let pollRunId = digest.pollRunId {
                 groupKey = "run_\(pollRunId)"
             } else {
-                // Fall back to grouping by hour
                 let components = calendar.dateComponents([.year, .month, .day, .hour], from: digest.publishedAt)
                 groupKey = "time_\(components.year!)_\(components.month!)_\(components.day!)_\(components.hour!)"
             }
 
             groups[groupKey, default: []].append(digest)
-            // Use earliest date in group for sorting
             if let existing = groupDates[groupKey] {
                 groupDates[groupKey] = max(existing, digest.publishedAt)
             } else {
@@ -187,22 +185,22 @@ struct DigestSidebar: View {
 
         return groups.map { key, digests in
             let date = groupDates[key] ?? Date()
+            // Use the schedule name captured at poll-run time as the row
+            // label; fall back to the time-of-day for legacy digests with
+            // no name. The wider date Section header already shows the day.
+            let pollRunName = digests
+                .compactMap(\.pollRunName)
+                .first { !$0.isEmpty }
+            let label = pollRunName ?? date.formatted(date: .omitted, time: .shortened)
             return DigestGroup(
                 id: key,
                 date: date,
-                label: formatGroupLabel(date: date),
+                label: label,
                 digests: digests.sorted { $0.source.rawValue < $1.source.rawValue },
                 totalPosts: digests.reduce(0) { $0 + $1.postCount }
             )
         }
         .sorted { $0.date > $1.date }
-    }
-
-    private func formatGroupLabel(date: Date) -> String {
-        // Inner-group rows live inside a date Section, so the date
-        // itself is already shown by the section header — just the
-        // time of day here keeps the row compact.
-        date.formatted(date: .omitted, time: .shortened)
     }
 
     /// Top-level date buckets that wrap poll-run groups. The sidebar

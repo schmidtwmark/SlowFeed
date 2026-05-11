@@ -823,10 +823,28 @@ struct AccountSettingsView: View {
 // MARK: - App Settings
 
 struct AppSettingsView: View {
+    @Environment(AppState.self) private var appState
     @State private var httpLogger = HTTPLogger.shared
 
     var body: some View {
         Form {
+            #if os(iOS)
+            Section {
+                Picker("Open Links In", selection: Binding(
+                    get: { appState.browserPreference },
+                    set: { appState.browserPreference = $0 }
+                )) {
+                    ForEach(BrowserPreference.allCases) { pref in
+                        Text(pref.displayName).tag(pref)
+                    }
+                }
+            } header: {
+                Text("Browser")
+            } footer: {
+                Text("Tap a post to open its link in your default browser. Long-press for both Open and Open in Safari options.")
+            }
+            #endif
+
             Section {
                 Toggle("Network Logging", isOn: $httpLogger.isEnabled)
 
