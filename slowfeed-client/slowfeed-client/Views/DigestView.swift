@@ -326,9 +326,28 @@ struct DigestView: View {
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Digest JSON", json: json)
         }
-        // RSS reader destination, registered once at the top of the
-        // NavigationStack rather than inside each PostView (which is
-        // unreliable when the modifier is inside a ForEach).
+        // RSS reader presentation.
+        //
+        // iOS pushes onto the NavigationStack (back swipe + back button
+        // are the dismiss).
+        //
+        // macOS presents as a window-attached sheet — pushing onto a
+        // NavigationStack inside NavigationSplitView's detail pane with
+        // an embedded WKWebView reliably trips an infinite
+        // NSHostingView Update-Constraints loop on image-heavy RSS
+        // articles (every <img> load triggers a layout reflow inside
+        // WKWebView that feeds back through SwiftUI's graph until
+        // AppKit gives up and crashes the window). The sheet hosts the
+        // reader in its own window-level NSHostingView and breaks the
+        // cycle.
+        #if os(macOS)
+        .sheet(item: $readerPostId) { postId in
+            if let post = digest.posts?.first(where: { $0.postId == postId }) {
+                RSSReaderView(post: post)
+                    .frame(minWidth: 720, minHeight: 600)
+            }
+        }
+        #else
         .navigationDestination(item: $readerPostId) { postId in
             if let post = digest.posts?.first(where: { $0.postId == postId }) {
                 RSSReaderView(post: post)
@@ -336,6 +355,7 @@ struct DigestView: View {
                 Text("Post not found").foregroundStyle(.secondary)
             }
         }
+        #endif
         .navigationTitle(digest.source.displayName)
         #if os(macOS)
         .navigationSubtitle(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
