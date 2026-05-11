@@ -28,6 +28,13 @@ struct RSSReaderView: View {
         Group {
             if let html {
                 HTMLWebView(html: wrappedHTML(html), onOpenLink: openExternally)
+                    // Explicit fill frame so SwiftUI doesn't keep
+                    // re-proposing sizes as WKWebView's content height
+                    // changes during load. The unbounded sizing was
+                    // producing an infinite Update-Constraints loop on
+                    // macOS that crashed the app when the reader was
+                    // pushed via .navigationDestination.
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     Text(fallbackText)
@@ -184,6 +191,13 @@ struct HTMLWebView: NSViewRepresentable {
         cfg.defaultWebpagePreferences = prefs
         let view = WKWebView(frame: .zero, configuration: cfg)
         view.setValue(false, forKey: "drawsBackground")
+        // Autoresize with the SwiftUI host so WKWebView stops driving
+        // its own intrinsic-size updates — those interacted badly with
+        // NSHostingView's layout pass when the reader was pushed via
+        // .navigationDestination on macOS and produced an infinite
+        // Update-Constraints loop that crashed the app.
+        view.autoresizingMask = [.width, .height]
+        view.translatesAutoresizingMaskIntoConstraints = true
         view.navigationDelegate = context.coordinator
         view.loadHTMLString(html, baseURL: nil)
         context.coordinator.loadedHTML = html
