@@ -68,32 +68,40 @@ struct CachedImage<Placeholder: View>: View {
                 placeholder()
             } else {
                 placeholder()
-                    .onAppear { loadImage() }
             }
+        }
+        // .task(id: url) reruns whenever the URL prop changes — including
+        // when a parent (e.g. the gallery viewer) swaps from one image to
+        // the next. Without this, .onAppear only fires on the initial
+        // placeholder render and subsequent URL changes leave the stale
+        // image stuck on screen (the original gallery "Next clicks back
+        // to the first image" symptom).
+        .task(id: url) {
+            image = nil
+            failed = false
+            await loadImage()
         }
     }
 
-    private func loadImage() {
+    @MainActor
+    private func loadImage() async {
         guard let url else { failed = true; return }
 
-        // Check cache first
         if let cached = ImageCache.shared.image(for: url) {
-            self.image = cached
+            image = cached
             return
         }
 
-        Task {
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                if let loaded = PlatformImage(data: data) {
-                    ImageCache.shared.store(loaded, for: url)
-                    await MainActor.run { self.image = loaded }
-                } else {
-                    await MainActor.run { self.failed = true }
-                }
-            } catch {
-                await MainActor.run { self.failed = true }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if let loaded = PlatformImage(data: data) {
+                ImageCache.shared.store(loaded, for: url)
+                image = loaded
+            } else {
+                failed = true
             }
+        } catch {
+            failed = true
         }
     }
 }

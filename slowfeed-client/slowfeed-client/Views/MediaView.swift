@@ -849,23 +849,26 @@ struct ImageViewerOverlay: View {
     /// bounce at limits) and the existing SwiftUI gesture approach on macOS
     /// (mouse input → the custom gesture code plays nicely enough there).
     #if os(macOS)
-    /// macOS image layer: SwiftUI-based zoom/pan + matchedGeometryEffect
-    /// for the open-from-thumbnail animation. iOS uses a paged TabView
-    /// of `PagedZoomableImage` instead — see `iOSBody`.
+    /// macOS image layer: SwiftUI-based zoom/pan. The image is sized
+    /// explicitly to the GeometryReader bounds and then aspect-fit
+    /// inside — without the explicit frame, Image.resizable() +
+    /// aspect-fit collapses around the image's intrinsic size.
+    /// matchedGeometryEffect was previously here for the open-from-
+    /// thumbnail animation but it locked the destination geometry to
+    /// the (small) source thumbnail when the source had scrolled out
+    /// of view, producing the "weird height" symptom — dropped on
+    /// macOS until we have a more robust way to anchor it.
     @ViewBuilder
     private func imageLayer(containerSize: CGSize) -> some View {
         CachedImage(url: currentURL) {
             ProgressView().tint(.white)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .aspectRatio(contentMode: .fit)
-        // Force the image to fill the GeometryReader's bounds before
-        // aspect-fitting. Without this, Image(nsImage:).resizable() +
-        // aspect-fit lets the layout collapse around the image's
-        // intrinsic size and the viewer renders the photo at e.g. 200pt
-        // square in the middle of a black screen.
-        .frame(width: containerSize.width, height: containerSize.height)
-        .matchedGeometryEffect(id: currentURL?.absoluteString ?? "", in: namespace)
+        // Fill the GeometryReader's bounds so aspect-fit has a meaningful
+        // proposal. Without an outer frame Image.resizable() + aspect-fit
+        // collapses around the image's intrinsic size and the photo
+        // renders much smaller than the available area.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .scaleEffect(scale)
         .offset(x: offset.width, y: offset.height)
         .gesture(macOSZoomGesture(containerSize: containerSize))
