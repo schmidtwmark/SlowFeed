@@ -400,9 +400,24 @@ struct SourceSettingsView: View {
             TextEditor(text: $cookies)
                 .frame(minHeight: 100)
 
-            Text("Paste your browser cookies for personalized feed")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            CookieGuide(
+                summary: "How to get Reddit cookies",
+                intro: "Without cookies, Slowfeed scrapes the public Reddit front page. With cookies, you get your personalized home feed based on your subscriptions.",
+                steps: [
+                    "Open old.reddit.com in Chrome/Firefox and make sure you're logged in.",
+                    "Press F12 to open Developer Tools.",
+                    "Go to the Network tab.",
+                    "Refresh the page (F5).",
+                    "Click the first request to old.reddit.com in the list.",
+                    "In the right panel, scroll down to Request Headers.",
+                    "Find the Cookie header and copy its entire value.",
+                    "Paste the value here.",
+                ],
+                notes: [
+                    "Important: Use old.reddit.com, not www.reddit.com — the cookie format is different.",
+                    "If polling 403s, your session likely expired. Re-export the cookies the same way.",
+                ]
+            )
         } header: {
             Text("Cookies (Optional)")
         }
@@ -436,9 +451,23 @@ struct SourceSettingsView: View {
             TextEditor(text: $cookies)
                 .frame(minHeight: 100)
 
-            Text("Paste your YouTube browser cookies")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            CookieGuide(
+                summary: "How to get long-lasting YouTube cookies",
+                intro: "Use an incognito / private window to get cookies that last months instead of days:",
+                steps: [
+                    "Install a cookie-export extension like \"Get cookies.txt LOCALLY\" (Chrome) or \"cookies.txt\" (Firefox).",
+                    "Open a new incognito / private browsing window.",
+                    "Go to accounts.google.com and log in.",
+                    "Navigate to youtube.com/robots.txt.",
+                    "Click the cookie-export extension and export cookies for the current site.",
+                    "Immediately close the incognito window — do not browse further.",
+                    "Paste the exported cookies.txt content here.",
+                ],
+                notes: [
+                    "Why incognito? Cookies from regular sessions are tied to your browsing activity and expire quickly. Incognito cookies created for a minimal session last much longer (often months).",
+                    "Format: Both Netscape cookies.txt format (from extensions) and raw Cookie-header format (from DevTools) are supported.",
+                ]
+            )
         } header: {
             Text("Cookies")
         }
@@ -448,6 +477,25 @@ struct SourceSettingsView: View {
     private var discordSettings: some View {
         Section {
             SecureField("Bot Token", text: $appPassword)
+
+            CookieGuide(
+                summary: "How to get your Discord token",
+                intro: nil,
+                steps: [
+                    "Open discord.com/app in Chrome/Firefox (not the desktop app).",
+                    "Press F12 to open Developer Tools.",
+                    "Go to the Network tab.",
+                    "In the Filter box, type \"api\" to filter requests.",
+                    "Send a message in any channel, or switch channels.",
+                    "Click any request to discord.com/api in the list.",
+                    "In the right panel, scroll down to Request Headers.",
+                    "Find the Authorization header and copy its value (do NOT include the word \"Authorization:\").",
+                    "Paste the value here.",
+                ],
+                notes: [
+                    "Security note: Your Discord token grants full access to your account. Keep it secret. Slowfeed stores it locally and only uses it to read messages from channels you select.",
+                ]
+            )
         } header: {
             Text("Authentication")
         }
