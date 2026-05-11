@@ -48,17 +48,25 @@ struct RSSReaderView: View {
         #if !os(macOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        // Stable, unconditional toolbar: keep the item present and just
+        // disable it when there's no URL. Adding / removing toolbar
+        // items dynamically on macOS reconfigures the window toolbar
+        // and is a known trigger for NSHostingView layout loops.
         .toolbar {
-            if let urlString = post.url, let url = URL(string: urlString) {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        openURL(url)
-                    } label: {
-                        Label("Open Original", systemImage: "safari")
-                    }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    if let url = originalURL { openURL(url) }
+                } label: {
+                    Label("Open Original", systemImage: "safari")
                 }
+                .disabled(originalURL == nil)
             }
         }
+    }
+
+    private var originalURL: URL? {
+        guard let urlString = post.url else { return nil }
+        return URL(string: urlString)
     }
 
     private func openExternally(_ url: URL) {
@@ -208,6 +216,16 @@ struct HTMLWebView: NSViewRepresentable {
         guard context.coordinator.loadedHTML != html else { return }
         context.coordinator.loadedHTML = html
         nsView.loadHTMLString(html, baseURL: nil)
+    }
+
+    /// Explicitly accept whatever size SwiftUI proposes, with no
+    /// preference of our own. Without this, SwiftUI falls back to
+    /// querying intrinsicContentSize which a loading WKWebView keeps
+    /// changing as content streams in — that produced the infinite
+    /// Update-Constraints loop that crashed the app when the reader
+    /// was pushed via .navigationDestination on macOS.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: WKWebView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
     }
 }
 #else
