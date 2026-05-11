@@ -262,26 +262,32 @@ struct GroupHeaderRow: View {
     var body: some View {
         Button(action: toggle) {
             HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.label)
+                        .font(.title3)
+                        .fontWeight(group.hasUnread ? .semibold : .regular)
+                        .foregroundStyle(group.hasUnread ? .primary : .secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Text("\(group.totalPosts) post\(group.totalPosts == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                // Trailing chevron, vertically centered against the
+                // two-line title/subtitle stack thanks to the HStack's
+                // default centerY alignment.
                 Image(systemName: "chevron.right")
-                    .font(.caption)
+                    .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .frame(width: 12)
-
-                Text(group.label)
-                    .font(.subheadline)
-                    .fontWeight(group.hasUnread ? .semibold : .regular)
-                    .foregroundStyle(group.hasUnread ? .primary : .secondary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Text("\(group.totalPosts) posts")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .animation(.easeInOut(duration: 0.18), value: isExpanded)
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
