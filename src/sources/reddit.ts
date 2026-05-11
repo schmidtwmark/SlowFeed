@@ -40,10 +40,22 @@ function getRedditCookies(): string {
 async function fetchPage(url: string): Promise<string> {
   const cookies = getRedditCookies();
 
+  // Send a full browser-like header set. Reddit's bot defenses 403 anything
+  // that's missing the Sec-Fetch-* family or Upgrade-Insecure-Requests, even
+  // with a real Chrome User-Agent — the User-Agent alone isn't enough
+  // anymore.
   const headers: Record<string, string> = {
     'User-Agent': USER_AGENT,
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1',
   };
 
   if (cookies) {
@@ -53,6 +65,13 @@ async function fetchPage(url: string): Promise<string> {
   const response = await fetch(url, { headers });
 
   if (!response.ok) {
+    if (response.status === 403) {
+      // Distinguish stale-cookies vs bot-block so the user knows what to do.
+      const hint = cookies
+        ? ' (Reddit cookies may have expired — re-export them from your browser in Settings → Reddit.)'
+        : ' (Reddit blocks anonymous scraping — supply browser cookies in Settings → Reddit.)';
+      throw new Error(`Failed to fetch ${url}: 403${hint}`);
+    }
     throw new Error(`Failed to fetch ${url}: ${response.status}`);
   }
 
@@ -440,8 +459,13 @@ export async function pollReddit(): Promise<DigestPost[]> {
   logger.info(`Polling Reddit (${isLoggedIn ? 'logged in' : 'anonymous'})...`);
 
   try {
-    // Fetch homepage - if logged in with cookies, this will be personalized
-    const html = await fetchPage('https://old.reddit.com/');
+    // Logged in → personalized homepage. Anonymous → /r/popular/, since
+    // Reddit's homepage 403s without auth (login wall) but the public
+    // popular feed remains scrapeable.
+    const feedUrl = isLoggedIn
+      ? 'https://old.reddit.com/'
+      : 'https://old.reddit.com/r/popular/';
+    const html = await fetchPage(feedUrl);
 
     const posts = extractPosts(html);
 
