@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { query } from './db.js';
 import { logger } from './logger.js';
 import { generateId, isDuplicate } from './dedup.js';
@@ -31,6 +32,37 @@ export async function filterNewPosts(
  * Create a digest from a collection of posts.
  * Stores structured post data in posts_json.
  */
+/**
+ * Create a digest containing a single synthetic post that surfaces a
+ * polling failure to the user's feed. The user wanted these to show up
+ * as posts (not just buried in logs) so they can read the error and
+ * fix it themselves.
+ */
+export async function createErrorDigest(
+  source: SourceType,
+  errorMessage: string,
+  scheduleId?: number,
+  pollRunId?: number
+): Promise<DigestItem | null> {
+  const displayNames: Record<string, string> = {
+    reddit: 'Reddit', bluesky: 'Bluesky', youtube: 'YouTube',
+    discord: 'Discord', mastodon: 'Mastodon', rss: 'RSS',
+  };
+  const displayName = displayNames[source] ?? source;
+  const errorPost: DigestPost = {
+    // Per-source + per-message id so successive identical errors collapse
+    // to the same seen_posts row instead of stacking forever.
+    postId: `__error__:${source}:${createHash('sha1').update(errorMessage).digest('hex').slice(0, 16)}`,
+    title: `⚠️ ${displayName} polling failed`,
+    content: errorMessage,
+    url: '',
+    author: 'Slowfeed',
+    publishedAt: new Date(),
+    metadata: { isError: true },
+  };
+  return createDigest(source, [errorPost], scheduleId, pollRunId);
+}
+
 export async function createDigest(
   source: SourceType,
   posts: DigestPost[],

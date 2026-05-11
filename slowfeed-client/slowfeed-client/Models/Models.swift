@@ -179,6 +179,11 @@ struct PostMetadata: Codable {
     /// Full HTML body for RSS posts. The inline render uses the plain
     /// `content` field; the reader view renders this when present.
     let contentHTML: String?
+    /// Set on synthetic posts created by the server when polling a source
+    /// fails. The client renders these with a warning icon + red accent
+    /// so the user can see (and react to) failures inside the feed
+    /// instead of having to dig through logs.
+    let isError: Bool?
 }
 
 // MARK: - Test Poll Response

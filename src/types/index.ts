@@ -122,6 +122,11 @@ export interface PostMetadata {
   /** Full HTML body for RSS posts. The inline render uses the
    *  HTML-stripped `content` field; the reader view renders this. */
   contentHTML?: string;
+
+  /** Set on synthetic posts that wrap a poll-failure message. Lets the
+   *  client style the post as an error (red accent, warning icon)
+   *  instead of as a normal article. */
+  isError?: boolean;
 }
 
 // Digest types

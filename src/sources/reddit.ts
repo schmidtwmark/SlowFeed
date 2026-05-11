@@ -459,13 +459,8 @@ export async function pollReddit(): Promise<DigestPost[]> {
   logger.info(`Polling Reddit (${isLoggedIn ? 'logged in' : 'anonymous'})...`);
 
   try {
-    // Logged in → personalized homepage. Anonymous → /r/popular/, since
-    // Reddit's homepage 403s without auth (login wall) but the public
-    // popular feed remains scrapeable.
-    const feedUrl = isLoggedIn
-      ? 'https://old.reddit.com/'
-      : 'https://old.reddit.com/r/popular/';
-    const html = await fetchPage(feedUrl);
+    // Fetch homepage - if logged in with cookies, this will be personalized
+    const html = await fetchPage('https://old.reddit.com/');
 
     const posts = extractPosts(html);
 

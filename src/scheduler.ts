@@ -10,7 +10,7 @@ import { pollDiscord } from './sources/discord.js';
 import { pollMastodon } from './sources/mastodon.js';
 import { pollRSS } from './sources/rss.js';
 import { getEnabledSchedules, scheduleToCron } from './schedules.js';
-import { filterNewPosts, createDigest, pruneOldDigests } from './digest.js';
+import { filterNewPosts, createDigest, createErrorDigest, pruneOldDigests } from './digest.js';
 import type { PollSchedule, PollRun, SourceType, DigestPost } from './types/index.js';
 
 // Map of schedule ID to cron job
@@ -165,6 +165,14 @@ async function runScheduledPoll(schedule: PollSchedule): Promise<PollRun | null>
         }
         logger.error(`${source} poll failed: ${errorMessage}`);
         if (stack) logger.error(`${source} poll stack trace: ${stack}`);
+        // Surface the failure in the user's feed as a one-post error digest
+        // so they can read what went wrong without digging through logs.
+        try {
+          await createErrorDigest(source, errorMessage, schedule.id > 0 ? schedule.id : undefined, pollRun.id);
+          hasContent = true;
+        } catch (digestErr) {
+          logger.error(`Failed to record error digest for ${source}: ${(digestErr as Error).message}`);
+        }
         hasError = true;
       } finally {
         if (sourceStatus) {
