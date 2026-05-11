@@ -394,6 +394,37 @@ final class AppState {
         await loadDigest(id: digests[index].id)
     }
 
+    func navigateToDigest(id: String) async {
+        guard let idx = digests.firstIndex(where: { $0.id == id }) else { return }
+        await navigateToDigest(at: idx)
+    }
+
+    /// Sibling digests in the same poll-run group as the current digest,
+    /// ordered by source name. Used by `DigestHeader`'s prev/next nav
+    /// buttons so the user can jump between Reddit / Bluesky / etc.
+    /// within the same poll without going back to the sidebar.
+    var siblingDigests: (prev: DigestSummary?, next: DigestSummary?) {
+        guard let currentId = currentDigest?.id,
+              let currentSummary = digests.first(where: { $0.id == currentId }) else {
+            return (nil, nil)
+        }
+        let pool: [DigestSummary]
+        if let pollRunId = currentSummary.pollRunId {
+            pool = digests
+                .filter { $0.pollRunId == pollRunId }
+                .sorted { $0.source.rawValue < $1.source.rawValue }
+        } else {
+            // Legacy / fallback: there's no group concept, so no siblings.
+            return (nil, nil)
+        }
+        guard let idx = pool.firstIndex(where: { $0.id == currentId }) else {
+            return (nil, nil)
+        }
+        let prev = idx > 0 ? pool[idx - 1] : nil
+        let next = idx < pool.count - 1 ? pool[idx + 1] : nil
+        return (prev, next)
+    }
+
     func navigateToPreviousDigest() async {
         await navigateToDigest(at: currentDigestIndex + 1)
     }

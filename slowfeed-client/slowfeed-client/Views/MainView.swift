@@ -69,22 +69,29 @@ struct DigestSidebar: View {
 
     var body: some View {
         List(selection: $selection) {
-            ForEach(groupedDigests) { group in
-                // Header row — looks like one of the digest rows below it
-                // and tapping it expands or collapses that group's source
-                // rows. No `Section` chrome around it: the header IS a
-                // first-class row in the list.
-                GroupHeaderRow(
-                    group: group,
-                    isExpanded: appState.expandedGroups.contains(group.id),
-                    toggle: { toggleExpansion(group.id) }
-                )
+            ForEach(dateSections) { dateSection in
+                Section {
+                    ForEach(dateSection.groups) { group in
+                        // Header row — looks like one of the digest rows
+                        // below it and tapping it expands or collapses
+                        // that group's source rows. No Section chrome
+                        // around the poll-run group itself: the header
+                        // IS a first-class row in the list.
+                        GroupHeaderRow(
+                            group: group,
+                            isExpanded: appState.expandedGroups.contains(group.id),
+                            toggle: { toggleExpansion(group.id) }
+                        )
 
-                if appState.expandedGroups.contains(group.id) {
-                    ForEach(group.digests) { digest in
-                        DigestRow(digest: digest, isSelected: appState.currentDigest?.id == digest.id)
-                            .tag(digest.id)
+                        if appState.expandedGroups.contains(group.id) {
+                            ForEach(group.digests) { digest in
+                                DigestRow(digest: digest, isSelected: appState.currentDigest?.id == digest.id)
+                                    .tag(digest.id)
+                            }
+                        }
                     }
+                } header: {
+                    Text(dateSection.label)
                 }
             }
         }
@@ -192,18 +199,46 @@ struct DigestSidebar: View {
     }
 
     private func formatGroupLabel(date: Date) -> String {
-        let calendar = Calendar.current
-        let timeStr = date.formatted(date: .omitted, time: .shortened)
-
-        if calendar.isDateInToday(date) {
-            return "Today \(timeStr)"
-        } else if calendar.isDateInYesterday(date) {
-            return "Yesterday \(timeStr)"
-        } else {
-            let dayStr = date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
-            return "\(dayStr) \(timeStr)"
-        }
+        // Inner-group rows live inside a date Section, so the date
+        // itself is already shown by the section header — just the
+        // time of day here keeps the row compact.
+        date.formatted(date: .omitted, time: .shortened)
     }
+
+    /// Top-level date buckets that wrap poll-run groups. The sidebar
+    /// renders one Section per day (Today / Yesterday / Wed Apr 30),
+    /// containing that day's poll-run groups in reverse-chron order.
+    private var dateSections: [DateSection] {
+        let calendar = Calendar.current
+        var bucketed: [Date: [DigestGroup]] = [:]
+        for group in groupedDigests {
+            let day = calendar.startOfDay(for: group.date)
+            bucketed[day, default: []].append(group)
+        }
+        return bucketed.map { day, groups in
+            DateSection(
+                id: ISO8601DateFormatter().string(from: day),
+                date: day,
+                label: formatDateSectionLabel(date: day),
+                groups: groups.sorted { $0.date > $1.date }
+            )
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    private func formatDateSectionLabel(date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        return date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+    }
+}
+
+struct DateSection: Identifiable {
+    let id: String
+    let date: Date
+    let label: String
+    let groups: [DigestGroup]
 }
 
 struct DigestGroup: Identifiable {
@@ -329,7 +364,6 @@ struct DigestRow: View {
 
 struct DigestDetailView: View {
     @Environment(AppState.self) private var appState
-    @State private var showPollConfirmation = false
 
     var body: some View {
         ZStack {
@@ -403,26 +437,6 @@ struct DigestDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.ultraThinMaterial)
             }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showPollConfirmation = true
-                } label: {
-                    Label("Fetch New Content", systemImage: "arrow.trianglehead.2.counterclockwise.rotate.90")
-                }
-                .disabled(appState.isPolling)
-            }
-        }
-        .confirmationDialog("Fetch New Content", isPresented: $showPollConfirmation) {
-            Button("Fetch Now") {
-                Task {
-                    try? await appState.triggerPoll()
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Are you sure you want to fetch new content from all sources? This will poll Reddit, Bluesky, YouTube, and any other enabled sources.")
         }
     }
 }

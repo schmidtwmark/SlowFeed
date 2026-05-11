@@ -328,31 +328,38 @@ struct NativePlayerView: NSViewRepresentable {
 /// The player's frame uses the video's natural aspect ratio loaded from the
 /// asset (honoring `preferredTransform`) rather than a hardcoded 16:9, so
 /// vertical videos render without letterboxing.
+/// In-feed video preview. Renders a tappable thumbnail (poster image
+/// with a play overlay) and opens the video in a fullscreen player on
+/// tap — videos no longer play inline (MAR-70). The thumbnail's aspect
+/// ratio is loaded from the asset itself so vertical videos preview
+/// correctly even before the player opens.
 struct InlineVideoPlayer: View {
     let media: PostMedia
 
-    @State private var player: AVPlayer?
-    @State private var loopObserver: NSObjectProtocol?
     /// Falls back to 16:9 until the asset's natural size loads.
     @State private var aspectRatio: CGFloat = 16.0 / 9.0
+    @State private var showFullscreen = false
 
     var body: some View {
-        ZStack {
-            if let player {
-                #if os(macOS)
-                NativePlayerView(player: player)
-                    .aspectRatio(aspectRatio, contentMode: .fit)
-                    .onDisappear { stopPlayback() }
-                #else
-                VideoPlayer(player: player)
-                    .aspectRatio(aspectRatio, contentMode: .fit)
-                    .onDisappear { stopPlayback() }
-                #endif
-            } else {
-                thumbnailPlaceholder
-                    .onTapGesture { startPlayback() }
+        thumbnailPlaceholder
+            .contentShape(Rectangle())
+            .onTapGesture { showFullscreen = true }
+            .task {
+                guard let url = URL(string: media.url),
+                      let ratio = await Self.loadAspectRatio(for: url),
+                      ratio > 0 else { return }
+                aspectRatio = ratio
             }
-        }
+            #if os(iOS)
+            .fullScreenCover(isPresented: $showFullscreen) {
+                FullscreenVideoView(media: media, onDismiss: { showFullscreen = false })
+            }
+            #else
+            .sheet(isPresented: $showFullscreen) {
+                FullscreenVideoView(media: media, onDismiss: { showFullscreen = false })
+                    .frame(minWidth: 600, minHeight: 400)
+            }
+            #endif
     }
 
     private var thumbnailPlaceholder: some View {
@@ -379,38 +386,9 @@ struct InlineVideoPlayer: View {
         }
     }
 
-    private func startPlayback() {
-        guard player == nil, let videoURL = URL(string: media.url) else { return }
-
-        let newPlayer = AVPlayer(url: videoURL)
-
-        // Loop on end.
-        if let observer = loopObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        loopObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: newPlayer.currentItem,
-            queue: .main
-        ) { _ in
-            newPlayer.seek(to: .zero)
-            newPlayer.play()
-        }
-
-        newPlayer.play()
-        player = newPlayer
-
-        // Resize to the video's natural aspect ratio in the background.
-        Task { @MainActor in
-            if let ratio = await Self.loadAspectRatio(for: videoURL), ratio > 0 {
-                aspectRatio = ratio
-            }
-        }
-    }
-
     /// Load the asset's natural aspect ratio, honoring `preferredTransform` so
     /// portrait videos recorded sideways still present as portrait.
-    private static func loadAspectRatio(for url: URL) async -> CGFloat? {
+    static func loadAspectRatio(for url: URL) async -> CGFloat? {
         let asset = AVURLAsset(url: url)
         do {
             guard let track = try await asset.loadTracks(withMediaType: .video).first else { return nil }
@@ -426,13 +404,74 @@ struct InlineVideoPlayer: View {
             return nil
         }
     }
+}
 
-    private func stopPlayback() {
+/// Fullscreen video player presented when the user taps an in-feed video
+/// thumbnail. Loops, fills the screen, dismisses via the close button or
+/// the player's own controls.
+struct FullscreenVideoView: View {
+    let media: PostMedia
+    let onDismiss: () -> Void
+
+    @State private var player: AVPlayer?
+    @State private var loopObserver: NSObjectProtocol?
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            if let player {
+                #if os(macOS)
+                NativePlayerView(player: player)
+                    .ignoresSafeArea()
+                #else
+                VideoPlayer(player: player)
+                    .ignoresSafeArea()
+                #endif
+            } else {
+                ProgressView().tint(.white)
+            }
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title)
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding()
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+            }
+        }
+        .onAppear { setupPlayer() }
+        .onDisappear { teardownPlayer() }
+    }
+
+    private func setupPlayer() {
+        guard let url = URL(string: media.url) else { return }
+        let p = AVPlayer(url: url)
+        loopObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: p.currentItem,
+            queue: .main
+        ) { _ in
+            p.seek(to: .zero)
+            p.play()
+        }
+        p.play()
+        player = p
+    }
+
+    private func teardownPlayer() {
         player?.pause()
         if let observer = loopObserver {
             NotificationCenter.default.removeObserver(observer)
             loopObserver = nil
         }
+        player = nil
     }
 }
 
@@ -546,6 +585,36 @@ struct ZoomableImage: UIViewRepresentable {
     }
 }
 
+/// One page inside the iOS image-viewer TabView: loads its own UIImage
+/// (sharing the app's NSCache) and owns its own zoom state, so each image
+/// in the gallery can be pinched independently and swiping resets to 1×
+/// on each page.
+struct PagedZoomableImage: View {
+    let url: URL
+    var onSingleTap: () -> Void
+
+    @State private var image: UIImage?
+    @State private var zoomScale: CGFloat = 1
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let image {
+                ZoomableImage(image: image, zoomScale: $zoomScale, onSingleTap: onSingleTap)
+            } else {
+                ProgressView().tint(.white)
+            }
+        }
+        .task(id: url) {
+            if let cached = LoadedUIImage.cachedImage(for: url) {
+                image = cached
+                return
+            }
+            image = await LoadedUIImage.fetch(url: url)
+        }
+    }
+}
+
 /// Loads a `UIImage` for a URL (using the same NSCache the rest of the app
 /// shares) and calls back once it's available. Sync return for cache hits.
 struct LoadedUIImage {
@@ -577,27 +646,19 @@ struct ImageViewerOverlay: View {
     let namespace: Namespace.ID
     let onDismiss: () -> Void
 
-    // iOS: zoom reported back by `ZoomableImage` (UIScrollView). We use this
-    // to gate swipe-to-dismiss — only allow it at minimum zoom.
-    @State private var zoomScale: CGFloat = 1
-
-    // iOS: loaded UIImage for the current URL (UIScrollView needs a UIImage).
-    #if !os(macOS)
-    @State private var loadedImage: UIImage?
-    #endif
-
-    // Swipe-to-dismiss state.
-    @State private var dismissDrag: CGSize = .zero
-    @State private var backgroundOpacity: Double = 1.0
     @FocusState private var isFocused: Bool
     @State private var showAltText: Bool = false
 
-    // macOS only: simple scale/offset bag for the SwiftUI-based zoom.
+    // macOS only: SwiftUI-based zoom + swipe-to-dismiss state.
+    // iOS uses TabView(.page) + per-page ZoomableImage instead, so it
+    // doesn't need any of this on the parent.
     #if os(macOS)
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
+    @State private var dismissDrag: CGSize = .zero
+    @State private var backgroundOpacity: Double = 1.0
     #endif
 
     private var imageURLs: [URL] { images.compactMap { URL(string: $0.url) } }
@@ -615,16 +676,23 @@ struct ImageViewerOverlay: View {
         return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
+    #if os(macOS)
     /// True when the user is dragging-to-dismiss at minimum zoom.
     private var isDraggingToDismiss: Bool {
+        scale <= 1.0 && dismissDrag != .zero
+    }
+    #endif
+
+    var body: some View {
         #if os(macOS)
-        return scale <= 1.0 && dismissDrag != .zero
+        macOSBody
         #else
-        return abs(zoomScale - 1) < 0.01 && dismissDrag != .zero
+        iOSBody
         #endif
     }
 
-    var body: some View {
+    #if os(macOS)
+    private var macOSBody: some View {
         GeometryReader { geo in
             ZStack {
                 Color.black
@@ -661,7 +729,6 @@ struct ImageViewerOverlay: View {
         .focusable()
         .focused($isFocused)
         .onAppear { isFocused = true }
-        #if os(macOS)
         .onKeyPress(.escape) { onDismiss(); return .handled }
         .onKeyPress(.leftArrow) {
             if currentIndex > 0 { resetZoom(); withAnimation { currentIndex -= 1 } }
@@ -671,27 +738,48 @@ struct ImageViewerOverlay: View {
             if currentIndex < imageURLs.count - 1 { resetZoom(); withAnimation { currentIndex += 1 } }
             return .handled
         }
-        #else
-        .task(id: currentURL) {
-            // Load the UIImage for the UIScrollView wrapper. Uses the shared
-            // NSCache so if the thumbnail grid already fetched this image, we
-            // reuse the in-memory copy — no redundant download.
-            guard let url = currentURL else { return }
-            loadedImage = LoadedUIImage.cachedImage(for: url)
-            if loadedImage == nil {
-                loadedImage = await LoadedUIImage.fetch(url: url)
-            }
-        }
-        #endif
     }
+    #endif
+
+    #if !os(macOS)
+    /// iOS uses a paging TabView so swipes feel like the Photos app:
+    /// finger-following with rubber-band and snap-to-page on release.
+    /// Each page owns its own zoom state so you can pinch one image,
+    /// swipe past it, and the next image starts at 1× — matching
+    /// Photos. (MAR-67)
+    private var iOSBody: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            TabView(selection: $currentIndex) {
+                ForEach(Array(imageURLs.enumerated()), id: \.offset) { idx, url in
+                    PagedZoomableImage(url: url, onSingleTap: onDismiss)
+                        .tag(idx)
+                        .ignoresSafeArea()
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea()
+
+            chrome
+        }
+        .focusable()
+        .focused($isFocused)
+        .onAppear { isFocused = true }
+        .onChange(of: currentIndex) { _, _ in showAltText = false }
+    }
+    #endif
 
     /// Platform-split image layer: UIScrollView-backed on iOS for Photos-app
     /// fidelity (proper pinch anchoring, pan bounds, double-tap-at-location,
     /// bounce at limits) and the existing SwiftUI gesture approach on macOS
     /// (mouse input → the custom gesture code plays nicely enough there).
+    #if os(macOS)
+    /// macOS image layer: SwiftUI-based zoom/pan + matchedGeometryEffect
+    /// for the open-from-thumbnail animation. iOS uses a paged TabView
+    /// of `PagedZoomableImage` instead — see `iOSBody`.
     @ViewBuilder
     private func imageLayer(containerSize: CGSize) -> some View {
-        #if os(macOS)
         CachedImage(url: currentURL) {
             ProgressView().tint(.white)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -715,72 +803,6 @@ struct ImageViewerOverlay: View {
                 }
             }
         }
-        #else
-        ZoomableImage(image: loadedImage, zoomScale: $zoomScale, onSingleTap: onDismiss)
-            .matchedGeometryEffect(id: currentURL?.absoluteString ?? "", in: namespace)
-            .offset(
-                x: isDraggingToDismiss ? dismissDrag.width * 0.3 : 0,
-                y: isDraggingToDismiss ? dismissDrag.height : 0
-            )
-            .scaleEffect(isDraggingToDismiss ? max(0.7, 1.0 - abs(dismissDrag.height) / 1000) : 1.0)
-            // Both gestures only fire at minimum zoom; the scroll view
-            // consumes its own pan when zoomed in. The orientation guards
-            // (`|dy| > |dx|` vs `|dx| > |dy|`) keep them from competing on
-            // the same drag.
-            .simultaneousGesture(dismissDragGesture())
-            .simultaneousGesture(swipeToPageGesture())
-        #endif
-    }
-
-    #if !os(macOS)
-    private func dismissDragGesture() -> some Gesture {
-        DragGesture(minimumDistance: 10)
-            .onChanged { value in
-                guard abs(zoomScale - 1) < 0.01 else { return }
-                // Only vertical drag dismisses; horizontal is ambiguous with
-                // scroll view's own recognizer so we ignore it.
-                guard abs(value.translation.height) > abs(value.translation.width) else { return }
-                dismissDrag = value.translation
-                let progress = min(abs(value.translation.height) / 300, 1.0)
-                backgroundOpacity = Double(1.0 - progress * 0.6)
-            }
-            .onEnded { value in
-                guard dismissDrag != .zero else { return }
-                let vy = value.velocity.height
-                if abs(dismissDrag.height) > 120 || abs(vy) > 800 {
-                    onDismiss()
-                } else {
-                    withAnimation(.spring(duration: 0.3)) {
-                        dismissDrag = .zero
-                        backgroundOpacity = 1.0
-                    }
-                }
-            }
-    }
-
-    /// Horizontal swipe between gallery images. Mirrors the chevron buttons.
-    /// Only fires at minimum zoom (UIScrollView eats horizontal pan when
-    /// zoomed in) and only when the drag is more horizontal than vertical
-    /// (so it can't conflict with `dismissDragGesture`).
-    private func swipeToPageGesture() -> some Gesture {
-        DragGesture(minimumDistance: 30)
-            .onEnded { value in
-                guard abs(zoomScale - 1) < 0.01 else { return }
-                let dx = value.translation.width
-                let dy = value.translation.height
-                guard abs(dx) > abs(dy) else { return }
-                let vx = value.velocity.width
-                let triggered = abs(dx) > 60 || abs(vx) > 500
-                guard triggered else { return }
-
-                if dx < 0, currentIndex < imageURLs.count - 1 {
-                    showAltText = false
-                    withAnimation(.easeInOut(duration: 0.25)) { currentIndex += 1 }
-                } else if dx > 0, currentIndex > 0 {
-                    showAltText = false
-                    withAnimation(.easeInOut(duration: 0.25)) { currentIndex -= 1 }
-                }
-            }
     }
     #endif
 
@@ -838,9 +860,12 @@ struct ImageViewerOverlay: View {
             }
             .padding(.bottom, 12)
         }
+        #if os(macOS)
         .opacity(backgroundOpacity)
+        #endif
     }
 
+    #if os(macOS)
     private func navButton(systemName: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
@@ -850,7 +875,6 @@ struct ImageViewerOverlay: View {
         .buttonStyle(.plain)
     }
 
-    #if os(macOS)
     private func resetZoom() {
         scale = 1.0; lastScale = 1.0
         offset = .zero; lastOffset = .zero

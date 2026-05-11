@@ -171,6 +171,13 @@ struct DigestView: View {
                         Divider()
 
                         if let posts = digest.posts, !posts.isEmpty {
+                            // .scrollTargetLayout() lets .scrollPosition(id:)
+                            // on the ScrollView read the topmost visible
+                            // post's ID into `scrolledPostId` as the user
+                            // scrolls. Without it the binding is set-only
+                            // and the down-arrow falls back to the stale
+                            // `focusedPostId`, scrolling all the way back
+                            // to the top. (MAR-71)
                             VStack(alignment: .leading, spacing: 0) {
                                 if digest.source == .bluesky || digest.source == .mastodon {
                                     // Threaded rendering: flattened post tree
@@ -198,6 +205,7 @@ struct DigestView: View {
                                     }
                                 }
                             }
+                            .scrollTargetLayout()
                         } else {
                             ContentUnavailableView(
                                 "No Posts",
@@ -318,6 +326,11 @@ struct DigestView: View {
         .navigationSubtitle(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
         #else
         .navigationBarTitleDisplayMode(.inline)
+        // Hide the nav and tab bars while the fullscreen image viewer is up
+        // so the gallery actually fills the screen (MAR-68).
+        .toolbar(showViewer ? .hidden : .visible, for: .navigationBar)
+        .toolbar(showViewer ? .hidden : .visible, for: .tabBar)
+        .statusBarHidden(showViewer)
         #endif
     }
 
@@ -498,12 +511,88 @@ struct DigestView: View {
 
 struct DigestHeader: View {
     let digest: Digest
+    @Environment(AppState.self) private var appState
 
     var body: some View {
-        Text(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        let siblings = appState.siblingDigests
+        HStack(spacing: 8) {
+            if let prev = siblings.prev {
+                SourceNavButton(direction: .previous, sibling: prev) {
+                    Task { await appState.navigateToDigest(id: prev.id) }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            Text(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+
+            if let next = siblings.next {
+                SourceNavButton(direction: .next, sibling: next) {
+                    Task { await appState.navigateToDigest(id: next.id) }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// Compact pill button rendered next to the digest header date that
+/// jumps to the previous / next sibling source in the same poll-run
+/// group. Icon is the sibling's source icon (so the user knows where
+/// they're going); color is the source color when that sibling is
+/// unread, .secondary (grayscale) when read.
+private struct SourceNavButton: View {
+    enum Direction { case previous, next }
+    let direction: Direction
+    let sibling: DigestSummary
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if direction == .previous {
+                    Image(systemName: "chevron.left")
+                }
+                Image(systemName: sourceIcon)
+                if direction == .next {
+                    Image(systemName: "chevron.right")
+                }
+            }
+            .font(.caption)
+            .fontWeight(.semibold)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.quaternary, in: Capsule())
+            .foregroundStyle(sibling.isRead ? Color.secondary : sourceColor)
+        }
+        .buttonStyle(.plain)
+        .help("Go to \(sibling.source.displayName)")
+    }
+
+    private var sourceIcon: String {
+        switch sibling.source {
+        case .reddit: return "bubble.left.and.bubble.right.fill"
+        case .bluesky: return "cloud.fill"
+        case .youtube: return "play.rectangle.fill"
+        case .discord: return "message.fill"
+        case .mastodon: return "at"
+        case .rss: return "dot.radiowaves.left.and.right"
+        }
+    }
+
+    private var sourceColor: Color {
+        switch sibling.source {
+        case .reddit: return .orange
+        case .bluesky: return .blue
+        case .youtube: return .red
+        case .discord: return .purple
+        case .mastodon: return .indigo
+        case .rss: return .yellow
+        }
     }
 }
 
