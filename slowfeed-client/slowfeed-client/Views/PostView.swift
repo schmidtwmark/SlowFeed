@@ -100,6 +100,14 @@ struct PostView: View {
                     .foregroundStyle(.primary)
             }
 
+            // RSS header image (first <img> from the article HTML).
+            // Sized per the user's rssImageStyle setting.
+            if source == .rss,
+               let urlString = post.metadata?.headerImageURL,
+               !urlString.isEmpty {
+                RSSHeaderImage(urlString: urlString, style: appState.rssImageStyle)
+            }
+
             // Body
             if source == .rss {
                 rssBody

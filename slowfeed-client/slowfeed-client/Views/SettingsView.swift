@@ -846,6 +846,21 @@ struct AppSettingsView: View {
             #endif
 
             Section {
+                Picker("RSS Header Image", selection: Binding(
+                    get: { appState.rssImageStyle },
+                    set: { appState.rssImageStyle = $0 }
+                )) {
+                    ForEach(RSSImageStyle.allCases) { style in
+                        Text(style.displayName).tag(style)
+                    }
+                }
+            } header: {
+                Text("RSS")
+            } footer: {
+                Text("How the first image from an RSS article renders on the post card: a compact thumbnail or a full-width hero.")
+            }
+
+            Section {
                 Toggle("Network Logging", isOn: $httpLogger.isEnabled)
 
                 if httpLogger.isEnabled {

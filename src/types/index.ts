@@ -123,6 +123,10 @@ export interface PostMetadata {
    *  HTML-stripped `content` field; the reader view renders this. */
   contentHTML?: string;
 
+  /** First `<img>` URL extracted from the RSS post body, used by the
+   *  client as a hero preview above the post body in the digest. */
+  headerImageURL?: string;
+
   /** Set on synthetic posts that wrap a poll-failure message. Lets the
    *  client style the post as an error (red accent, warning icon)
    *  instead of as a normal article. */

@@ -184,6 +184,10 @@ struct PostMetadata: Codable {
     /// Full HTML body for RSS posts. The inline render uses the plain
     /// `content` field; the reader view renders this when present.
     let contentHTML: String?
+    /// First `<img>` URL extracted from the RSS post body. Rendered
+    /// above the post body in the digest as a hero preview — sized
+    /// thumbnail or full per the user's `rssImageStyle` setting.
+    let headerImageURL: String?
     /// Set on synthetic posts created by the server when polling a source
     /// fails. The client renders these with a warning icon + red accent
     /// so the user can see (and react to) failures inside the feed

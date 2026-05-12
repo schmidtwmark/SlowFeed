@@ -67,6 +67,15 @@ final class AppState {
         }
     }
 
+    /// How the header image (first `<img>` from the RSS HTML) renders on
+    /// each RSS post card — a compact thumbnail next to the title, or
+    /// a full-width hero. User-configurable in App Settings.
+    var rssImageStyle: RSSImageStyle = .full {
+        didSet {
+            UserDefaults.standard.set(rssImageStyle.rawValue, forKey: "rssImageStyle")
+        }
+    }
+
     // Digest state
     var digests: [DigestSummary] = []
     var currentDigest: Digest?
@@ -140,6 +149,11 @@ final class AppState {
         if let raw = UserDefaults.standard.string(forKey: "browserPreference"),
            let pref = BrowserPreference(rawValue: raw) {
             browserPreference = pref
+        }
+
+        if let raw = UserDefaults.standard.string(forKey: "rssImageStyle"),
+           let style = RSSImageStyle(rawValue: raw) {
+            rssImageStyle = style
         }
 
         if let sessionId {
