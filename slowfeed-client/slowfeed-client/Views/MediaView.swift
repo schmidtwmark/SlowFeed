@@ -415,10 +415,18 @@ struct FullscreenVideoView: View {
 
     @State private var player: AVPlayer?
     @State private var loopObserver: NSObjectProtocol?
+    #if !os(macOS)
+    @State private var dismissDrag: CGSize = .zero
+    @State private var backgroundOpacity: Double = 1.0
+    #endif
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.black
+                #if !os(macOS)
+                .opacity(backgroundOpacity)
+                #endif
+                .ignoresSafeArea()
 
             if let player {
                 #if os(macOS)
@@ -427,6 +435,8 @@ struct FullscreenVideoView: View {
                 #else
                 VideoPlayer(player: player)
                     .ignoresSafeArea()
+                    .offset(y: dismissDrag.height)
+                    .scaleEffect(dismissScale)
                 #endif
             } else {
                 ProgressView().tint(.white)
@@ -445,10 +455,50 @@ struct FullscreenVideoView: View {
                 }
                 Spacer()
             }
+            #if !os(macOS)
+            .opacity(backgroundOpacity)
+            #endif
         }
+        #if !os(macOS)
+        // Swipe down (or up) anywhere on the video to dismiss, with
+        // visual feedback as the user drags. Photos-app-style. (MAR-75)
+        .simultaneousGesture(dismissDragGesture())
+        #endif
         .onAppear { setupPlayer() }
         .onDisappear { teardownPlayer() }
     }
+
+    #if !os(macOS)
+    private var dismissScale: CGFloat {
+        guard dismissDrag != .zero else { return 1.0 }
+        return max(0.7, 1.0 - abs(dismissDrag.height) / 1000)
+    }
+
+    private func dismissDragGesture() -> some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                // Vertical-dominant drags only; horizontal pan should
+                // pass through to the player's scrubber if it ever gets
+                // recognized.
+                guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                dismissDrag = value.translation
+                let progress = min(abs(value.translation.height) / 300, 1.0)
+                backgroundOpacity = Double(1.0 - progress * 0.6)
+            }
+            .onEnded { value in
+                guard dismissDrag != .zero else { return }
+                let vy = value.velocity.height
+                if abs(dismissDrag.height) > 120 || abs(vy) > 800 {
+                    onDismiss()
+                } else {
+                    withAnimation(.spring(duration: 0.3)) {
+                        dismissDrag = .zero
+                        backgroundOpacity = 1.0
+                    }
+                }
+            }
+    }
+    #endif
 
     private func setupPlayer() {
         guard let url = URL(string: media.url) else { return }

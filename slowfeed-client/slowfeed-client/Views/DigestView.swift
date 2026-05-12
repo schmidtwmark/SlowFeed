@@ -367,6 +367,38 @@ struct DigestView: View {
         .toolbar(showViewer ? .hidden : .visible, for: .tabBar)
         .statusBarHidden(showViewer)
         #endif
+        // Source nav pills moved out of the inline DigestHeader and
+        // into the navigation toolbar (MAR-76). Always present so the
+        // toolbar shape is stable across digests; disabled when
+        // there's no sibling in that direction.
+        .toolbar { sourceNavToolbar }
+    }
+
+    @ToolbarContentBuilder
+    private var sourceNavToolbar: some ToolbarContent {
+        let siblings = appState.siblingDigests
+        #if os(macOS)
+        let leadingPlacement: ToolbarItemPlacement = .navigation
+        let trailingPlacement: ToolbarItemPlacement = .primaryAction
+        #else
+        let leadingPlacement: ToolbarItemPlacement = .topBarLeading
+        let trailingPlacement: ToolbarItemPlacement = .topBarTrailing
+        #endif
+
+        ToolbarItem(placement: leadingPlacement) {
+            if let prev = siblings.prev {
+                SourceNavButton(direction: .previous, sibling: prev) {
+                    Task { await appState.navigateToDigest(id: prev.id) }
+                }
+            }
+        }
+        ToolbarItem(placement: trailingPlacement) {
+            if let next = siblings.next {
+                SourceNavButton(direction: .next, sibling: next) {
+                    Task { await appState.navigateToDigest(id: next.id) }
+                }
+            }
+        }
     }
 
     #if os(macOS)
@@ -550,41 +582,21 @@ struct DigestView: View {
 
 struct DigestHeader: View {
     let digest: Digest
-    @Environment(AppState.self) private var appState
 
     var body: some View {
-        let siblings = appState.siblingDigests
-        HStack(spacing: 8) {
-            if let prev = siblings.prev {
-                SourceNavButton(direction: .previous, sibling: prev) {
-                    Task { await appState.navigateToDigest(id: prev.id) }
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            Text(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            Spacer(minLength: 0)
-
-            if let next = siblings.next {
-                SourceNavButton(direction: .next, sibling: next) {
-                    Task { await appState.navigateToDigest(id: next.id) }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity)
+        Text(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// Compact pill button rendered next to the digest header date that
+/// Compact pill button shown in the digest navigation toolbar that
 /// jumps to the previous / next sibling source in the same poll-run
 /// group. Icon is the sibling's source icon (so the user knows where
 /// they're going); color is the source color when that sibling is
 /// unread, .secondary (grayscale) when read.
-private struct SourceNavButton: View {
+struct SourceNavButton: View {
     enum Direction { case previous, next }
     let direction: Direction
     let sibling: DigestSummary
