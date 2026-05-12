@@ -378,27 +378,46 @@ struct DigestView: View {
     private var sourceNavToolbar: some ToolbarContent {
         let siblings = appState.siblingDigests
         #if os(macOS)
-        let leadingPlacement: ToolbarItemPlacement = .navigation
-        let trailingPlacement: ToolbarItemPlacement = .primaryAction
-        #else
-        let leadingPlacement: ToolbarItemPlacement = .topBarLeading
-        let trailingPlacement: ToolbarItemPlacement = .topBarTrailing
-        #endif
-
-        ToolbarItem(placement: leadingPlacement) {
+        // macOS: both buttons together on the trailing edge, in a
+        // single ToolbarItemGroup so they render as a tight pair next
+        // to each other in the top-right of the window toolbar.
+        ToolbarItemGroup(placement: .primaryAction) {
             if let prev = siblings.prev {
                 SourceNavButton(direction: .previous, sibling: prev) {
                     Task { await appState.navigateToDigest(id: prev.id) }
                 }
             }
-        }
-        ToolbarItem(placement: trailingPlacement) {
             if let next = siblings.next {
                 SourceNavButton(direction: .next, sibling: next) {
                     Task { await appState.navigateToDigest(id: next.id) }
                 }
             }
         }
+        #else
+        // iOS: take over the navigation bar title slot so the buttons
+        // sit inline with the source name — `<R Bluesky Y>` — instead
+        // of getting wrapped in iOS 26's pill-shaped floating toolbar
+        // chips. .navigationTitle is still set above for the back
+        // button label and accessibility; .principal overrides the
+        // visual title in the bar.
+        ToolbarItem(placement: .principal) {
+            HStack(spacing: 8) {
+                if let prev = siblings.prev {
+                    SourceNavButton(direction: .previous, sibling: prev) {
+                        Task { await appState.navigateToDigest(id: prev.id) }
+                    }
+                }
+                Text(digest.source.displayName)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                if let next = siblings.next {
+                    SourceNavButton(direction: .next, sibling: next) {
+                        Task { await appState.navigateToDigest(id: next.id) }
+                    }
+                }
+            }
+        }
+        #endif
     }
 
     #if os(macOS)
@@ -604,21 +623,25 @@ struct SourceNavButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: 2) {
                 if direction == .previous {
                     Image(systemName: "chevron.left")
+                        .font(.subheadline.weight(.semibold))
                 }
                 Image(systemName: sourceIcon)
+                    .font(.subheadline)
                 if direction == .next {
                     Image(systemName: "chevron.right")
+                        .font(.subheadline.weight(.semibold))
                 }
             }
-            .font(.caption)
-            .fontWeight(.semibold)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.quaternary, in: Capsule())
             .foregroundStyle(sibling.isRead ? Color.secondary : sourceColor)
+            // Padded hit target without a visible pill — the icons sit
+            // inline with the title text on iOS, and as plain glyphs
+            // in the macOS toolbar.
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("Go to \(sibling.source.displayName)")
