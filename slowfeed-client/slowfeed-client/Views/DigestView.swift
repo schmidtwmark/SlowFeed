@@ -363,40 +363,24 @@ struct DigestView: View {
         .navigationBarTitleDisplayMode(.inline)
         // Hide the nav bar while the fullscreen image viewer is up so
         // the gallery actually fills the screen (MAR-68). The main app
-        // tab bar is always hidden while in the digest view — the
-        // SourceTabBar below takes its place.
+        // tab bar stays visible throughout the digest view — source
+        // switching is handled by SourceTabBar mounted as the
+        // TabView's bottom accessory on MainView.
         .toolbar(showViewer ? .hidden : .visible, for: .navigationBar)
-        .toolbar(.hidden, for: .tabBar)
+        .toolbar(showViewer ? .hidden : .visible, for: .tabBar)
         .statusBarHidden(showViewer)
         #endif
-        // Source nav pills moved out of the inline DigestHeader and
-        // into the navigation toolbar (MAR-76). Always present so the
-        // toolbar shape is stable across digests; disabled when
-        // there's no sibling in that direction.
+        // Source nav pills are macOS-only — iOS handles source
+        // switching via the bottom-accessory SourceTabBar on MainView.
+        #if os(macOS)
         .toolbar { sourceNavToolbar }
-        #if !os(macOS)
-        // iOS: replace the main app tab bar with a per-source tab bar
-        // for the digests in this poll-run group. Tapping a tab swaps
-        // to that source's digest with a soft cross-fade.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            let siblings = appState.siblingDigestsInGroup
-            if siblings.count > 1 {
-                SourceTabBar(siblings: siblings, currentId: digest.id) { id in
-                    Task { await appState.navigateToDigest(id: id) }
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
         #endif
     }
 
+    #if os(macOS)
     @ToolbarContentBuilder
     private var sourceNavToolbar: some ToolbarContent {
         let siblings = appState.siblingDigests
-        #if os(macOS)
-        // macOS: two distinct primary-action toolbar items so each renders
-        // as its own button in the window toolbar, separated by a small
-        // spacer instead of welded together.
         ToolbarItem(placement: .primaryAction) {
             if let prev = siblings.prev {
                 SourceNavButton(direction: .previous, sibling: prev) {
@@ -411,25 +395,8 @@ struct DigestView: View {
                 }
             }
         }
-        #else
-        // iOS: ToolbarItemGroup at the trailing edge so iOS 26 renders
-        // the prev / next pair as a single connected glass capsule
-        // (Liquid-Glass control group). Each button is its own tap
-        // target but they share one pill background.
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            if let prev = siblings.prev {
-                SourceNavButton(direction: .previous, sibling: prev) {
-                    Task { await appState.navigateToDigest(id: prev.id) }
-                }
-            }
-            if let next = siblings.next {
-                SourceNavButton(direction: .next, sibling: next) {
-                    Task { await appState.navigateToDigest(id: next.id) }
-                }
-            }
-        }
-        #endif
     }
+    #endif
 
     #if os(macOS)
     private func handleKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
