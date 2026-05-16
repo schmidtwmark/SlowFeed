@@ -361,10 +361,12 @@ struct DigestView: View {
         .navigationSubtitle(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
         #else
         .navigationBarTitleDisplayMode(.inline)
-        // Hide the nav and tab bars while the fullscreen image viewer is up
-        // so the gallery actually fills the screen (MAR-68).
+        // Hide the nav bar while the fullscreen image viewer is up so
+        // the gallery actually fills the screen (MAR-68). The main app
+        // tab bar is always hidden while in the digest view — the
+        // SourceTabBar below takes its place.
         .toolbar(showViewer ? .hidden : .visible, for: .navigationBar)
-        .toolbar(showViewer ? .hidden : .visible, for: .tabBar)
+        .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(showViewer)
         #endif
         // Source nav pills moved out of the inline DigestHeader and
@@ -373,36 +375,20 @@ struct DigestView: View {
         // there's no sibling in that direction.
         .toolbar { sourceNavToolbar }
         #if !os(macOS)
-        // Horizontal swipe between sibling source digests within the
-        // same poll-run group — same mapping as the prev / next
-        // toolbar pills (swipe-right → previous, swipe-left → next).
-        // A simultaneousGesture with a horizontal-dominant guard
-        // lets the ScrollView's vertical pan through unaffected.
-        .simultaneousGesture(horizontalSiblingSwipeGesture)
+        // iOS: replace the main app tab bar with a per-source tab bar
+        // for the digests in this poll-run group. Tapping a tab swaps
+        // to that source's digest with a soft cross-fade.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            let siblings = appState.siblingDigestsInGroup
+            if siblings.count > 1 {
+                SourceTabBar(siblings: siblings, currentId: digest.id) { id in
+                    Task { await appState.navigateToDigest(id: id) }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         #endif
     }
-
-    #if !os(macOS)
-    private var horizontalSiblingSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 30)
-            .onEnded { value in
-                let dx = value.translation.width
-                let dy = value.translation.height
-                // Strongly horizontal only — otherwise we'd hijack the
-                // vertical scroll on a slightly-off-axis flick.
-                guard abs(dx) > abs(dy) * 1.6 else { return }
-                let vx = value.velocity.width
-                guard abs(dx) > 100 || abs(vx) > 600 else { return }
-
-                let siblings = appState.siblingDigests
-                if dx < 0, let next = siblings.next {
-                    Task { await appState.navigateToDigest(id: next.id) }
-                } else if dx > 0, let prev = siblings.prev {
-                    Task { await appState.navigateToDigest(id: prev.id) }
-                }
-            }
-    }
-    #endif
 
     @ToolbarContentBuilder
     private var sourceNavToolbar: some ToolbarContent {

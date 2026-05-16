@@ -377,6 +377,14 @@ struct DigestDetailView: View {
                 NavigationStack {
                     DigestView(digest: digest)
                         .id(digest.id)
+                        // Cross-fade when the user picks a different
+                        // source from the SourceTabBar so the swap
+                        // feels smooth instead of a hard cut. The
+                        // .animation modifier on the enclosing ZStack
+                        // drives the transition when currentDigest.id
+                        // changes (set inside an async Task by
+                        // navigateToDigest).
+                        .transition(.opacity)
                 }
             } else if appState.isLoading {
                 ProgressView("Loading...")
@@ -441,6 +449,11 @@ struct DigestDetailView: View {
                 .background(.ultraThinMaterial)
             }
         }
+        // Drives the .transition(.opacity) on DigestView when the user
+        // switches sources via the bottom SourceTabBar — without this
+        // anchor, the id change happens outside any animation context
+        // and the swap is a hard cut.
+        .animation(.easeInOut(duration: 0.18), value: appState.currentDigest?.id)
     }
 }
 

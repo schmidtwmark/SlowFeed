@@ -430,6 +430,20 @@ final class AppState {
         await navigateToDigest(at: idx)
     }
 
+    /// All digests in the same poll-run group as the current digest,
+    /// ordered by source name. Used by `SourceTabBar` to render one
+    /// tab per sibling source at the bottom of the digest view on iOS.
+    var siblingDigestsInGroup: [DigestSummary] {
+        guard let currentId = currentDigest?.id,
+              let current = digests.first(where: { $0.id == currentId }),
+              let pollRunId = current.pollRunId else {
+            return []
+        }
+        return digests
+            .filter { $0.pollRunId == pollRunId }
+            .sorted { $0.source.rawValue < $1.source.rawValue }
+    }
+
     /// Sibling digests in the same poll-run group as the current digest,
     /// ordered by source name. Used by `DigestHeader`'s prev/next nav
     /// buttons so the user can jump between Reddit / Bluesky / etc.
