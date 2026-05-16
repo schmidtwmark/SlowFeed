@@ -372,16 +372,65 @@ struct DigestView: View {
         // toolbar shape is stable across digests; disabled when
         // there's no sibling in that direction.
         .toolbar { sourceNavToolbar }
+        #if !os(macOS)
+        // Horizontal swipe between sibling source digests within the
+        // same poll-run group — same mapping as the prev / next
+        // toolbar pills (swipe-right → previous, swipe-left → next).
+        // A simultaneousGesture with a horizontal-dominant guard
+        // lets the ScrollView's vertical pan through unaffected.
+        .simultaneousGesture(horizontalSiblingSwipeGesture)
+        #endif
     }
+
+    #if !os(macOS)
+    private var horizontalSiblingSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 30)
+            .onEnded { value in
+                let dx = value.translation.width
+                let dy = value.translation.height
+                // Strongly horizontal only — otherwise we'd hijack the
+                // vertical scroll on a slightly-off-axis flick.
+                guard abs(dx) > abs(dy) * 1.6 else { return }
+                let vx = value.velocity.width
+                guard abs(dx) > 100 || abs(vx) > 600 else { return }
+
+                let siblings = appState.siblingDigests
+                if dx < 0, let next = siblings.next {
+                    Task { await appState.navigateToDigest(id: next.id) }
+                } else if dx > 0, let prev = siblings.prev {
+                    Task { await appState.navigateToDigest(id: prev.id) }
+                }
+            }
+    }
+    #endif
 
     @ToolbarContentBuilder
     private var sourceNavToolbar: some ToolbarContent {
         let siblings = appState.siblingDigests
         #if os(macOS)
-        // macOS: both buttons together on the trailing edge, in a
-        // single ToolbarItemGroup so they render as a tight pair next
-        // to each other in the top-right of the window toolbar.
-        ToolbarItemGroup(placement: .primaryAction) {
+        // macOS: two distinct primary-action toolbar items so each renders
+        // as its own button in the window toolbar, separated by a small
+        // spacer instead of welded together.
+        ToolbarItem(placement: .primaryAction) {
+            if let prev = siblings.prev {
+                SourceNavButton(direction: .previous, sibling: prev) {
+                    Task { await appState.navigateToDigest(id: prev.id) }
+                }
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            if let next = siblings.next {
+                SourceNavButton(direction: .next, sibling: next) {
+                    Task { await appState.navigateToDigest(id: next.id) }
+                }
+            }
+        }
+        #else
+        // iOS: ToolbarItemGroup at the trailing edge so iOS 26 renders
+        // the prev / next pair as a single connected glass capsule
+        // (Liquid-Glass control group). Each button is its own tap
+        // target but they share one pill background.
+        ToolbarItemGroup(placement: .topBarTrailing) {
             if let prev = siblings.prev {
                 SourceNavButton(direction: .previous, sibling: prev) {
                     Task { await appState.navigateToDigest(id: prev.id) }
@@ -390,30 +439,6 @@ struct DigestView: View {
             if let next = siblings.next {
                 SourceNavButton(direction: .next, sibling: next) {
                     Task { await appState.navigateToDigest(id: next.id) }
-                }
-            }
-        }
-        #else
-        // iOS: take over the navigation bar title slot so the buttons
-        // sit inline with the source name — `<R Bluesky Y>` — instead
-        // of getting wrapped in iOS 26's pill-shaped floating toolbar
-        // chips. .navigationTitle is still set above for the back
-        // button label and accessibility; .principal overrides the
-        // visual title in the bar.
-        ToolbarItem(placement: .principal) {
-            HStack(spacing: 8) {
-                if let prev = siblings.prev {
-                    SourceNavButton(direction: .previous, sibling: prev) {
-                        Task { await appState.navigateToDigest(id: prev.id) }
-                    }
-                }
-                Text(digest.source.displayName)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                if let next = siblings.next {
-                    SourceNavButton(direction: .next, sibling: next) {
-                        Task { await appState.navigateToDigest(id: next.id) }
-                    }
                 }
             }
         }
@@ -636,9 +661,6 @@ struct SourceNavButton: View {
                 }
             }
             .foregroundStyle(sibling.isRead ? Color.secondary : sourceColor)
-            // Padded hit target without a visible pill — the icons sit
-            // inline with the title text on iOS, and as plain glyphs
-            // in the macOS toolbar.
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .contentShape(Rectangle())
