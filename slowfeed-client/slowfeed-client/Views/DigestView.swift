@@ -362,13 +362,24 @@ struct DigestView: View {
         #else
         .navigationBarTitleDisplayMode(.inline)
         // Hide the nav bar while the fullscreen image viewer is up so
-        // the gallery actually fills the screen (MAR-68). The main app
-        // tab bar stays visible throughout the digest view — source
-        // switching is handled by SourceTabBar mounted as the
-        // TabView's bottom accessory on MainView.
+        // the gallery actually fills the screen (MAR-68). The main
+        // app tab bar is replaced by the floating SourceTabBar
+        // (see safeAreaInset below) while in the digest view.
         .toolbar(showViewer ? .hidden : .visible, for: .navigationBar)
-        .toolbar(showViewer ? .hidden : .visible, for: .tabBar)
+        .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(showViewer)
+        // Floating per-source switcher pinned to the bottom safe
+        // area, styled to match iOS 26's Liquid-Glass tab bar.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            let siblings = appState.siblingDigestsInGroup
+            if siblings.count > 1, !showViewer {
+                SourceTabBar(siblings: siblings, currentId: digest.id) { id in
+                    Task { await appState.navigateToDigest(id: id) }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+        }
         #endif
         // Source nav pills are macOS-only — iOS handles source
         // switching via the bottom-accessory SourceTabBar on MainView.

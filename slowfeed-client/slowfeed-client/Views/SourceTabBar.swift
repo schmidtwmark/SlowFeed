@@ -13,7 +13,7 @@ struct SourceTabBar: View {
     let onSelect: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 4) {
             ForEach(siblings) { sibling in
                 SourceTabBarItem(
                     sibling: sibling,
@@ -23,6 +23,16 @@ struct SourceTabBar: View {
                     onSelect(sibling.id)
                 }
             }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .background {
+            // iOS 26 Liquid Glass capsule to match the system tab bar
+            // visual that this view replaces. .background(.bar, in:)
+            // is the system-tab-bar look on older iOS.
+            Capsule(style: .continuous)
+                .fill(.bar)
+                .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
         }
     }
 }
@@ -34,17 +44,20 @@ private struct SourceTabBarItem: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: sourceIcon)
-                    .font(.body)
-                    .symbolRenderingMode(.hierarchical)
-                Text(sibling.source.displayName)
-                    .font(.subheadline)
-                    .lineLimit(1)
-            }
-            .foregroundStyle(foreground)
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
+            Image(systemName: sourceIcon)
+                .font(.title3)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(foreground)
+                .frame(maxWidth: .infinity, minHeight: 36)
+                .background {
+                    // Subtle pill behind the active source so the tab
+                    // bar reads at a glance even with icon-only labels.
+                    if isActive {
+                        Capsule(style: .continuous)
+                            .fill(Color.accentColor.opacity(0.18))
+                    }
+                }
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Switch to \(sibling.source.displayName)")

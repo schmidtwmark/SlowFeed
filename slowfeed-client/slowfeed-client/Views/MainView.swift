@@ -57,31 +57,8 @@ struct MainView: View {
         }
         #if os(iOS)
         .tabViewStyle(.sidebarAdaptable)
-        // System bottom accessory above the main tab bar that shows
-        // one tab per sibling source in the currently-open digest's
-        // poll-run group. It inherits iOS 26's floating Liquid-Glass
-        // styling from the TabView, sitting in the same visual stack
-        // as the main tab bar.
-        .tabViewBottomAccessory {
-            sourceTabAccessory
-        }
         #endif
     }
-
-    #if os(iOS)
-    @ViewBuilder
-    private var sourceTabAccessory: some View {
-        if selectedTab == .digests,
-           let current = appState.currentDigest {
-            let siblings = appState.siblingDigestsInGroup
-            if siblings.count > 1 {
-                SourceTabBar(siblings: siblings, currentId: current.id) { id in
-                    Task { await appState.navigateToDigest(id: id) }
-                }
-            }
-        }
-    }
-    #endif
 }
 
 // MARK: - Sidebar (Digest Timeline grouped by poll run)
