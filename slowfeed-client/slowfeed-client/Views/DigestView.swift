@@ -363,11 +363,13 @@ struct DigestView: View {
         .navigationBarTitleDisplayMode(.inline)
         // Hide the nav bar while the fullscreen image viewer is up so
         // the gallery actually fills the screen (MAR-68). The main
-        // app tab bar is replaced by the SourceTabBar mounted in the
-        // bottom safe area below while in the digest view.
+        // app tab bar is replaced by SourceTabBar (see below) — the
+        // visibility toggle lives on the Digests tab in MainView and
+        // observes `appState.isInDigestDetailView`.
         .toolbar(showViewer ? .hidden : .visible, for: .navigationBar)
-        .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(showViewer)
+        .onAppear { appState.isInDigestDetailView = true }
+        .onDisappear { appState.isInDigestDetailView = false }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             let siblings = appState.siblingDigestsInGroup
             if siblings.count > 1, !showViewer {

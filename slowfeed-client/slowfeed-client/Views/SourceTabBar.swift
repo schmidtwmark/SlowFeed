@@ -13,7 +13,7 @@ struct SourceTabBar: View {
     let onSelect: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(siblings) { sibling in
                 SourceTabBarItem(
                     sibling: sibling,
@@ -24,15 +24,20 @@ struct SourceTabBar: View {
                 }
             }
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background {
-            // iOS 26 Liquid Glass capsule to match the system tab bar
-            // visual that this view replaces. .background(.bar, in:)
-            // is the system-tab-bar look on older iOS.
+            // Match the system Liquid Glass tab bar look this view
+            // is standing in for: continuous capsule + thin material
+            // + a subtle shadow for separation from the post list
+            // scrolling beneath it.
             Capsule(style: .continuous)
                 .fill(.bar)
-                .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+                .overlay {
+                    Capsule(style: .continuous)
+                        .strokeBorder(.separator.opacity(0.6), lineWidth: 0.5)
+                }
+                .shadow(color: .black.opacity(0.22), radius: 10, y: 3)
         }
     }
 }
