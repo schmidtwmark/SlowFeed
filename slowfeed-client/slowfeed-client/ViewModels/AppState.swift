@@ -76,13 +76,6 @@ final class AppState {
         }
     }
 
-    /// True while iOS DigestView is on screen. Drives `MainView` to
-    /// swap its TabView's main tabs (Digests / Saved / Network /
-    /// Settings) out for per-source tabs while the user is in a
-    /// digest, then back when they pop out. Toggled in
-    /// DigestView.onAppear / .onDisappear.
-    var isInDigestDetailView: Bool = false
-
     // Digest state
     var digests: [DigestSummary] = []
     var currentDigest: Digest?

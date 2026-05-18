@@ -2,9 +2,7 @@ import SwiftUI
 
 struct MainView: View {
     @Environment(AppState.self) private var appState
-    /// String-typed so a single binding can switch between AppTab
-    /// rawValues and sibling digest IDs without separate enum cases.
-    @State private var selectedTabID: String = AppTab.digests.rawValue
+    @State private var selectedTab: AppTab = .digests
 
     @State private var httpLogger = HTTPLogger.shared
 
@@ -13,121 +11,54 @@ struct MainView: View {
     }
 
     var body: some View {
-        TabView(selection: $selectedTabID) {
-            #if os(iOS)
-            if appState.isInDigestDetailView,
-               appState.siblingDigestsInGroup.count > 1 {
-                sourceTabs
-            } else {
-                mainTabs
-            }
-            #else
-            mainTabs
-            #endif
-        }
-        #if os(iOS)
-        .tabViewStyle(.sidebarAdaptable)
-        // Tap a source tab → navigate to that sibling digest. The
-        // active source's ID also stays in sync as currentDigest
-        // changes via the keyboard / next-button / sidebar.
-        .onChange(of: selectedTabID) { _, newID in
-            guard appState.isInDigestDetailView else { return }
-            if appState.siblingDigestsInGroup.contains(where: { $0.id == newID }),
-               newID != appState.currentDigest?.id {
-                Task { await appState.navigateToDigest(id: newID) }
-            }
-        }
-        .onChange(of: appState.currentDigest?.id) { _, newID in
-            guard appState.isInDigestDetailView, let newID else { return }
-            if selectedTabID != newID { selectedTabID = newID }
-        }
-        .onChange(of: appState.isInDigestDetailView) { _, inDetail in
-            if inDetail, let id = appState.currentDigest?.id {
-                selectedTabID = id
-            } else {
-                selectedTabID = AppTab.digests.rawValue
-            }
-        }
-        #endif
-    }
-
-    @TabContentBuilder<String>
-    private var mainTabs: some TabContent<String> {
-        SwiftUI.Tab("Digests", systemImage: "doc.text.fill", value: AppTab.digests.rawValue) {
-            NavigationSplitView {
-                DigestSidebar()
-            } detail: {
-                DigestDetailView()
-            }
-            #if os(macOS)
-            .frame(minWidth: 800, minHeight: 500)
-            #endif
-        }
-
-        SwiftUI.Tab("Saved", systemImage: "bookmark.fill", value: AppTab.saved.rawValue) {
-            NavigationStack {
-                SavedPostsView()
-                    .navigationTitle("Saved")
-                    #if !os(macOS)
-                    .navigationBarTitleDisplayMode(.inline)
-                    #endif
-            }
-        }
-
-        if httpLogger.isEnabled {
-            SwiftUI.Tab("Network", systemImage: "network", value: AppTab.network.rawValue) {
-                NavigationStack {
-                    HTTPLogView()
-                        .navigationTitle("Network")
-                        #if !os(macOS)
-                        .navigationBarTitleDisplayMode(.inline)
-                        #endif
-                }
-            }
-        }
-
-        #if !os(macOS)
-        SwiftUI.Tab("Settings", systemImage: "gear", value: AppTab.settings.rawValue) {
-            NavigationStack {
-                SettingsView()
-                    .navigationTitle("Settings")
-                    .navigationBarTitleDisplayMode(.inline)
-            }
-        }
-        #endif
-    }
-
-    #if os(iOS)
-    @TabContentBuilder<String>
-    private var sourceTabs: some TabContent<String> {
-        // One Tab per sibling source in the current poll-run group.
-        // All siblings share the same content (DigestDetailView showing
-        // currentDigest) — switching tabs triggers navigateToDigest
-        // which swaps currentDigest, and the shared view re-renders.
-        ForEach(appState.siblingDigestsInGroup) { sibling in
-            SwiftUI.Tab(sibling.source.displayName,
-                        systemImage: sourceSymbol(for: sibling.source),
-                        value: sibling.id) {
+        TabView(selection: $selectedTab) {
+            SwiftUI.Tab("Digests", systemImage: "doc.text.fill", value: AppTab.digests) {
                 NavigationSplitView {
                     DigestSidebar()
                 } detail: {
                     DigestDetailView()
                 }
+                #if os(macOS)
+                .frame(minWidth: 800, minHeight: 500)
+                #endif
             }
-        }
-    }
 
-    private func sourceSymbol(for source: SourceType) -> String {
-        switch source {
-        case .reddit: return "bubble.left.and.bubble.right.fill"
-        case .bluesky: return "cloud.fill"
-        case .youtube: return "play.rectangle.fill"
-        case .discord: return "message.fill"
-        case .mastodon: return "at"
-        case .rss: return "dot.radiowaves.left.and.right"
+            SwiftUI.Tab("Saved", systemImage: "bookmark.fill", value: AppTab.saved) {
+                NavigationStack {
+                    SavedPostsView()
+                        .navigationTitle("Saved")
+                        #if !os(macOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                        #endif
+                }
+            }
+
+            if httpLogger.isEnabled {
+                SwiftUI.Tab("Network", systemImage: "network", value: AppTab.network) {
+                    NavigationStack {
+                        HTTPLogView()
+                            .navigationTitle("Network")
+                            #if !os(macOS)
+                            .navigationBarTitleDisplayMode(.inline)
+                            #endif
+                    }
+                }
+            }
+
+            #if !os(macOS)
+            SwiftUI.Tab("Settings", systemImage: "gear", value: AppTab.settings) {
+                NavigationStack {
+                    SettingsView()
+                        .navigationTitle("Settings")
+                        .navigationBarTitleDisplayMode(.inline)
+                }
+            }
+            #endif
         }
+        #if os(iOS)
+        .tabViewStyle(.sidebarAdaptable)
+        #endif
     }
-    #endif
 }
 
 // MARK: - Sidebar (Digest Timeline grouped by poll run)
