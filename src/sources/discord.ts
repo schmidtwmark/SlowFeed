@@ -208,6 +208,27 @@ function extractYouTubeVideoId(url: string): string | null {
   return match?.[1] || null;
 }
 
+/**
+ * Build a thumbnail URL for a Discord video attachment. Discord's
+ * media proxy (`media.discordapp.net`) returns a JPEG still frame of
+ * the video when the URL has `?format=jpeg`. The signed-CDN auth
+ * params (`ex`, `is`, `hm`) carry over through the proxy unchanged.
+ *
+ * Returns `undefined` if the input isn't a parseable URL.
+ */
+function discordVideoThumbnailURL(videoUrl: string): string | undefined {
+  try {
+    const u = new URL(videoUrl);
+    if (u.hostname === 'cdn.discordapp.com') {
+      u.hostname = 'media.discordapp.net';
+    }
+    u.searchParams.set('format', 'jpeg');
+    return u.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 export async function pollDiscord(): Promise<DigestPost[]> {
   const config = getConfig();
 
@@ -265,11 +286,20 @@ export async function pollDiscord(): Promise<DigestPost[]> {
           } else if (attachment.content_type?.startsWith('video/')) {
             type = 'video';
           }
+          // Discord doesn't ship a thumbnail in the attachment object,
+          // but its media proxy (media.discordapp.net) returns a JPEG
+          // still frame of a video when the URL has `?format=jpeg`.
+          // The original signed-CDN auth params stay valid through the
+          // proxy so the same `?ex=&is=&hm=` works.
+          const thumbnailUrl = type === 'video'
+            ? discordVideoThumbnailURL(attachment.url)
+            : undefined;
           return {
             type,
             url: attachment.url,
             filename: attachment.filename,
             mimeType: attachment.content_type,
+            thumbnailUrl,
           };
         });
 
