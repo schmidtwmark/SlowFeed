@@ -6,6 +6,114 @@ import AppKit
 import UIKit
 #endif
 
+// MARK: - Media Operations (Copy / Share)
+
+/// Cross-platform copy / share for any `PostMedia`. Lives at module
+/// scope so both the inline `MediaView` thumbnails and the
+/// `ImageViewerOverlay` fullscreen gallery can present the same
+/// long-press / right-click context menu.
+enum MediaOperations {
+    static func copy(_ media: PostMedia) async {
+        guard let data = await download(media) else { return }
+        let isImage = media.type == "image"
+        let tempFileURL = writeTempFile(data: data, media: media)
+
+        await MainActor.run {
+            #if os(macOS)
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            if isImage, let image = NSImage(data: data) {
+                pb.writeObjects([image])
+            } else {
+                pb.writeObjects([tempFileURL as NSURL])
+            }
+            #else
+            if isImage, let image = UIImage(data: data) {
+                UIPasteboard.general.image = image
+            } else {
+                UIPasteboard.general.url = tempFileURL
+            }
+            #endif
+        }
+    }
+
+    static func share(_ media: PostMedia) async {
+        guard let data = await download(media) else { return }
+        let tempFileURL = writeTempFile(data: data, media: media)
+
+        await MainActor.run {
+            #if os(macOS)
+            let items: [Any]
+            if media.type == "image", let image = NSImage(data: data) {
+                items = [image]
+            } else {
+                items = [tempFileURL]
+            }
+            let picker = NSSharingServicePicker(items: items)
+            if let window = NSApp.keyWindow, let contentView = window.contentView {
+                picker.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
+            }
+            #else
+            let items: [Any]
+            if media.type == "image", let image = UIImage(data: data) {
+                items = [image]
+            } else {
+                items = [tempFileURL]
+            }
+            let activityVC = UIActivityViewController(activityItems: items, applicationActivities: nil)
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootVC = windowScene.windows.first?.rootViewController {
+                rootVC.present(activityVC, animated: true)
+            }
+            #endif
+        }
+    }
+
+    private static func download(_ media: PostMedia) async -> Data? {
+        guard let url = URL(string: media.url) else { return nil }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            return data
+        } catch {
+            return nil
+        }
+    }
+
+    private static func fileExtension(for media: PostMedia) -> String {
+        let urlExt = URL(string: media.url)?.pathExtension ?? ""
+        if !urlExt.isEmpty { return urlExt }
+        switch media.type {
+        case "video": return "mp4"
+        case "image": return "jpg"
+        default: return "bin"
+        }
+    }
+
+    private static func writeTempFile(data: Data, media: PostMedia) -> URL {
+        let ext = fileExtension(for: media)
+        let filename = "slowfeed_media_\(UUID().uuidString.prefix(8)).\(ext)"
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        try? data.write(to: tempURL)
+        return tempURL
+    }
+}
+
+/// Reusable copy / share menu items for a single `PostMedia`. Used by
+/// both the inline thumbnails and the fullscreen gallery viewer.
+@ViewBuilder
+func MediaContextMenuItems(_ media: PostMedia) -> some View {
+    Button {
+        Task { await MediaOperations.copy(media) }
+    } label: {
+        Label("Copy Media", systemImage: "photo.on.rectangle")
+    }
+    Button {
+        Task { await MediaOperations.share(media) }
+    } label: {
+        Label("Share Media", systemImage: "square.and.arrow.up")
+    }
+}
+
 // MARK: - Media View
 
 /// Renders a post's images and videos. One image → centered thumb; 2+ →
@@ -134,101 +242,7 @@ struct MediaView: View {
 
     @ViewBuilder
     private func mediaContextMenu(for media: PostMedia) -> some View {
-        Button {
-            Task { await copyMedia(media) }
-        } label: {
-            Label("Copy Media", systemImage: "photo.on.rectangle")
-        }
-
-        Button {
-            Task { await shareMedia(media) }
-        } label: {
-            Label("Share Media", systemImage: "square.and.arrow.up")
-        }
-    }
-
-    private func downloadMedia(_ media: PostMedia) async -> Data? {
-        guard let url = URL(string: media.url) else { return nil }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            return data
-        } catch {
-            return nil
-        }
-    }
-
-    private func fileExtension(for media: PostMedia) -> String {
-        let urlExt = URL(string: media.url)?.pathExtension ?? ""
-        if !urlExt.isEmpty { return urlExt }
-        switch media.type {
-        case "video": return "mp4"
-        case "image": return "jpg"
-        default: return "bin"
-        }
-    }
-
-    private func writeTempFile(data: Data, media: PostMedia) -> URL {
-        let ext = fileExtension(for: media)
-        let filename = "slowfeed_media_\(UUID().uuidString.prefix(8)).\(ext)"
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-        try? data.write(to: tempURL)
-        return tempURL
-    }
-
-    private func copyMedia(_ media: PostMedia) async {
-        guard let data = await downloadMedia(media) else { return }
-        let isImage = media.type == "image"
-        let tempFileURL = writeTempFile(data: data, media: media)
-
-        await MainActor.run {
-            #if os(macOS)
-            let pb = NSPasteboard.general
-            pb.clearContents()
-            if isImage, let image = NSImage(data: data) {
-                pb.writeObjects([image])
-            } else {
-                pb.writeObjects([tempFileURL as NSURL])
-            }
-            #else
-            if isImage, let image = UIImage(data: data) {
-                UIPasteboard.general.image = image
-            } else {
-                UIPasteboard.general.url = tempFileURL
-            }
-            #endif
-        }
-    }
-
-    private func shareMedia(_ media: PostMedia) async {
-        guard let data = await downloadMedia(media) else { return }
-        let tempFileURL = writeTempFile(data: data, media: media)
-
-        await MainActor.run {
-            #if os(macOS)
-            let items: [Any]
-            if media.type == "image", let image = NSImage(data: data) {
-                items = [image]
-            } else {
-                items = [tempFileURL]
-            }
-            let picker = NSSharingServicePicker(items: items)
-            if let window = NSApp.keyWindow, let contentView = window.contentView {
-                picker.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
-            }
-            #else
-            let items: [Any]
-            if media.type == "image", let image = UIImage(data: data) {
-                items = [image]
-            } else {
-                items = [tempFileURL]
-            }
-            let activityVC = UIActivityViewController(activityItems: items, applicationActivities: nil)
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootVC = windowScene.windows.first?.rootViewController {
-                rootVC.present(activityVC, animated: true)
-            }
-            #endif
-        }
+        MediaContextMenuItems(media)
     }
 }
 
@@ -754,6 +768,10 @@ struct ImageViewerOverlay: View {
         let trimmed = images[safeIndex].alt?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (trimmed?.isEmpty == false) ? trimmed : nil
     }
+    private var currentMedia: PostMedia? {
+        guard !images.isEmpty, safeIndex < images.count else { return nil }
+        return images[safeIndex]
+    }
 
     #if os(macOS)
     /// True when the user is dragging-to-dismiss at minimum zoom.
@@ -780,6 +798,11 @@ struct ImageViewerOverlay: View {
                     .onTapGesture { onDismiss() }
 
                 imageLayer(containerSize: geo.size)
+                    .contextMenu {
+                        if let media = currentMedia {
+                            MediaContextMenuItems(media)
+                        }
+                    }
 
                 // Gallery arrows
                 if imageURLs.count > 1 {
@@ -847,6 +870,11 @@ struct ImageViewerOverlay: View {
                     )
                     .tag(idx)
                     .ignoresSafeArea()
+                    .contextMenu {
+                        if idx < images.count {
+                            MediaContextMenuItems(images[idx])
+                        }
+                    }
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))

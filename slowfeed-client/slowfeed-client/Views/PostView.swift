@@ -85,7 +85,9 @@ struct PostView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            PostHeaderView(post: post)
+            PostHeaderView(post: post, source: source, onOpenURL: { url in
+                openPostURL(url, forceExternal: false)
+            })
 
             // Title — Reddit, YouTube, and RSS all have real editorial titles.
             // Bluesky / Discord / Mastodon titles are server-synthesized and

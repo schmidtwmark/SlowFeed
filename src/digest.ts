@@ -2,7 +2,8 @@ import { createHash } from 'crypto';
 import { query } from './db.js';
 import { logger } from './logger.js';
 import { generateId, isDuplicate } from './dedup.js';
-import type { DigestPost, DigestItem, SourceType, DigestItemRow } from './types/index.js';
+import { findLinkThumbnails } from './link-preview.js';
+import type { DigestPost, DigestItem, SourceType, DigestItemRow, PostLink } from './types/index.js';
 
 /**
  * Generate a unique ID for a digest
@@ -63,6 +64,41 @@ export async function createErrorDigest(
   return createDigest(source, [errorPost], scheduleId, pollRunId);
 }
 
+/**
+ * For each post, find Tenor / Instagram URLs in its `content` and
+ * scrape the page's og:image. The matching URLs are added as PostLink
+ * entries (with `imageUrl` populated) so the client's existing
+ * `LinkCardView` renders a tappable thumbnail card. Idempotent:
+ * existing links with the same URL are skipped.
+ */
+async function enrichWithLinkThumbnails(posts: DigestPost[]): Promise<void> {
+  for (const post of posts) {
+    const text = post.content ?? '';
+    if (!text) continue;
+    const existingURLs = new Set((post.links ?? []).map(l => l.url));
+    let thumbs;
+    try {
+      thumbs = await findLinkThumbnails(text);
+    } catch {
+      continue;
+    }
+    if (thumbs.length === 0) continue;
+    const newLinks: PostLink[] = [];
+    for (const t of thumbs) {
+      if (existingURLs.has(t.pageUrl)) continue;
+      existingURLs.add(t.pageUrl);
+      newLinks.push({
+        url: t.pageUrl,
+        title: t.service === 'tenor' ? 'Tenor' : 'Instagram',
+        imageUrl: t.imageUrl,
+      });
+    }
+    if (newLinks.length > 0) {
+      post.links = [...(post.links ?? []), ...newLinks];
+    }
+  }
+}
+
 export async function createDigest(
   source: SourceType,
   posts: DigestPost[],
@@ -73,6 +109,12 @@ export async function createDigest(
     logger.debug(`No posts to create digest for ${source}`);
     return null;
   }
+
+  // Best-effort link-preview enrichment for Tenor / Instagram URLs in
+  // post bodies. Adds a PostLink with the og:image so the client
+  // renders a tappable thumbnail card instead of a bare URL. Failures
+  // (network, no og tag, scraper-blocked) are silently skipped.
+  await enrichWithLinkThumbnails(posts);
 
   const timestamp = Date.now();
   const digestId = generateDigestId(source, timestamp);

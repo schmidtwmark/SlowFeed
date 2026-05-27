@@ -14,6 +14,14 @@ import SwiftUI
 ///   Notification bell (when present) renders to the left of either.
 struct PostHeaderView: View {
     let post: DigestPost
+    /// Source for URL construction — Reddit users → reddit.com/u/...,
+    /// Bluesky handles → bsky.app/profile/..., etc. Defaults to
+    /// `.reddit` for backwards compat with old call sites.
+    var source: SourceType = .reddit
+    /// Called with a profile / subreddit URL when the user taps the
+    /// avatar, name, or source chip. PostView wires this to
+    /// `openPostURL` so it honors the in-app browser preference.
+    var onOpenURL: ((URL) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -24,11 +32,29 @@ struct PostHeaderView: View {
             }
 
             HStack(alignment: .center, spacing: 8) {
-                avatar
-                identityBlock
+                identityTapTarget {
+                    HStack(alignment: .center, spacing: 8) {
+                        avatar
+                        identityBlock
+                    }
+                }
                 Spacer(minLength: 8)
                 topRightAccessories
             }
+        }
+    }
+
+    /// Wraps the avatar + identityBlock in a tappable Button when we
+    /// can derive a profile URL for this source; otherwise renders the
+    /// content as a plain HStack.
+    @ViewBuilder
+    private func identityTapTarget<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if let url = profileURL, let onOpenURL {
+            Button { onOpenURL(url) } label: { content() }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open profile")
+        } else {
+            content()
         }
     }
 
@@ -71,6 +97,49 @@ struct PostHeaderView: View {
         }
     }
 
+    /// Build a profile URL from the post's author / metadata, scoped
+    /// to the source. Returns nil for sources where there's no
+    /// reasonable profile URL (Discord DMs, RSS items, …).
+    private var profileURL: URL? {
+        switch source {
+        case .reddit:
+            guard let author = post.author, !author.isEmpty else { return nil }
+            // Reddit `author` can be either "username" or "u/username".
+            let user = author.hasPrefix("u/") ? String(author.dropFirst(2)) : author
+            return URL(string: "https://reddit.com/u/\(user)")
+        case .bluesky:
+            guard let author = post.author, !author.isEmpty else { return nil }
+            let handle = author.hasPrefix("@") ? String(author.dropFirst()) : author
+            return URL(string: "https://bsky.app/profile/\(handle)")
+        case .youtube:
+            if let urlString = post.metadata?.channelUrl, let url = URL(string: urlString) {
+                return url
+            }
+            return nil
+        case .mastodon:
+            // Authors look like "@user@instance.tld" — convert to a
+            // browser profile URL on that instance.
+            guard let author = post.author, !author.isEmpty else { return nil }
+            let trimmed = author.hasPrefix("@") ? String(author.dropFirst()) : author
+            let parts = trimmed.split(separator: "@", maxSplits: 1).map(String.init)
+            if parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty {
+                return URL(string: "https://\(parts[1])/@\(parts[0])")
+            }
+            return nil
+        case .discord, .rss:
+            return nil
+        }
+    }
+
+    /// Build a subreddit URL (Reddit only). Used when the user taps
+    /// the `r/subreddit` chip in `primaryChip`.
+    private var subredditURL: URL? {
+        guard source == .reddit,
+              let sub = post.metadata?.subreddit,
+              !sub.isEmpty else { return nil }
+        return URL(string: "https://reddit.com/r/\(sub)")
+    }
+
     /// Top-right cluster: optional notification bell, followed by either the
     /// source chip or the published date (chip wins when both are present).
     @ViewBuilder
@@ -99,7 +168,16 @@ struct PostHeaderView: View {
     @ViewBuilder
     private var primaryChip: some View {
         if let subreddit = post.metadata?.subreddit, !subreddit.isEmpty {
-            HeaderChip(text: "r/\(subreddit)", color: .orange)
+            // Reddit chip is a tap target → opens the subreddit page.
+            if let url = subredditURL, let onOpenURL {
+                Button { onOpenURL(url) } label: {
+                    HeaderChip(text: "r/\(subreddit)", color: .orange)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open r/\(subreddit)")
+            } else {
+                HeaderChip(text: "r/\(subreddit)", color: .orange)
+            }
         } else if let channelName = post.metadata?.channelName, !channelName.isEmpty {
             HeaderChip(text: "#\(channelName)", color: .purple)
         } else if let feedTitle = post.metadata?.feedTitle, !feedTitle.isEmpty {
