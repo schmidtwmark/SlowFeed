@@ -431,6 +431,22 @@ final class APIClient {
         try await request("/api/rss/feeds")
     }
 
+    /// Full-text search across every post in every digest. Returns
+    /// up to 100 most-recent matches; `source` scopes to a single
+    /// source, `nil` searches all.
+    func searchPosts(query: String, source: SourceType? = nil) async throws -> [PostSearchResult] {
+        var components = URLComponents()
+        components.path = "/api/posts/search"
+        var items: [URLQueryItem] = [URLQueryItem(name: "q", value: query)]
+        if let source {
+            items.append(URLQueryItem(name: "source", value: source.rawValue))
+        }
+        components.queryItems = items
+        let endpoint = components.url?.absoluteString ?? "/api/posts/search?q=\(query)"
+        let response: PostSearchResponse = try await request(endpoint)
+        return response.results
+    }
+
     func addRSSFeed(url: String, title: String? = nil) async throws -> RSSFeed {
         var payload: [String: String] = ["url": url]
         if let title, !title.isEmpty { payload["title"] = title }

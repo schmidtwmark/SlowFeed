@@ -258,6 +258,30 @@ struct OPMLImportResult: Codable {
     let total: Int
 }
 
+/// Single hit from `/api/posts/search`. Carries enough context to
+/// render a result row and to navigate to the matching post inside
+/// its parent digest.
+struct PostSearchResult: Codable, Identifiable {
+    let digestId: String
+    let source: SourceType
+    let publishedAt: Date
+    let pollRunId: Int?
+    let postId: String
+    let title: String
+    let snippet: String
+    let author: String?
+    let url: String?
+
+    /// SwiftUI identity. `postId` is only unique within a single
+    /// digest, so the composite digestId+postId disambiguates the
+    /// rare case where the same post id appears in multiple digests.
+    var id: String { "\(digestId):\(postId)" }
+}
+
+struct PostSearchResponse: Codable {
+    let results: [PostSearchResult]
+}
+
 /// Result of a dry-run feed fetch — used by Add Feed to preview what
 /// items a URL will produce before the user commits to subscribing.
 struct RSSFeedTestResult: Codable {

@@ -337,6 +337,80 @@ export function createApiRouter(): Router {
     }
   });
 
+  /**
+   * Full-text search across every post in every digest. Optional
+   * `source` filter scopes results to a single source. Matches are
+   * substring (ILIKE) on each post's title + content. Returns up to
+   * 100 most-recent matching posts with their digest context so the
+   * client can navigate straight to the right digest.
+   */
+  router.get('/api/posts/search', async (req, res) => {
+    try {
+      const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      const source = typeof req.query.source === 'string' ? req.query.source : null;
+      if (q.length < 2) {
+        res.json({ results: [] });
+        return;
+      }
+      const pattern = '%' + q.replace(/[%_]/g, m => '\\' + m) + '%';
+      const params: unknown[] = [pattern];
+      let sourceClause = '';
+      if (source && ['reddit', 'bluesky', 'youtube', 'discord', 'mastodon', 'rss'].includes(source)) {
+        params.push(source);
+        sourceClause = ' AND d.source = $2';
+      }
+      // jsonb_array_elements unrolls posts_json into one row per post;
+      // ILIKE on title + content + author finds substring matches.
+      const sql = `
+        SELECT
+          d.id AS digest_id,
+          d.source,
+          d.published_at,
+          d.poll_run_id,
+          p->>'postId' AS post_id,
+          p->>'title' AS title,
+          p->>'content' AS content,
+          p->>'author' AS author,
+          p->>'url' AS url
+        FROM digest_items d,
+             jsonb_array_elements(COALESCE(d.posts_json, '[]'::jsonb)) p
+        WHERE (
+          COALESCE(p->>'title','') ILIKE $1 ESCAPE '\\'
+          OR COALESCE(p->>'content','') ILIKE $1 ESCAPE '\\'
+          OR COALESCE(p->>'author','') ILIKE $1 ESCAPE '\\'
+        )${sourceClause}
+        ORDER BY d.published_at DESC
+        LIMIT 100
+      `;
+      const { rows } = await query<{
+        digest_id: string;
+        source: string;
+        published_at: Date;
+        poll_run_id: number | null;
+        post_id: string;
+        title: string;
+        content: string | null;
+        author: string | null;
+        url: string | null;
+      }>(sql, params);
+      const results = rows.map(r => ({
+        digestId: r.digest_id,
+        source: r.source,
+        publishedAt: r.published_at,
+        pollRunId: r.poll_run_id,
+        postId: r.post_id,
+        title: r.title,
+        snippet: (r.content ?? '').slice(0, 280),
+        author: r.author,
+        url: r.url,
+      }));
+      res.json({ results });
+    } catch (err) {
+      logger.error('Error searching posts:', err);
+      res.status(500).json({ error: 'Failed to search posts' });
+    }
+  });
+
   // Get single digest with structured post data
   router.get('/api/digests/:id', async (req, res) => {
     try {

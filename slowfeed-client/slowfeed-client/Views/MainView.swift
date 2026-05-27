@@ -7,7 +7,7 @@ struct MainView: View {
     @State private var httpLogger = HTTPLogger.shared
 
     enum AppTab: String {
-        case digests, saved, network, settings
+        case digests, search, saved, network, settings
     }
 
     var body: some View {
@@ -30,6 +30,12 @@ struct MainView: View {
                 // the bar stuck hidden after a back-pop.
                 .toolbar(appState.isInDigestDetailView ? .hidden : .visible, for: .tabBar)
                 #endif
+            }
+
+            SwiftUI.Tab("Search", systemImage: "magnifyingglass", value: AppTab.search) {
+                NavigationStack {
+                    SearchView()
+                }
             }
 
             SwiftUI.Tab("Saved", systemImage: "bookmark.fill", value: AppTab.saved) {
