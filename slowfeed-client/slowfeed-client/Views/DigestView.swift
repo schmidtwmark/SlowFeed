@@ -242,8 +242,14 @@ struct DigestView: View {
                     appState.saveScrollPosition(digestId: digest.id, postId: newId)
                 }
                 .onAppear {
-                    // Restore saved scroll position on initial load
-                    if let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
+                    // Search-result deep-link wins over the saved scroll
+                    // position when both are set — the user just tapped
+                    // a specific post and that's where they want to land.
+                    if let target = appState.pendingScrollPostId, allPostIds.contains(target) {
+                        scrolledPostId = target
+                        appState.focusedPostId = target
+                        appState.pendingScrollPostId = nil
+                    } else if let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
                         scrolledPostId = savedPostId
                     }
                 }
@@ -314,8 +320,12 @@ struct DigestView: View {
         .onAppear { isFocused = true }
         .onChange(of: digest.id) {
             appState.focusedPostId = nil
-            // Restore saved scroll position
-            if let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
+            // Search-result deep-link wins over the saved scroll
+            // position; otherwise fall back to the last-read post.
+            if let target = appState.pendingScrollPostId, allPostIds.contains(target) {
+                appState.focusedPostId = target
+                appState.pendingScrollPostId = nil
+            } else if let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
                 appState.focusedPostId = savedPostId
             }
         }
@@ -363,13 +373,10 @@ struct DigestView: View {
         .navigationBarTitleDisplayMode(.inline)
         // Hide the nav bar while the fullscreen image viewer is up so
         // the gallery actually fills the screen (MAR-68). The main
-        // app tab bar is replaced by SourceTabBar (see below) — the
-        // visibility toggle lives on the Digests tab in MainView and
-        // observes `appState.isInDigestDetailView`.
+        // app tab bar stays visible the whole time — the SourceTabBar
+        // floats above it inside the bottom safe-area inset.
         .toolbar(showViewer ? .hidden : .visible, for: .navigationBar)
         .statusBarHidden(showViewer)
-        .onAppear { appState.isInDigestDetailView = true }
-        .onDisappear { appState.isInDigestDetailView = false }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             let siblings = appState.siblingDigestsInGroup
             if siblings.count > 1, !showViewer {

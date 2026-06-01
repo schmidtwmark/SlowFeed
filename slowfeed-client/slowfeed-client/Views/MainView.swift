@@ -21,15 +21,6 @@ struct MainView: View {
                 #if os(macOS)
                 .frame(minWidth: 800, minHeight: 500)
                 #endif
-                #if os(iOS)
-                // Hide the main tab bar while a digest is on screen
-                // so the floating SourceTabBar (mounted in the
-                // digest's bottom safe-area inset) is the only bar
-                // visible. State-driven instead of relying on the
-                // toolbar modifier on DigestView itself, which left
-                // the bar stuck hidden after a back-pop.
-                .toolbar(appState.isInDigestDetailView ? .hidden : .visible, for: .tabBar)
-                #endif
             }
 
             SwiftUI.Tab("Search", systemImage: "magnifyingglass", value: AppTab.search) {

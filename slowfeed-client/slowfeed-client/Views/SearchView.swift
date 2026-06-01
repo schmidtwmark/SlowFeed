@@ -72,11 +72,11 @@ struct SearchView: View {
                 Section {
                     ForEach(results) { result in
                         Button {
+                            // Set the pending scroll target *before*
+                            // navigating so DigestView picks it up on
+                            // appear / digest.id change.
+                            appState.pendingScrollPostId = result.postId
                             Task {
-                                // Navigate into the matching digest; for now we land
-                                // at the top — scrolling to the exact post would
-                                // require routing the post id through DigestView's
-                                // scrollPosition state, which is a larger change.
                                 await appState.navigateToDigest(id: result.digestId)
                             }
                         } label: {

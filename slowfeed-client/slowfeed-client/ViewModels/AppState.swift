@@ -76,14 +76,11 @@ final class AppState {
         }
     }
 
-    /// True while iOS DigestView is on screen. The Digests tab uses
-    /// this to swap its main app tab bar (Digests / Saved / …) for
-    /// the floating SourceTabBar that lives in the digest's bottom
-    /// safe-area inset. Toggled in DigestView's onAppear /
-    /// onDisappear so the bar reliably comes back when the user pops
-    /// out — relying on `.toolbar(.hidden, for: .tabBar)` directly on
-    /// DigestView left the bar stuck hidden after a pop.
-    var isInDigestDetailView: Bool = false
+    /// One-shot "scroll to this post when the digest finishes loading"
+    /// signal. Set by SearchView before calling `navigateToDigest` so
+    /// that tapping a search result lands on the matching post inside
+    /// the digest. Cleared by DigestView once it consumes it.
+    var pendingScrollPostId: String?
 
     // Digest state
     var digests: [DigestSummary] = []
