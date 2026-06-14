@@ -202,7 +202,16 @@ struct MediaView: View {
         galleryPosition: (current: Int, total: Int)? = nil
     ) -> some View {
         let altText = (media.alt?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
-        CachedImage(url: url) {
+        // Load the smaller thumbnail for the inline card, not the
+        // full-resolution image. A long Bluesky thread renders many
+        // images at once; decoding ~25 feed_fullsize bitmaps (2000px+,
+        // ~12MB each decoded) at once blows the memory budget and
+        // iOS evicts / fails every image past the first. The fullsize
+        // URL is still what the gallery viewer loads (via onSelectImage
+        // → `images`), and the matchedGeometryEffect id stays keyed to
+        // the fullsize URL so the open-into-gallery transition matches.
+        let displayURL = media.thumbnailUrl.flatMap(URL.init(string:)) ?? url
+        CachedImage(url: displayURL) {
             RoundedRectangle(cornerRadius: 8)
                 .fill(.quaternary)
                 .aspectRatio(4/3, contentMode: .fit)

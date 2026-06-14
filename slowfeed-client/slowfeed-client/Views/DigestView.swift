@@ -756,7 +756,12 @@ private struct FlatThreadItem: Identifiable {
 }
 
 /// Flattens a post tree into an ordered list with depth markers.
-private func flattenThread(_ post: DigestPost, depth: Int = 0, maxDepth: Int = 6, isRoot: Bool = true) -> [FlatThreadItem] {
+/// `maxDepth` is a generous recursion guard against pathological / cyclic
+/// data — real threads (e.g. a 25-post Bluesky transit live-blog) must
+/// render in full, so it's set well above any plausible reply chain. The
+/// visual indentation is capped separately at 4 bars in BlueskyFlatPostRow
+/// so deep nesting doesn't run off-screen.
+private func flattenThread(_ post: DigestPost, depth: Int = 0, maxDepth: Int = 100, isRoot: Bool = true) -> [FlatThreadItem] {
     guard depth <= maxDepth else { return [] }
     var items = [FlatThreadItem(post: post, depth: depth, isThreadRoot: isRoot)]
     if let replies = post.replies {
