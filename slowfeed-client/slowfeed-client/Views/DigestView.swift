@@ -47,7 +47,6 @@ struct CachedImage<Placeholder: View>: View {
     let placeholder: () -> Placeholder
 
     @State private var image: PlatformImage?
-    @State private var failed = false
 
     init(url: URL?, @ViewBuilder placeholder: @escaping () -> Placeholder) {
         self.url = url
@@ -64,44 +63,23 @@ struct CachedImage<Placeholder: View>: View {
                 Image(uiImage: image)
                     .resizable()
                 #endif
-            } else if failed {
-                placeholder()
             } else {
                 placeholder()
             }
         }
-        // .task(id: url) reruns whenever the URL prop changes — including
-        // when a parent (e.g. the gallery viewer) swaps from one image to
-        // the next. Without this, .onAppear only fires on the initial
-        // placeholder render and subsequent URL changes leave the stale
-        // image stuck on screen (the original gallery "Next clicks back
-        // to the first image" symptom).
+        // .task(id: url) reruns whenever the URL prop changes (e.g. the
+        // gallery viewer swapping pages). The download itself is owned by
+        // the shared ImageLoader actor, NOT this task — so if SwiftUI
+        // cancels this .task (scrolling a long thread, body re-eval), the
+        // fetch keeps going and caches, and a later re-task picks it up.
+        // There's deliberately no permanent "failed" state: a nil result
+        // just leaves the placeholder, and re-requesting retries.
         .task(id: url) {
-            image = nil
-            failed = false
-            await loadImage()
-        }
-    }
-
-    @MainActor
-    private func loadImage() async {
-        guard let url else { failed = true; return }
-
-        if let cached = ImageCache.shared.image(for: url) {
-            image = cached
-            return
-        }
-
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            if let loaded = PlatformImage(data: data) {
-                ImageCache.shared.store(loaded, for: url)
-                image = loaded
-            } else {
-                failed = true
+            guard let url else { return }
+            image = ImageCache.shared.image(for: url)
+            if image == nil {
+                image = await ImageLoader.shared.image(for: url)
             }
-        } catch {
-            failed = true
         }
     }
 }
