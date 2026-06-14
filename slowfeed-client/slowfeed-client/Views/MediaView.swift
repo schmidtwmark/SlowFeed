@@ -205,11 +205,9 @@ struct MediaView: View {
         // Load the smaller thumbnail for the inline card, not the
         // full-resolution image. A long Bluesky thread renders many
         // images at once; decoding ~25 feed_fullsize bitmaps (2000px+,
-        // ~12MB each decoded) at once blows the memory budget and
-        // iOS evicts / fails every image past the first. The fullsize
-        // URL is still what the gallery viewer loads (via onSelectImage
-        // → `images`), and the matchedGeometryEffect id stays keyed to
-        // the fullsize URL so the open-into-gallery transition matches.
+        // ~12MB each decoded) at once blows the memory budget. The
+        // fullsize URL is still what the gallery viewer loads (via
+        // onSelectImage → `images`).
         let displayURL = media.thumbnailUrl.flatMap(URL.init(string:)) ?? url
         CachedImage(url: displayURL) {
             RoundedRectangle(cornerRadius: 8)
@@ -218,9 +216,14 @@ struct MediaView: View {
         }
         .aspectRatio(contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .if(imageNamespace != nil) { view in
-            view.matchedGeometryEffect(id: url.absoluteString, in: imageNamespace!)
-        }
+        // NOTE: deliberately NO matchedGeometryEffect here. A thread
+        // renders many image thumbnails into one shared namespace, and
+        // the same fullsize URL recurs as a matched-geometry *source*
+        // across re-renders → SwiftUI logs "Multiple inserted views ...
+        // have isSource: true, results are undefined" and gives those
+        // views zero/garbage geometry, so every image past the first
+        // collapsed and appeared not to load. The open-into-gallery
+        // hero animation isn't worth that; the viewer just cross-fades.
         .blur(radius: shouldBlurNSFW ? 32 : 0)
         // Pin a click region the size of the image so the reveal overlay
         // and the open-fullscreen tap don't both fire.
@@ -663,10 +666,9 @@ struct ZoomableImage: UIViewRepresentable {
 /// in the gallery can be pinched independently and swiping resets to 1×
 /// on each page.
 ///
-/// The `namespace` parameter is non-nil only on the *currently visible*
-/// page so the matched-geometry transition into / out of the viewer
-/// only fires once (multiple destinations for the same id confuse
-/// SwiftUI's effect).
+/// `namespace` is retained for call-site compatibility but no longer
+/// drives a matchedGeometryEffect — see the note in `imageThumb`. The
+/// viewer cross-fades in instead of a hero zoom.
 struct PagedZoomableImage: View {
     let url: URL
     var namespace: Namespace.ID?
@@ -680,7 +682,6 @@ struct PagedZoomableImage: View {
             Color.black
             if let image {
                 ZoomableImage(image: image, zoomScale: $zoomScale, onSingleTap: onSingleTap)
-                    .modifier(MatchedGeometryIfPresent(id: url.absoluteString, namespace: namespace))
             } else {
                 ProgressView().tint(.white)
             }
@@ -691,22 +692,6 @@ struct PagedZoomableImage: View {
                 return
             }
             image = await LoadedUIImage.fetch(url: url)
-        }
-    }
-}
-
-/// Applies `.matchedGeometryEffect` only when a namespace was supplied —
-/// SwiftUI's modifier requires a real namespace, so we can't pass it
-/// optionally inline.
-private struct MatchedGeometryIfPresent: ViewModifier {
-    let id: String
-    let namespace: Namespace.ID?
-
-    func body(content: Content) -> some View {
-        if let namespace {
-            content.matchedGeometryEffect(id: id, in: namespace)
-        } else {
-            content
         }
     }
 }
