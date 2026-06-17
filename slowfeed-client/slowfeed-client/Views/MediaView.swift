@@ -1,73 +1,136 @@
 import SwiftUI
 import AVKit
+import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 #else
 import UIKit
+import Photos
 #endif
 
 // MARK: - Media Operations (Copy / Share)
 
-/// Cross-platform copy / share for any `PostMedia`. Lives at module
+/// Cross-platform copy / share / save for any `PostMedia`. Lives at module
 /// scope so both the inline `MediaView` thumbnails and the
 /// `ImageViewerOverlay` fullscreen gallery can present the same
 /// long-press / right-click context menu.
+///
+/// Images are always re-encoded to JPEG (or PNG when they have
+/// transparency) before copy/save. Source images are often HEIC / WebP,
+/// and the system pasteboard otherwise writes a TIFF representation —
+/// both behave badly when sent to Android / other platforms. Re-encoding
+/// to a single, universally-supported type fixes that.
 enum MediaOperations {
+
+    // MARK: Copy
+
     static func copy(_ media: PostMedia) async {
         guard let data = await download(media) else { return }
-        let isImage = media.type == "image"
-        let tempFileURL = writeTempFile(data: data, media: media)
 
+        if media.type == "image", let norm = normalizedImage(from: data) {
+            await MainActor.run {
+                #if os(macOS)
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setData(norm.data, forType: NSPasteboard.PasteboardType(norm.utType.identifier))
+                #else
+                // Write a single, explicitly-typed representation (jpeg/png)
+                // rather than UIPasteboard.image, which adds a TIFF rep.
+                UIPasteboard.general.setData(norm.data, forPasteboardType: norm.utType.identifier)
+                #endif
+            }
+            return
+        }
+
+        // Non-image (video / file): copy the file URL.
+        let tempFileURL = writeTempFile(data: data, ext: fileExtension(for: media))
         await MainActor.run {
             #if os(macOS)
             let pb = NSPasteboard.general
             pb.clearContents()
-            if isImage, let image = NSImage(data: data) {
-                pb.writeObjects([image])
-            } else {
-                pb.writeObjects([tempFileURL as NSURL])
-            }
+            pb.writeObjects([tempFileURL as NSURL])
             #else
-            if isImage, let image = UIImage(data: data) {
-                UIPasteboard.general.image = image
-            } else {
-                UIPasteboard.general.url = tempFileURL
-            }
+            UIPasteboard.general.url = tempFileURL
             #endif
         }
     }
 
+    // MARK: Share
+
     static func share(_ media: PostMedia) async {
         guard let data = await download(media) else { return }
-        let tempFileURL = writeTempFile(data: data, media: media)
+        let shareURL = writeShareableFile(media: media, data: data)
 
         await MainActor.run {
             #if os(macOS)
-            let items: [Any]
-            if media.type == "image", let image = NSImage(data: data) {
-                items = [image]
-            } else {
-                items = [tempFileURL]
-            }
-            let picker = NSSharingServicePicker(items: items)
+            let picker = NSSharingServicePicker(items: [shareURL])
             if let window = NSApp.keyWindow, let contentView = window.contentView {
                 picker.show(relativeTo: contentView.bounds, of: contentView, preferredEdge: .minY)
             }
             #else
-            let items: [Any]
-            if media.type == "image", let image = UIImage(data: data) {
-                items = [image]
-            } else {
-                items = [tempFileURL]
-            }
-            let activityVC = UIActivityViewController(activityItems: items, applicationActivities: nil)
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootVC = windowScene.windows.first?.rootViewController {
-                rootVC.present(activityVC, animated: true)
-            }
+            let activityVC = UIActivityViewController(activityItems: [shareURL], applicationActivities: nil)
+            let top = topViewController()
+            activityVC.popoverPresentationController?.sourceView = top?.view
+            top?.present(activityVC, animated: true)
             #endif
         }
     }
+
+    // MARK: Save to Files
+
+    static func saveToFiles(_ media: PostMedia) async {
+        guard let data = await download(media) else { return }
+        let fileURL = writeShareableFile(media: media, data: data)
+
+        await MainActor.run {
+            #if os(macOS)
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = fileURL.lastPathComponent
+            if panel.runModal() == .OK, let dest = panel.url {
+                try? FileManager.default.removeItem(at: dest)
+                try? FileManager.default.copyItem(at: fileURL, to: dest)
+            }
+            #else
+            let picker = UIDocumentPickerViewController(forExporting: [fileURL], asCopy: true)
+            topViewController()?.present(picker, animated: true)
+            #endif
+        }
+    }
+
+    // MARK: Save to Photos (iOS)
+
+    #if !os(macOS)
+    static func saveToPhotos(_ media: PostMedia) async {
+        guard let data = await download(media) else { return }
+
+        let granted = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                cont.resume(returning: status == .authorized || status == .limited)
+            }
+        }
+        guard granted else { return }
+
+        do {
+            if media.type == "video" {
+                let url = writeTempFile(data: data, ext: fileExtension(for: media))
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                }
+            } else {
+                // Save normalized JPEG/PNG bytes so the camera roll asset
+                // isn't a stray HEIC/WebP/TIFF.
+                let bytes = normalizedImage(from: data)?.data ?? data
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetCreationRequest.forAsset().addResource(with: .photo, data: bytes, options: nil)
+                }
+            }
+        } catch {
+            // Best-effort; matches the silent behavior of copy/share.
+        }
+    }
+    #endif
+
+    // MARK: - Helpers
 
     private static func download(_ media: PostMedia) async -> Data? {
         guard let url = URL(string: media.url) else { return nil }
@@ -79,6 +142,45 @@ enum MediaOperations {
         }
     }
 
+    /// Re-encode image bytes to a portable type: PNG when the image has
+    /// an alpha channel (to preserve transparency), JPEG otherwise.
+    /// Returns nil if the data isn't a decodable image.
+    static func normalizedImage(from data: Data) -> (data: Data, utType: UTType, ext: String)? {
+        #if os(macOS)
+        guard let nsImage = NSImage(data: data),
+              let tiff = nsImage.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else { return nil }
+        if rep.hasAlpha, let png = rep.representation(using: .png, properties: [:]) {
+            return (png, .png, "png")
+        }
+        if let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) {
+            return (jpeg, .jpeg, "jpg")
+        }
+        return nil
+        #else
+        guard let image = UIImage(data: data) else { return nil }
+        if imageHasAlpha(image), let png = image.pngData() {
+            return (png, .png, "png")
+        }
+        if let jpeg = image.jpegData(compressionQuality: 0.95) {
+            return (jpeg, .jpeg, "jpg")
+        }
+        return nil
+        #endif
+    }
+
+    #if !os(macOS)
+    private static func imageHasAlpha(_ image: UIImage) -> Bool {
+        guard let alpha = image.cgImage?.alphaInfo else { return false }
+        switch alpha {
+        case .first, .last, .premultipliedFirst, .premultipliedLast:
+            return true
+        default:
+            return false
+        }
+    }
+    #endif
+
     private static func fileExtension(for media: PostMedia) -> String {
         let urlExt = URL(string: media.url)?.pathExtension ?? ""
         if !urlExt.isEmpty { return urlExt }
@@ -89,28 +191,65 @@ enum MediaOperations {
         }
     }
 
-    private static func writeTempFile(data: Data, media: PostMedia) -> URL {
-        let ext = fileExtension(for: media)
+    /// Write a temp file suitable for sharing / saving: normalized
+    /// JPEG/PNG for images, the raw bytes for video / other.
+    private static func writeShareableFile(media: PostMedia, data: Data) -> URL {
+        if media.type == "image", let norm = normalizedImage(from: data) {
+            return writeTempFile(data: norm.data, ext: norm.ext)
+        }
+        return writeTempFile(data: data, ext: fileExtension(for: media))
+    }
+
+    private static func writeTempFile(data: Data, ext: String) -> URL {
         let filename = "slowfeed_media_\(UUID().uuidString.prefix(8)).\(ext)"
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
         try? data.write(to: tempURL)
         return tempURL
     }
+
+    #if !os(macOS)
+    /// Topmost presented view controller, so we present over the gallery
+    /// overlay / any open sheet rather than the bare root.
+    @MainActor
+    static func topViewController() -> UIViewController? {
+        let scene = UIApplication.shared.connectedScenes
+            .first { $0.activationState == .foregroundActive } as? UIWindowScene
+            ?? UIApplication.shared.connectedScenes.first as? UIWindowScene
+        var top = scene?.keyWindow?.rootViewController
+            ?? scene?.windows.first?.rootViewController
+        while let presented = top?.presentedViewController {
+            top = presented
+        }
+        return top
+    }
+    #endif
 }
 
-/// Reusable copy / share menu items for a single `PostMedia`. Used by
-/// both the inline thumbnails and the fullscreen gallery viewer.
+/// Reusable copy / save / share menu items for a single `PostMedia`.
+/// Used by both the inline thumbnails and the fullscreen gallery viewer.
 @ViewBuilder
 func MediaContextMenuItems(_ media: PostMedia) -> some View {
     Button {
         Task { await MediaOperations.copy(media) }
     } label: {
-        Label("Copy Media", systemImage: "photo.on.rectangle")
+        Label("Copy", systemImage: "doc.on.doc")
+    }
+    #if !os(macOS)
+    Button {
+        Task { await MediaOperations.saveToPhotos(media) }
+    } label: {
+        Label("Save to Photos", systemImage: "photo.badge.arrow.down")
+    }
+    #endif
+    Button {
+        Task { await MediaOperations.saveToFiles(media) }
+    } label: {
+        Label("Save to Files", systemImage: "folder.badge.plus")
     }
     Button {
         Task { await MediaOperations.share(media) }
     } label: {
-        Label("Share Media", systemImage: "square.and.arrow.up")
+        Label("Share", systemImage: "square.and.arrow.up")
     }
 }
 
