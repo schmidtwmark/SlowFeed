@@ -33,7 +33,7 @@ actor ImageLoader {
     /// on a real failure (the caller just keeps showing its placeholder —
     /// there is no permanent failed state, so a later re-request retries).
     func image(for url: URL) async -> PlatformImage? {
-        if let cached = ImageCache.shared.image(for: url) { return cached }
+        if let cached = await ImageCache.shared.image(for: url) { return cached }
         if let existing = inFlight[url] { return await existing.value }
 
         let task = Task<PlatformImage?, Never> { [weak self] in
@@ -49,7 +49,7 @@ actor ImageLoader {
                       let image = PlatformImage(data: data) else {
                     return nil
                 }
-                ImageCache.shared.store(image, for: url)
+                await ImageCache.shared.store(image, for: url)
                 return image
             } catch {
                 return nil

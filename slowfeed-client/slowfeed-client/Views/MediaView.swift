@@ -1,11 +1,11 @@
 import SwiftUI
 import AVKit
 import UniformTypeIdentifiers
+import Photos
 #if os(macOS)
 import AppKit
 #else
 import UIKit
-import Photos
 #endif
 
 // MARK: - Media Operations (Copy / Share)
@@ -97,9 +97,8 @@ enum MediaOperations {
         }
     }
 
-    // MARK: Save to Photos (iOS)
+    // MARK: Save to Photos
 
-    #if !os(macOS)
     static func saveToPhotos(_ media: PostMedia) async {
         guard let data = await download(media) else { return }
 
@@ -128,7 +127,6 @@ enum MediaOperations {
             // Best-effort; matches the silent behavior of copy/share.
         }
     }
-    #endif
 
     // MARK: - Helpers
 
@@ -234,13 +232,11 @@ func MediaContextMenuItems(_ media: PostMedia) -> some View {
     } label: {
         Label("Copy", systemImage: "doc.on.doc")
     }
-    #if !os(macOS)
     Button {
         Task { await MediaOperations.saveToPhotos(media) }
     } label: {
         Label("Save to Photos", systemImage: "photo.badge.arrow.down")
     }
-    #endif
     Button {
         Task { await MediaOperations.saveToFiles(media) }
     } label: {
