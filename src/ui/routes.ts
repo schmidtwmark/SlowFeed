@@ -8,7 +8,7 @@ import { testDiscordConnection, fetchGuilds, fetchChannels, pollDiscord } from '
 import { pollReddit } from '../sources/reddit.js';
 import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
-import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, updateScrollPosition, getDigestPosts, stripHtml } from '../digest.js';
+import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, updateScrollPosition, updateReadProgress, getDigestPosts, stripHtml } from '../digest.js';
 import { savePost, unsavePost, getSavedPosts, getSavedPostIds } from '../saved-posts.js';
 import { listFeeds, addFeed, deleteFeed, updateFeed, parseOPML, addFeedsBulk } from '../feeds.js';
 import RSSParser from 'rss-parser';
@@ -328,6 +328,7 @@ export function createApiRouter(): Router {
         pollRunName: d.poll_run_name,
         publishedAt: d.published_at,
         readAt: d.read_at,
+        readProgress: d.read_progress,
       }));
 
       res.json(digestList);
@@ -498,6 +499,24 @@ export function createApiRouter(): Router {
     } catch (err) {
       logger.error('Error updating scroll position:', err);
       res.status(500).json({ error: 'Failed to update scroll position' });
+    }
+  });
+
+  // Update read progress (0–1) for a digest. Reaching the end (~1.0)
+  // marks it fully read server-side.
+  router.put('/api/digests/:id/read-progress', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const progress = typeof req.body?.progress === 'number' ? req.body.progress : NaN;
+      if (!Number.isFinite(progress)) {
+        res.status(400).json({ error: 'progress (number) is required' });
+        return;
+      }
+      await updateReadProgress(id, progress);
+      res.json({ success: true });
+    } catch (err) {
+      logger.error('Error updating read progress:', err);
+      res.status(500).json({ error: 'Failed to update read progress' });
     }
   });
 

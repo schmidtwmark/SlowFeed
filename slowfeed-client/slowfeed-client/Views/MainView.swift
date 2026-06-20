@@ -306,12 +306,12 @@ struct DigestRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Per-source SF Symbol. Read = grayscale (.secondary), unread
-            // = its source color. Replaces the old leading colored dot
-            // and trailing blue unread dot.
-            Image(systemName: sourceIcon)
+            // Per-source SF Symbol. The icon grays from the top down as the
+            // user reads: fully colored = unread, fully gray = finished,
+            // partially gray = read that far through. Replaces the old
+            // binary colored/gray indicator.
+            sourceIconView
                 .font(.body)
-                .foregroundStyle(digest.isRead ? Color.secondary : sourceColor)
                 .frame(width: 22)
 
             Text(digest.source.displayName)
@@ -342,6 +342,28 @@ struct DigestRow: View {
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Digest Summary", json: json)
         }
+    }
+
+    /// Source icon that grays from the top down in proportion to how far
+    /// the user has read. A colored base with a gray copy masked to the
+    /// top `readProgress` fraction layered over it.
+    private var sourceIconView: some View {
+        Image(systemName: sourceIcon)
+            .foregroundStyle(sourceColor)
+            .overlay {
+                Image(systemName: sourceIcon)
+                    .foregroundStyle(.secondary)
+                    .mask(alignment: .top) {
+                        GeometryReader { geo in
+                            // Fully-read digests (read_at set) always show
+                            // fully gray, even if read_progress predates this
+                            // feature and is still 0.
+                            let fraction = digest.isRead ? 1.0 : digest.readProgress
+                            Rectangle()
+                                .frame(height: geo.size.height * fraction)
+                        }
+                    }
+            }
     }
 
     /// Match the icons used in the Settings source tabs so source identity

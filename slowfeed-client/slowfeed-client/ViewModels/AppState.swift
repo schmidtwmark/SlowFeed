@@ -279,24 +279,20 @@ final class AppState {
         do {
             let loadedDigests = try await apiClient.getDigests(source: selectedSource)
             await MainActor.run {
-                // Preserve local read state across refresh. markAsRead is
-                // fire-and-forget on a background Task, so it can race with
-                // a refresh — without this, a refresh issued right after
-                // reading the last digests would resurrect them as unread
-                // and prevent the group from auto-collapsing.
-                let localReadAt: [String: Date] = Dictionary(uniqueKeysWithValues:
-                    digests.compactMap { d in d.readAt.map { (d.id, $0) } }
-                )
+                // Preserve local read state across refresh. Progress saves
+                // are debounced fire-and-forget, so a refresh can race
+                // ahead of the server — without this, a refresh issued
+                // right after reading would resurrect digests as unread /
+                // less-read and prevent groups from auto-collapsing.
+                // Progress is monotonic, so keep the max of local vs server.
+                let local: [String: (progress: Double, readAt: Date?)] =
+                    Dictionary(uniqueKeysWithValues: digests.map { ($0.id, ($0.readProgress, $0.readAt)) })
                 digests = loadedDigests.map { d in
-                    if d.readAt == nil, let readAt = localReadAt[d.id] {
-                        return DigestSummary(
-                            id: d.id, source: d.source, title: d.title,
-                            postCount: d.postCount, pollRunId: d.pollRunId,
-                            pollRunName: d.pollRunName,
-                            publishedAt: d.publishedAt, readAt: readAt
-                        )
-                    }
-                    return d
+                    guard let prev = local[d.id] else { return d }
+                    let mergedProgress = max(d.readProgress, prev.progress)
+                    let mergedReadAt = d.readAt ?? prev.readAt
+                    if mergedProgress == d.readProgress && mergedReadAt == d.readAt { return d }
+                    return d.withReadState(progress: mergedProgress, readAt: mergedReadAt)
                 }
                 digestCache = [:]
                 expandDigestGroups()
@@ -311,16 +307,15 @@ final class AppState {
     }
 
     func loadDigest(id: String) async {
-        // Return cached if available
+        // Opening a digest no longer marks it read — that now happens
+        // when the user scrolls to the end (see recordReadProgress).
+        // Return cached if available.
         if let cached = digestCache[id] {
             await MainActor.run {
                 currentDigest = cached
                 digestLoading = false
                 digestError = nil
             }
-            // Mark as read in background
-            Task { try? await apiClient.markAsRead(digestId: id) }
-            await markReadInList(id: id)
             preloadNearby()
             return
         }
@@ -339,8 +334,6 @@ final class AppState {
                 digestLoading = false
             }
 
-            Task { try? await apiClient.markAsRead(digestId: id) }
-            await markReadInList(id: id)
             preloadNearby()
         } catch {
             logger.error("Failed to load digest \(id): \(error.localizedDescription)")
@@ -376,21 +369,42 @@ final class AppState {
         }
     }
 
-    private func markReadInList(id: String) async {
-        await MainActor.run {
-            if let index = digests.firstIndex(where: { $0.id == id }), !digests[index].isRead {
-                let existing = digests[index]
-                digests[index] = DigestSummary(
-                    id: existing.id,
-                    source: existing.source,
-                    title: existing.title,
-                    postCount: existing.postCount,
-                    pollRunId: existing.pollRunId,
-                    pollRunName: existing.pollRunName,
-                    publishedAt: existing.publishedAt,
-                    readAt: Date()
-                )
+    // MARK: - Read Progress
+
+    /// Furthest read fraction persisted to the server per digest, so the
+    /// debounced PUT only fires on meaningful forward movement.
+    private var lastSavedReadProgress: [String: Double] = [:]
+    private var readProgressTask: Task<Void, Never>?
+
+    /// Record how far through a digest the user has scrolled (0–1).
+    /// Updates the sidebar summary optimistically (monotonic — progress
+    /// never goes backward) and debounce-saves to the server. Reaching
+    /// the end marks the digest fully read.
+    @MainActor
+    func recordReadProgress(digestId: String, progress: Double) {
+        let clamped = min(max(progress, 0), 1)
+
+        if let idx = digests.firstIndex(where: { $0.id == digestId }) {
+            let existing = digests[idx]
+            let merged = max(existing.readProgress, clamped)
+            let nowRead = merged >= 0.999
+            let newReadAt = nowRead ? (existing.readAt ?? Date()) : existing.readAt
+            if merged > existing.readProgress + 0.0001 || newReadAt != existing.readAt {
+                digests[idx] = existing.withReadState(progress: merged, readAt: newReadAt)
             }
+        }
+
+        // Only persist on meaningful forward movement (or completion).
+        let prior = lastSavedReadProgress[digestId] ?? 0
+        guard clamped >= 1.0 || clamped > prior + 0.02 else { return }
+        let toSave = max(prior, clamped)
+        lastSavedReadProgress[digestId] = toSave
+
+        readProgressTask?.cancel()
+        readProgressTask = Task {
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            try? await apiClient.updateReadProgress(digestId: digestId, progress: toSave)
         }
     }
 

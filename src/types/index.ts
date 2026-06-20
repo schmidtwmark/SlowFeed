@@ -168,7 +168,8 @@ export interface DigestItem {
   posts_json: DigestPost[] | null;  // Structured post data
   published_at: Date;
   created_at: Date;
-  read_at: Date | null;          // When the digest was marked as read
+  read_at: Date | null;          // When the digest was fully read (reached the end)
+  read_progress: number;         // 0–1 fraction scrolled through; drives the partial-read indicator
   last_read_post_id: string | null; // Last visible post for scroll position persistence
 }
 
@@ -204,5 +205,6 @@ export interface DigestItemRow {
   published_at: Date;
   created_at: Date;
   read_at: Date | null;
+  read_progress: number;
   last_read_post_id: string | null;
 }

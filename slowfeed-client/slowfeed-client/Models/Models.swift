@@ -60,7 +60,13 @@ struct DigestSummary: Codable, Identifiable, Equatable {
     let pollRunName: String?
     let publishedAt: Date
     let readAt: Date?
+    /// Fraction (0–1) of the digest the user has scrolled through.
+    /// Drives the partial-gray sidebar indicator. Defaults to 0 when
+    /// the server omits it (older payloads).
+    var readProgress: Double = 0
 
+    /// Fully read = reached the end (readAt set). Distinct from
+    /// "started" (readProgress > 0 but < 1).
     var isRead: Bool { readAt != nil }
 
     enum CodingKeys: String, CodingKey {
@@ -70,6 +76,41 @@ struct DigestSummary: Codable, Identifiable, Equatable {
         case pollRunName = "pollRunName"
         case publishedAt = "publishedAt"
         case readAt = "readAt"
+        case readProgress = "readProgress"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        source = try c.decode(SourceType.self, forKey: .source)
+        title = try c.decode(String.self, forKey: .title)
+        postCount = try c.decode(Int.self, forKey: .postCount)
+        pollRunId = try c.decodeIfPresent(Int.self, forKey: .pollRunId)
+        pollRunName = try c.decodeIfPresent(String.self, forKey: .pollRunName)
+        publishedAt = try c.decode(Date.self, forKey: .publishedAt)
+        readAt = try c.decodeIfPresent(Date.self, forKey: .readAt)
+        readProgress = try c.decodeIfPresent(Double.self, forKey: .readProgress) ?? 0
+    }
+
+    init(id: String, source: SourceType, title: String, postCount: Int,
+         pollRunId: Int?, pollRunName: String?, publishedAt: Date,
+         readAt: Date?, readProgress: Double = 0) {
+        self.id = id
+        self.source = source
+        self.title = title
+        self.postCount = postCount
+        self.pollRunId = pollRunId
+        self.pollRunName = pollRunName
+        self.publishedAt = publishedAt
+        self.readAt = readAt
+        self.readProgress = readProgress
+    }
+
+    /// Copy with updated read state.
+    func withReadState(progress: Double, readAt: Date?) -> DigestSummary {
+        DigestSummary(id: id, source: source, title: title, postCount: postCount,
+                      pollRunId: pollRunId, pollRunName: pollRunName,
+                      publishedAt: publishedAt, readAt: readAt, readProgress: progress)
     }
 }
 

@@ -204,6 +204,19 @@ struct DigestView: View {
                 }
                 .scrollPosition(id: $scrolledPostId, anchor: .top)
                 .scrollIndicators(.hidden)
+                // Track how far through the digest the user has scrolled.
+                // visibleRect.maxY / contentSize.height is the fraction of
+                // content above the bottom of the viewport: ~viewport/content
+                // at the top, 1.0 at the bottom, and >= 1.0 (clamped) when
+                // the whole digest fits on screen (so short digests count as
+                // fully read on open). Feeds the partial-read indicator.
+                .onScrollGeometryChange(for: Double.self) { geo in
+                    let h = geo.contentSize.height
+                    guard h > 1 else { return 1.0 }
+                    return min(max(geo.visibleRect.maxY / h, 0), 1)
+                } action: { _, fraction in
+                    appState.recordReadProgress(digestId: digest.id, progress: fraction)
+                }
                 .onChange(of: appState.focusedPostId) { _, newId in
                     guard let newId, appState.keyboardFocusPane == .posts else { return }
                     // Drive the scroll through the .scrollPosition binding

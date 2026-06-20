@@ -208,6 +208,7 @@ export async function createDigest(
     published_at: new Date(),
     created_at: new Date(),
     read_at: null,
+    read_progress: 0,
     last_read_post_id: null,
   };
 }
@@ -253,7 +254,7 @@ export async function getDigestItems(source?: SourceType): Promise<DigestItem[]>
   let sql = `
     SELECT d.id, d.source, d.schedule_id, d.poll_run_id, d.title, d.content,
            d.post_count, d.post_ids, d.posts_json, d.published_at, d.created_at,
-           d.read_at, d.last_read_post_id, pr.schedule_name AS poll_run_name
+           d.read_at, d.read_progress, d.last_read_post_id, pr.schedule_name AS poll_run_name
     FROM digest_items d
     LEFT JOIN poll_runs pr ON pr.id = d.poll_run_id
   `;
@@ -279,6 +280,7 @@ export async function getDigestItems(source?: SourceType): Promise<DigestItem[]>
     published_at: row.published_at,
     created_at: row.created_at,
     read_at: row.read_at,
+    read_progress: row.read_progress ?? 0,
     last_read_post_id: row.last_read_post_id,
   }));
 }
@@ -287,7 +289,7 @@ export async function getDigestById(id: string): Promise<DigestItem | null> {
   const { rows } = await query<DigestItemRow & { poll_run_name: string | null }>(
     `SELECT d.id, d.source, d.schedule_id, d.poll_run_id, d.title, d.content,
             d.post_count, d.post_ids, d.posts_json, d.published_at, d.created_at,
-            d.read_at, d.last_read_post_id, pr.schedule_name AS poll_run_name
+            d.read_at, d.read_progress, d.last_read_post_id, pr.schedule_name AS poll_run_name
      FROM digest_items d
      LEFT JOIN poll_runs pr ON pr.id = d.poll_run_id
      WHERE d.id = $1`,
@@ -310,6 +312,7 @@ export async function getDigestById(id: string): Promise<DigestItem | null> {
     published_at: row.published_at,
     created_at: row.created_at,
     read_at: row.read_at,
+    read_progress: row.read_progress ?? 0,
     last_read_post_id: row.last_read_post_id,
   };
 }
@@ -326,6 +329,24 @@ export async function updateScrollPosition(id: string, postId: string): Promise<
   const result = await query(
     `UPDATE digest_items SET last_read_post_id = $2 WHERE id = $1`,
     [id, postId]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Record how far through a digest the user has scrolled (0–1). Progress
+ * only ever moves forward (GREATEST), and reaching the end (>= ~1.0)
+ * sets read_at — that's now what "fully read" means, instead of merely
+ * opening the digest.
+ */
+export async function updateReadProgress(id: string, progress: number): Promise<boolean> {
+  const clamped = Math.max(0, Math.min(1, progress));
+  const result = await query(
+    `UPDATE digest_items
+       SET read_progress = GREATEST(read_progress, $2),
+           read_at = CASE WHEN $2 >= 0.999 AND read_at IS NULL THEN NOW() ELSE read_at END
+     WHERE id = $1`,
+    [id, clamped]
   );
   return (result.rowCount ?? 0) > 0;
 }

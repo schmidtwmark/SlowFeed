@@ -242,6 +242,11 @@ final class APIClient {
         try await requestVoid("/api/digests/\(digestId)/scroll-position", method: "PUT", body: body)
     }
 
+    func updateReadProgress(digestId: String, progress: Double) async throws {
+        let body = try encoder.encode(["progress": progress])
+        try await requestVoid("/api/digests/\(digestId)/read-progress", method: "PUT", body: body)
+    }
+
     // MARK: - Source Endpoints
 
     func getSources() async throws -> [SourceInfo] {
