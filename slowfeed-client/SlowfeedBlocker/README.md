@@ -37,11 +37,19 @@ uninstalling. Changes apply on the next navigation (no reload needed).
 - `Resources/popup.html` / `popup.js` — master on/off toggle.
 - `SafariWebExtensionHandler.swift` — required no-op native handler.
 
-## Optional: the "Open Slowfeed" button
+## The "Open Slowfeed" button
 
-The blocked overlay has an **Open Slowfeed** button that navigates to
-`slowfeed://open`. That URL scheme isn't registered on the app yet, so the
-button is currently a no-op. To make it launch the app: in Xcode select the
-**slowfeed-client** target → Info → URL Types → **+** → set URL Schemes to
-`slowfeed`. (The generated-Info.plist build setup makes this awkward to do via
-build settings, but the Xcode URL-Types editor handles it in one click.)
+The blocked overlay's **Open Slowfeed** button navigates to `slowfeed://open`.
+The `slowfeed` URL scheme is registered on the app (Target → Info → URL Types,
+persisted via `slowfeed-client/Info.plist`), so the button launches the app.
+
+## iOS: per-site permission (important)
+
+Safari grants extension access **per host**, and these sites use different hosts
+on mobile vs. desktop — most notably YouTube is `www.youtube.com` on desktop but
+`m.youtube.com` on iPhone. Allowing the extension on the desktop host does **not**
+cover the mobile host. If a site isn't being blocked on iOS, open it in Safari,
+tap the **page-settings (ᴀA / extensions) button → Slowfeed Blocker → Allow** (or
+set "Always Allow"), for each of: `m.youtube.com`, `www.youtube.com`,
+`reddit.com`, `bsky.app`. The path-based blocking is host-independent once the
+extension is permitted on that host.
