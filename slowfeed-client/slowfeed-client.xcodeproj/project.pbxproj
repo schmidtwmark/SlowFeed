@@ -47,6 +47,13 @@
 			);
 			target = 5FA0000000000000000000A3 /* SlowfeedBlocker */;
 		};
+		EDAC262B2FED78580051596F /* Exceptions for "slowfeed-client" folder in "slowfeed-client" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = ED40C9B12F78D29800CDB34C /* slowfeed-client */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -60,6 +67,9 @@
 		};
 		ED40C9B42F78D29800CDB34C /* slowfeed-client */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				EDAC262B2FED78580051596F /* Exceptions for "slowfeed-client" folder in "slowfeed-client" target */,
+			);
 			path = "slowfeed-client";
 			sourceTree = "<group>";
 		};
@@ -430,6 +440,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "slowfeed-client/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Slowfeed;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Slowfeed saves images and videos you choose to your photo library.";
@@ -479,6 +490,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "slowfeed-client/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Slowfeed;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Slowfeed saves images and videos you choose to your photo library.";

@@ -74,21 +74,31 @@ html.slowfeed-blocked body {
 }
 
 /* YouTube: drop Shorts shelves everywhere so short-form doesn't leak into
-   Subscriptions / search. */
+   Subscriptions / search. Desktop uses ytd-* Polymer elements; mobile
+   (m.youtube.com) uses ytm-* elements with a different structure, so both
+   sets are listed. */
 ytd-reel-shelf-renderer,
 ytd-rich-shelf-renderer[is-shorts],
-ytd-rich-section-renderer:has(ytd-reel-shelf-renderer) {
+ytd-rich-section-renderer:has(ytd-reel-shelf-renderer),
+ytm-reel-shelf-renderer,
+ytm-rich-shelf-renderer,
+ytm-rich-section-renderer:has(ytm-reel-shelf-renderer),
+ytm-pivot-bar-item-renderer:has(a[href^="/shorts"]),
+ytm-shorts-lockup-view-model {
   display: none !important;
 }
 
-/* YouTube: on /watch, hide the recommendation rail + end screens. Keyed off
-   the class block.js sets only for watch pages, so the layout is untouched
-   elsewhere. */
+/* YouTube /watch: hide the recommendation rail + end screens. Keyed off the
+   class block.js sets only for watch pages. Desktop selectors first, then
+   mobile (m.youtube.com) watch-page recommendation containers. */
 html.slowfeed-hide-recs #secondary,
 html.slowfeed-hide-recs #related,
 html.slowfeed-hide-recs ytd-watch-next-secondary-results-renderer,
 html.slowfeed-hide-recs .ytp-endscreen-content,
 html.slowfeed-hide-recs .ytp-ce-element,
-html.slowfeed-hide-recs .ytp-autonav-endscreen-upnext-container {
+html.slowfeed-hide-recs .ytp-autonav-endscreen-upnext-container,
+html.slowfeed-hide-recs ytm-watch-next-secondary-results-renderer,
+html.slowfeed-hide-recs ytm-item-section-renderer.related-chips-slot-wrapper,
+html.slowfeed-hide-recs .related-chips-slot-renderer {
   display: none !important;
 }
