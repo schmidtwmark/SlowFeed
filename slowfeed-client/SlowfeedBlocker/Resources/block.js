@@ -1,14 +1,19 @@
 // Slowfeed blocker content script. Runs at document_start on Reddit, Bluesky,
-// and YouTube. Decides (via SlowfeedRules) whether the current route is a
-// feed surface; if so, covers the page with an opaque "blocked" overlay. The
-// overlay is mounted/removed live on SPA navigation so going post -> home
-// re-blocks without a reload. On YouTube /watch it toggles a class that
-// block.css uses to hide the recommendation rail.
+// and YouTube. Decides (via SlowfeedRules) whether the current route is a feed
+// surface; if so, covers the page with an opaque "blocked" overlay. On YouTube
+// it also hides Shorts shelves and (on /watch) the recommendation rail.
+//
+// SPA note: patching history.pushState here is useless — content scripts run in
+// an isolated world, so the page's router calls a *different* history object we
+// can't intercept. We instead POLL location for changes (works cross-world) and
+// also listen to popstate / YouTube's own yt-navigate events.
 (function () {
   "use strict";
 
   var OVERLAY_ID = "slowfeed-block";
   var enabled = true; // master toggle, mirrored from extension storage
+  var isYouTube = /(^|\.)youtube\.com$/.test(location.hostname);
+  var lastHref = location.href;
 
   function decision() {
     try {
@@ -41,14 +46,11 @@
     open.className = "slowfeed-btn slowfeed-btn-primary";
     open.textContent = "Open Slowfeed";
     open.addEventListener("click", function () {
-      // Best-effort app launch; no-op if the slowfeed:// scheme isn't
-      // registered. The overlay still does its job either way.
       location.href = "slowfeed://open";
     });
     actions.appendChild(open);
 
-    // On YouTube, offer a one-tap escape to the one allowed feed.
-    if (/(^|\.)youtube\.com$/.test(location.hostname)) {
+    if (isYouTube) {
       var subs = document.createElement("button");
       subs.className = "slowfeed-btn";
       subs.textContent = "Go to Subscriptions";
@@ -67,8 +69,6 @@
 
   function showOverlay() {
     if (document.getElementById(OVERLAY_ID)) return;
-    // Append to <html> — it exists at document_start before <body>, so the
-    // feed never flashes underneath.
     (document.documentElement || document.body).appendChild(buildOverlay());
     document.documentElement.classList.add("slowfeed-blocked");
   }
@@ -77,6 +77,30 @@
     var o = document.getElementById(OVERLAY_ID);
     if (o) o.remove();
     document.documentElement.classList.remove("slowfeed-blocked");
+  }
+
+  // Hide Shorts shelves structurally: find every link to a Short and hide its
+  // nearest shelf/section ancestor. This is DOM-name-agnostic, so it works on
+  // both desktop (ytd-*) and mobile (ytm-* / lockup view-models) without
+  // chasing YouTube's element renames. The bottom-nav "Shorts" tab uses
+  // href="/shorts" (no id) and isn't matched, so navigation isn't broken —
+  // tapping it just hits the path block instead.
+  function hideShortsShelves() {
+    if (!isYouTube) return;
+    var links = document.querySelectorAll(
+      'a[href^="/shorts/"], a[href*="youtube.com/shorts/"]'
+    );
+    for (var i = 0; i < links.length; i++) {
+      var el = links[i];
+      for (var depth = 0; depth < 10 && el && el !== document.body; depth++) {
+        var tag = (el.tagName || "").toLowerCase();
+        if (/(shelf|reel|rich-section|item-section|rich-grid-row)/.test(tag)) {
+          el.style.setProperty("display", "none", "important");
+          break;
+        }
+        el = el.parentElement;
+      }
+    }
   }
 
   function apply() {
@@ -89,34 +113,15 @@
     if (d.block) showOverlay();
     else hideOverlay();
     document.documentElement.classList.toggle("slowfeed-hide-recs", !!d.hideRecs);
+    hideShortsShelves();
   }
 
-  // Coalesce rapid re-evaluations (history spam during SPA boot) into one.
-  var pending = 0;
-  function queueApply() {
-    if (pending) cancelAnimationFrame(pending);
-    pending = requestAnimationFrame(function () {
-      pending = 0;
+  // Re-evaluate when the URL changes (covers SPA navigation reliably).
+  function onMaybeNavigated() {
+    if (location.href !== lastHref) {
+      lastHref = location.href;
       apply();
-    });
-  }
-
-  // Hook client-side navigation so route changes re-evaluate.
-  function hookHistory() {
-    var push = history.pushState;
-    var replace = history.replaceState;
-    history.pushState = function () {
-      var r = push.apply(this, arguments);
-      queueApply();
-      return r;
-    };
-    history.replaceState = function () {
-      var r = replace.apply(this, arguments);
-      queueApply();
-      return r;
-    };
-    window.addEventListener("popstate", queueApply);
-    window.addEventListener("hashchange", queueApply);
+    }
   }
 
   // Mirror the master on/off toggle from the popup.
@@ -133,12 +138,40 @@
         }
       });
     } catch (e) {
-      // No storage access (shouldn't happen) — fail open to "enabled".
+      // No storage access — fail open to "enabled".
     }
   }
 
-  hookHistory();
   watchEnabled();
   apply();
   document.addEventListener("DOMContentLoaded", apply);
+
+  // Navigation signals: popstate (back/forward), YouTube's own SPA events, and
+  // a poll as the catch-all for pushState navigation we can't hook directly.
+  window.addEventListener("popstate", onMaybeNavigated);
+  window.addEventListener("hashchange", onMaybeNavigated);
+  document.addEventListener("yt-navigate-finish", apply, true);
+  document.addEventListener("yt-navigate-start", onMaybeNavigated, true);
+  setInterval(onMaybeNavigated, 300);
+
+  // The feed streams in lazily, so re-run the Shorts-shelf hider as the DOM
+  // grows (debounced to once per frame).
+  if (isYouTube) {
+    var scheduled = false;
+    var observer = new MutationObserver(function () {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(function () {
+        scheduled = false;
+        hideShortsShelves();
+      });
+    });
+    var startObserving = function () {
+      if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true });
+      }
+    };
+    if (document.body) startObserving();
+    else document.addEventListener("DOMContentLoaded", startObserving);
+  }
 })();
