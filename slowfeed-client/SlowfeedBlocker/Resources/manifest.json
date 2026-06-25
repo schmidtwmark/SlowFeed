@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Slowfeed Blocker",
+  "version": "1.0",
+  "description": "Blocks the infinite-feed surfaces of Reddit, Bluesky, and YouTube so you read your Slowfeed digest instead of doomscrolling.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Slowfeed Blocker"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.reddit.com/*",
+        "*://bsky.app/*",
+        "*://*.youtube.com/*"
+      ],
+      "js": ["rules.js", "block.js"],
+      "css": ["block.css"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

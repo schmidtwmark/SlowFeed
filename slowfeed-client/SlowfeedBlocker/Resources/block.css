@@ -1,0 +1,94 @@
+/* Full-screen blocked overlay. Opaque so the feed underneath never shows,
+   max z-index so nothing in the host page paints over it. */
+#slowfeed-block {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0d12;
+  color: #e7e9ee;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#slowfeed-block .slowfeed-card {
+  max-width: 28rem;
+  margin: 1.5rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+#slowfeed-block .slowfeed-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  color: #ffffff;
+}
+
+#slowfeed-block .slowfeed-body {
+  font-size: 1rem;
+  line-height: 1.5;
+  color: #aab0bd;
+  margin-bottom: 1.75rem;
+}
+
+#slowfeed-block .slowfeed-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+#slowfeed-block .slowfeed-btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: #e7e9ee;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.6rem 1.1rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#slowfeed-block .slowfeed-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#slowfeed-block .slowfeed-btn-primary {
+  background: #f97316;
+  border-color: #f97316;
+  color: #1a1206;
+}
+
+#slowfeed-block .slowfeed-btn-primary:hover {
+  background: #fb8a3c;
+}
+
+/* Stop the page scrolling behind the overlay. */
+html.slowfeed-blocked,
+html.slowfeed-blocked body {
+  overflow: hidden !important;
+}
+
+/* YouTube: drop Shorts shelves everywhere so short-form doesn't leak into
+   Subscriptions / search. */
+ytd-reel-shelf-renderer,
+ytd-rich-shelf-renderer[is-shorts],
+ytd-rich-section-renderer:has(ytd-reel-shelf-renderer) {
+  display: none !important;
+}
+
+/* YouTube: on /watch, hide the recommendation rail + end screens. Keyed off
+   the class block.js sets only for watch pages, so the layout is untouched
+   elsewhere. */
+html.slowfeed-hide-recs #secondary,
+html.slowfeed-hide-recs #related,
+html.slowfeed-hide-recs ytd-watch-next-secondary-results-renderer,
+html.slowfeed-hide-recs .ytp-endscreen-content,
+html.slowfeed-hide-recs .ytp-ce-element,
+html.slowfeed-hide-recs .ytp-autonav-endscreen-upnext-container {
+  display: none !important;
+}

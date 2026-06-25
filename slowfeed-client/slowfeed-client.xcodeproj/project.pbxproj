@@ -6,11 +6,58 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		5FA0000000000000000000B2 /* SlowfeedBlocker.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5FA0000000000000000000A1 /* SlowfeedBlocker.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5FA0000000000000000000B3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ED40C9AA2F78D29800CDB34C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5FA0000000000000000000A3;
+			remoteInfo = SlowfeedBlocker;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		5FA0000000000000000000B1 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				5FA0000000000000000000B2 /* SlowfeedBlocker.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		5FA0000000000000000000A1 /* SlowfeedBlocker.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SlowfeedBlocker.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		ED40C9B22F78D29800CDB34C /* slowfeed-client.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "slowfeed-client.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		5FA0000000000000000000C1 /* Exceptions for "SlowfeedBlocker" folder in "SlowfeedBlocker" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 5FA0000000000000000000A3 /* SlowfeedBlocker */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		5FA0000000000000000000A2 /* SlowfeedBlocker */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5FA0000000000000000000C1 /* Exceptions for "SlowfeedBlocker" folder in "SlowfeedBlocker" target */,
+			);
+			path = SlowfeedBlocker;
+			sourceTree = "<group>";
+		};
 		ED40C9B42F78D29800CDB34C /* slowfeed-client */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "slowfeed-client";
@@ -19,6 +66,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		5FA0000000000000000000A5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		ED40C9AF2F78D29800CDB34C /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -33,6 +87,7 @@
 			isa = PBXGroup;
 			children = (
 				ED40C9B42F78D29800CDB34C /* slowfeed-client */,
+				5FA0000000000000000000A2 /* SlowfeedBlocker */,
 				ED40C9B32F78D29800CDB34C /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +96,7 @@
 			isa = PBXGroup;
 			children = (
 				ED40C9B22F78D29800CDB34C /* slowfeed-client.app */,
+				5FA0000000000000000000A1 /* SlowfeedBlocker.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,6 +104,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		5FA0000000000000000000A3 /* SlowfeedBlocker */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5FA0000000000000000000A7 /* Build configuration list for PBXNativeTarget "SlowfeedBlocker" */;
+			buildPhases = (
+				5FA0000000000000000000A4 /* Sources */,
+				5FA0000000000000000000A5 /* Frameworks */,
+				5FA0000000000000000000A6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5FA0000000000000000000A2 /* SlowfeedBlocker */,
+			);
+			name = SlowfeedBlocker;
+			packageProductDependencies = (
+			);
+			productName = SlowfeedBlocker;
+			productReference = 5FA0000000000000000000A1 /* SlowfeedBlocker.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		ED40C9B12F78D29800CDB34C /* slowfeed-client */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = ED40C9BD2F78D29A00CDB34C /* Build configuration list for PBXNativeTarget "slowfeed-client" */;
@@ -55,10 +133,12 @@
 				ED40C9AE2F78D29800CDB34C /* Sources */,
 				ED40C9AF2F78D29800CDB34C /* Frameworks */,
 				ED40C9B02F78D29800CDB34C /* Resources */,
+				5FA0000000000000000000B1 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				5FA0000000000000000000B4 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				ED40C9B42F78D29800CDB34C /* slowfeed-client */,
@@ -80,6 +160,9 @@
 				LastSwiftUpdateCheck = 2610;
 				LastUpgradeCheck = 2640;
 				TargetAttributes = {
+					5FA0000000000000000000A3 = {
+						CreatedOnToolsVersion = 26.1;
+					};
 					ED40C9B12F78D29800CDB34C = {
 						CreatedOnToolsVersion = 26.1;
 					};
@@ -100,11 +183,19 @@
 			projectRoot = "";
 			targets = (
 				ED40C9B12F78D29800CDB34C /* slowfeed-client */,
+				5FA0000000000000000000A3 /* SlowfeedBlocker */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		5FA0000000000000000000A6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		ED40C9B02F78D29800CDB34C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -115,6 +206,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		5FA0000000000000000000A4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		ED40C9AE2F78D29800CDB34C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -124,7 +222,79 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		5FA0000000000000000000B4 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5FA0000000000000000000A3 /* SlowfeedBlocker */;
+			targetProxy = 5FA0000000000000000000B3 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		5FA0000000000000000000A8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SlowfeedBlocker/SlowfeedBlocker.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = C2UW47HS8X;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SlowfeedBlocker/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.markschmidt.slowfeed-client.SlowfeedBlocker";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Debug;
+		};
+		5FA0000000000000000000A9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SlowfeedBlocker/SlowfeedBlocker.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = C2UW47HS8X;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SlowfeedBlocker/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.markschmidt.slowfeed-client.SlowfeedBlocker";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				XROS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Release;
+		};
 		ED40C9BB2F78D29A00CDB34C /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -346,6 +516,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		5FA0000000000000000000A7 /* Build configuration list for PBXNativeTarget "SlowfeedBlocker" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5FA0000000000000000000A8 /* Debug */,
+				5FA0000000000000000000A9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		ED40C9AD2F78D29800CDB34C /* Build configuration list for PBXProject "slowfeed-client" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
