@@ -578,9 +578,10 @@ struct DigestView: View {
     /// directly to find the user's current position.
     private func handleScrollChange(_ newId: String?) {
         guard appState.keyboardFocusPane == .posts, let newId else { return }
-        if allPostIds.contains(newId) {
-            appState.saveScrollPosition(digestId: digest.id, postId: newId)
-        }
+        // newId comes straight from the .scrollPosition(id:) binding, so it's
+        // always a real post id — no need to re-flatten the thread to validate
+        // it on every scroll boundary. saveScrollPosition is debounced.
+        appState.saveScrollPosition(digestId: digest.id, postId: newId)
     }
 }
 
@@ -764,19 +765,32 @@ private func flattenThread(_ post: DigestPost, depth: Int = 0, maxDepth: Int = 1
 }
 
 struct BlueskyThreadedView: View {
-    let posts: [DigestPost]
+    private let items: [FlatThreadItem]
+    private let firstPostId: String?
     var source: SourceType = .bluesky
     var digestId: String?
     var imageNamespace: Namespace.ID?
     var onSelectImage: (([PostMedia], Int) -> Void)?
 
-    private var flatItems: [FlatThreadItem] {
-        posts.flatMap { flattenThread($0) }
+    init(posts: [DigestPost], source: SourceType = .bluesky, digestId: String? = nil,
+         imageNamespace: Namespace.ID? = nil, onSelectImage: (([PostMedia], Int) -> Void)? = nil) {
+        // Flatten the thread once, here — not on every body evaluation. The
+        // old code recomputed `flatItems` AND `flatItems.first` *inside* the
+        // ForEach, so the whole tree was re-flattened for every row: O(n^2)
+        // flatten work per render, a real scroll-stutter source on long
+        // threads.
+        let flat = posts.flatMap { flattenThread($0) }
+        self.items = flat
+        self.firstPostId = flat.first?.post.postId
+        self.source = source
+        self.digestId = digestId
+        self.imageNamespace = imageNamespace
+        self.onSelectImage = onSelectImage
     }
 
     var body: some View {
-        ForEach(flatItems) { item in
-            if item.isThreadRoot && item.post.postId != flatItems.first?.post.postId {
+        ForEach(items) { item in
+            if item.isThreadRoot && item.post.postId != firstPostId {
                 Divider()
             }
             BlueskyFlatPostRow(item: item, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)

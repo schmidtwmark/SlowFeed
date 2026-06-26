@@ -373,28 +373,55 @@ final class AppState {
 
     /// Furthest read fraction persisted to the server per digest, so the
     /// debounced PUT only fires on meaningful forward movement.
-    private var lastSavedReadProgress: [String: Double] = [:]
-    private var readProgressTask: Task<Void, Never>?
+    @ObservationIgnored private var lastSavedReadProgress: [String: Double] = [:]
+    @ObservationIgnored private var readProgressTask: Task<Void, Never>?
+    /// Furthest read fraction observed *this session*, kept off the observed
+    /// `digests` array so the cheap per-frame threshold check during scroll
+    /// doesn't trigger any view updates.
+    @ObservationIgnored private var liveReadProgress: [String: Double] = [:]
 
     /// Record how far through a digest the user has scrolled (0–1).
-    /// Updates the sidebar summary optimistically (monotonic — progress
-    /// never goes backward) and debounce-saves to the server. Reaching
-    /// the end marks the digest fully read.
+    ///
+    /// This is called from `.onScrollGeometryChange`, i.e. many times per
+    /// second while scrolling. Mutating the `@Observable digests` array here
+    /// invalidates the whole sidebar (which sorts + groups every digest), so
+    /// doing it per frame caused scroll stutter — only ever when scrolling
+    /// *down*, since progress is monotonic. We therefore update the observed
+    /// `digests` entry only when progress crosses a coarse 5% bucket or the
+    /// digest becomes fully read; the per-frame work is just a dictionary
+    /// write + comparison.
     @MainActor
     func recordReadProgress(digestId: String, progress: Double) {
         let clamped = min(max(progress, 0), 1)
 
-        if let idx = digests.firstIndex(where: { $0.id == digestId }) {
+        let prevLive = liveReadProgress[digestId] ?? 0
+        let merged = max(prevLive, clamped)
+        guard merged > prevLive else {
+            // No forward movement (scrolling up / holding) — nothing to do.
+            maybePersistReadProgress(digestId: digestId, clamped: clamped)
+            return
+        }
+        liveReadProgress[digestId] = merged
+
+        // Only touch the observed array on a 5% bucket boundary or completion.
+        let crossedBucket = floor(merged * 20) > floor(prevLive * 20)
+        let justCompleted = merged >= 0.999 && prevLive < 0.999
+        if crossedBucket || justCompleted,
+           let idx = digests.firstIndex(where: { $0.id == digestId }) {
             let existing = digests[idx]
-            let merged = max(existing.readProgress, clamped)
-            let nowRead = merged >= 0.999
-            let newReadAt = nowRead ? (existing.readAt ?? Date()) : existing.readAt
-            if merged > existing.readProgress + 0.0001 || newReadAt != existing.readAt {
-                digests[idx] = existing.withReadState(progress: merged, readAt: newReadAt)
+            let newProgress = max(existing.readProgress, merged)
+            let newReadAt = merged >= 0.999 ? (existing.readAt ?? Date()) : existing.readAt
+            if newProgress > existing.readProgress + 0.0001 || newReadAt != existing.readAt {
+                digests[idx] = existing.withReadState(progress: newProgress, readAt: newReadAt)
             }
         }
 
-        // Only persist on meaningful forward movement (or completion).
+        maybePersistReadProgress(digestId: digestId, clamped: clamped)
+    }
+
+    /// Debounced server save of the furthest read fraction; coarse so it
+    /// fires a handful of times per digest, not per frame.
+    private func maybePersistReadProgress(digestId: String, clamped: Double) {
         let prior = lastSavedReadProgress[digestId] ?? 0
         guard clamped >= 1.0 || clamped > prior + 0.02 else { return }
         let toSave = max(prior, clamped)
