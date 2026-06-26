@@ -316,6 +316,7 @@ final class AppState {
                 digestLoading = false
                 digestError = nil
             }
+            warmLinkifyCache(for: cached)
             preloadNearby()
             return
         }
@@ -334,6 +335,7 @@ final class AppState {
                 digestLoading = false
             }
 
+            warmLinkifyCache(for: digest)
             preloadNearby()
         } catch {
             logger.error("Failed to load digest \(id): \(error.localizedDescription)")
@@ -341,6 +343,27 @@ final class AppState {
                 self.digestError = "\(error)"
                 digestLoading = false
             }
+        }
+    }
+
+    /// Pre-compute link detection for every text field in a digest off the
+    /// main thread, so post views render from the linkify cache instead of
+    /// running NSDataDetector inline during layout — a measured scroll-hang
+    /// source on long threads. Strings are gathered on the main actor (cheap
+    /// tree walk) and the expensive detection runs detached.
+    private func warmLinkifyCache(for digest: Digest) {
+        guard let posts = digest.posts else { return }
+        var strings: [String] = []
+        func collect(_ post: DigestPost) {
+            if let c = post.content, !c.isEmpty { strings.append(c) }
+            if let quoted = post.quotedPost { collect(quoted) }
+            if let replies = post.replies { replies.forEach(collect) }
+            if let comments = post.comments { for cm in comments { strings.append(cm.body) } }
+        }
+        posts.forEach(collect)
+        guard !strings.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            String.warmLinkifyCache(strings)
         }
     }
 
