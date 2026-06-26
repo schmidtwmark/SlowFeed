@@ -794,6 +794,7 @@ struct BlueskyThreadedView: View {
                 Divider()
             }
             BlueskyFlatPostRow(item: item, source: source, digestId: digestId, imageNamespace: imageNamespace, onSelectImage: onSelectImage)
+                .equatable()
                 .id(item.post.postId)
         }
         Divider()
@@ -801,12 +802,27 @@ struct BlueskyThreadedView: View {
 }
 
 /// Renders a single post row with depth-based indentation (non-recursive).
-private struct BlueskyFlatPostRow: View {
+///
+/// Equatable so SwiftUI can skip re-evaluating an unchanged row when the
+/// parent re-renders (e.g. on the per-scroll-boundary `scrolledPostId`
+/// update). Post content is immutable, so identity is enough — the closures
+/// (`onSelectImage`) are deliberately excluded from `==`, since they're
+/// recreated every parent render and would otherwise force a re-evaluation
+/// of every row (a measured scroll cost). Per-post state that *should*
+/// re-render (focus highlight, NSFW reveal) comes from @Observable/@State
+/// inside the row, which equatability doesn't suppress.
+private struct BlueskyFlatPostRow: View, Equatable {
     let item: FlatThreadItem
     var source: SourceType = .bluesky
     var digestId: String?
     var imageNamespace: Namespace.ID?
     var onSelectImage: (([PostMedia], Int) -> Void)?
+
+    static func == (lhs: BlueskyFlatPostRow, rhs: BlueskyFlatPostRow) -> Bool {
+        lhs.item.id == rhs.item.id
+            && lhs.source == rhs.source
+            && lhs.digestId == rhs.digestId
+    }
 
     var body: some View {
         HStack(spacing: 0) {
