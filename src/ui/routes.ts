@@ -10,8 +10,7 @@ import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
 import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, updateScrollPosition, updateReadProgress, getDigestPosts, stripHtml } from '../digest.js';
 import { savePost, unsavePost, getSavedPosts, getSavedPostIds } from '../saved-posts.js';
-import { listFeeds, addFeed, deleteFeed, updateFeed, parseOPML, addFeedsBulk } from '../feeds.js';
-import RSSParser from 'rss-parser';
+import { listFeeds, addFeed, deleteFeed, updateFeed, parseOPML, addFeedsBulk, resolveFeed } from '../feeds.js';
 import type { ScheduleInput, SourceType, DigestPost } from '../types/index.js';
 import {
   hasPasskeys,
@@ -794,9 +793,10 @@ export function createApiRouter(): Router {
     }
   });
 
-  // Add a single feed by URL. If `title` is omitted we fetch the feed once
-  // to derive it; if the fetch fails the URL itself is used as the title so
-  // the user can still save the row and retry later.
+  // Add a single feed by URL. The URL may be a site homepage rather than a
+  // raw feed URL — `resolveFeed` discovers the actual feed (via the page's
+  // `<link rel="alternate">` or common feed paths) and parses it so we can
+  // derive the title/site. Returns 422 if no feed can be found.
   router.post('/api/rss/feeds', async (req, res) => {
     try {
       const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
@@ -805,21 +805,21 @@ export function createApiRouter(): Router {
         return;
       }
 
-      let title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
-      let siteUrl: string | undefined;
-      if (!title) {
-        try {
-          const parser = new RSSParser();
-          const parsed = await parser.parseURL(url);
-          title = (parsed.title || '').trim() || url;
-          siteUrl = parsed.link || undefined;
-        } catch (err) {
-          logger.warn(`Failed to derive title for ${url}: ${(err as Error).message}`);
-          title = url;
-        }
+      const userTitle = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+
+      let resolved;
+      try {
+        resolved = await resolveFeed(url);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(`Failed to resolve feed for ${url}: ${msg}`);
+        res.status(422).json({ error: `Couldn't find a feed at that URL: ${msg}` });
+        return;
       }
 
-      const feed = await addFeed(url, title, siteUrl);
+      const title = userTitle || (resolved.parsed.title || '').trim() || resolved.feedUrl;
+      const siteUrl = resolved.parsed.link || undefined;
+      const feed = await addFeed(resolved.feedUrl, title, siteUrl);
       res.json(feed);
     } catch (err) {
       logger.error('Error adding RSS feed:', err);
@@ -879,15 +879,15 @@ export function createApiRouter(): Router {
         return;
       }
 
-      const parser = new RSSParser();
-      let parsed;
+      let resolved;
       try {
-        parsed = await parser.parseURL(url);
+        resolved = await resolveFeed(url);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         res.status(422).json({ error: `Failed to fetch or parse feed: ${msg}` });
         return;
       }
+      const parsed = resolved.parsed;
 
       const items = (parsed.items ?? []).slice(0, 10).map((item) => {
         const snippet = (item.contentSnippet || item.content || '').trim();
@@ -900,7 +900,8 @@ export function createApiRouter(): Router {
       });
 
       res.json({
-        title: (parsed.title || '').trim() || url,
+        feedUrl: resolved.feedUrl,
+        title: (parsed.title || '').trim() || resolved.feedUrl,
         siteUrl: parsed.link || null,
         description: (parsed.description || '').trim() || null,
         itemCount: parsed.items?.length ?? 0,

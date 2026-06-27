@@ -1,5 +1,116 @@
+import RSSParser from 'rss-parser';
 import { query } from './db.js';
 import { logger } from './logger.js';
+
+export type ParsedFeed = Awaited<ReturnType<RSSParser['parseURL']>>;
+
+export interface ResolvedFeed {
+  /** The actual feed URL that parsed successfully (may differ from input). */
+  feedUrl: string;
+  parsed: ParsedFeed;
+}
+
+const FEED_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
+
+// Common feed locations to try when a site URL has no discoverable <link>.
+const COMMON_FEED_PATHS = [
+  '/feed',
+  '/rss',
+  '/feed.xml',
+  '/rss.xml',
+  '/atom.xml',
+  '/index.xml',
+  '/feed/',
+  '/rss/',
+  '/feeds/posts/default',
+];
+
+/**
+ * Resolve a user-supplied URL to a working feed. People paste a site's
+ * homepage ("https://sources.news") far more often than a raw feed URL, so we:
+ *   1. try the input directly as a feed,
+ *   2. fetch the page HTML and follow any `<link rel="alternate">` feed link,
+ *   3. fall back to common feed paths (/feed, /rss.xml, …).
+ * The first candidate that parses wins. Throws if none do.
+ */
+export async function resolveFeed(inputUrl: string): Promise<ResolvedFeed> {
+  const parser = new RSSParser({ headers: { 'User-Agent': FEED_UA } });
+
+  // 1. Maybe it's already a feed.
+  try {
+    const parsed = await parser.parseURL(inputUrl);
+    return { feedUrl: inputUrl, parsed };
+  } catch {
+    // Not a direct feed (likely an HTML page) — discover candidates.
+  }
+
+  const candidates = await discoverFeedCandidates(inputUrl);
+  for (const candidate of candidates) {
+    try {
+      const parsed = await parser.parseURL(candidate);
+      return { feedUrl: candidate, parsed };
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  throw new Error('No RSS or Atom feed found at that URL');
+}
+
+/**
+ * Given a (probably HTML) URL, return an ordered list of candidate feed URLs:
+ * declared `<link rel="alternate">` feeds first (most reliable), then common
+ * conventional paths.
+ */
+async function discoverFeedCandidates(inputUrl: string): Promise<string[]> {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const push = (raw: string | null | undefined) => {
+    if (!raw) return;
+    try {
+      const abs = new URL(decodeAttr(raw), inputUrl).toString();
+      if (!seen.has(abs)) {
+        seen.add(abs);
+        candidates.push(abs);
+      }
+    } catch {
+      // Ignore unparseable hrefs.
+    }
+  };
+
+  let html = '';
+  try {
+    const resp = await fetch(inputUrl, {
+      headers: {
+        'User-Agent': FEED_UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      redirect: 'follow',
+    });
+    if (resp.ok) html = await resp.text();
+  } catch (err) {
+    logger.warn(`Feed discovery: failed to fetch ${inputUrl}: ${(err as Error).message}`);
+  }
+
+  if (html) {
+    // `<link rel="alternate" type="application/rss+xml" href="…">` (attribute
+    // order varies, so match the whole tag then pull attributes out).
+    for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
+      const tag = m[0];
+      if (!/\brel\s*=\s*["']?[^"'>]*\balternate\b/i.test(tag)) continue;
+      if (!/\btype\s*=\s*["'](application\/(rss|atom)\+xml|application\/xml|text\/xml)/i.test(tag))
+        continue;
+      const href = tag.match(/\bhref\s*=\s*("([^"]*)"|'([^']*)')/i);
+      push(href ? href[2] ?? href[3] : null);
+    }
+  }
+
+  // Conventional paths, resolved against the site origin.
+  for (const path of COMMON_FEED_PATHS) push(path);
+
+  return candidates;
+}
 
 export interface RSSFeedRow {
   id: number;
