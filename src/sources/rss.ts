@@ -2,7 +2,7 @@ import RSSParser from 'rss-parser';
 import { createHash } from 'crypto';
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
-import { listEnabledFeeds, markFetched, type RSSFeed } from '../feeds.js';
+import { listEnabledFeeds, markFetched, updateFeed, provisionalTitle, type RSSFeed } from '../feeds.js';
 import type { DigestPost } from '../types/index.js';
 
 /**
@@ -176,6 +176,16 @@ export async function pollRSS(): Promise<DigestPost[]> {
   for (const feed of feeds) {
     try {
       const parsed = await parser.parseURL(feed.feedUrl);
+
+      // If this feed was saved with a placeholder title (host name) because the
+      // host was too slow to parse at add-time, upgrade it now. The host-equality
+      // check means a user-renamed title is never clobbered.
+      const parsedTitle = (parsed.title || '').trim();
+      if (parsedTitle && feed.title === provisionalTitle(feed.feedUrl)) {
+        await updateFeed(feed.id, { title: parsedTitle });
+        logger.info(`RSS: upgraded title for ${feed.feedUrl} -> ${parsedTitle}`);
+      }
+
       const items = (parsed.items ?? []) as ParsedItem[];
       // Cap each feed at 30 items to keep digest size sane on first poll
       // for noisy feeds. The seen_posts table dedupes across runs.

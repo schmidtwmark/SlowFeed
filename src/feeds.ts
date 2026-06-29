@@ -13,6 +13,11 @@ export interface ResolvedFeed {
 const FEED_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
 
+// Hard cap on any single feed fetch. Without this, a stalled/throttling host
+// (kill-the-newsletter.com does this on repeat requests) hangs the request
+// until the *client's* 60s timeout fires — surfacing as "request timed out".
+const FEED_TIMEOUT_MS = 12000;
+
 // Common feed locations to try when a site URL has no discoverable <link>.
 const COMMON_FEED_PATHS = [
   '/feed',
@@ -35,7 +40,11 @@ const COMMON_FEED_PATHS = [
  * The first candidate that parses wins. Throws if none do.
  */
 export async function resolveFeed(inputUrl: string): Promise<ResolvedFeed> {
-  const parser = new RSSParser({ headers: { 'User-Agent': FEED_UA } });
+  const parser = new RSSParser({
+    timeout: FEED_TIMEOUT_MS,
+    maxRedirects: 5,
+    headers: { 'User-Agent': FEED_UA },
+  });
 
   // 1. Maybe it's already a feed.
   try {
@@ -46,16 +55,43 @@ export async function resolveFeed(inputUrl: string): Promise<ResolvedFeed> {
   }
 
   const candidates = await discoverFeedCandidates(inputUrl);
-  for (const candidate of candidates) {
-    try {
-      const parsed = await parser.parseURL(candidate);
-      return { feedUrl: candidate, parsed };
-    } catch {
-      // Try the next candidate.
-    }
+  if (candidates.length === 0) {
+    throw new Error('No RSS or Atom feed found at that URL');
   }
 
-  throw new Error('No RSS or Atom feed found at that URL');
+  // Probe candidates concurrently and take the first that parses — otherwise a
+  // handful of slow 404s serialize into a multi-minute wait.
+  try {
+    return await Promise.any(
+      candidates.map(async (candidate) => {
+        const parsed = await parser.parseURL(candidate);
+        return { feedUrl: candidate, parsed };
+      })
+    );
+  } catch {
+    throw new Error('No RSS or Atom feed found at that URL');
+  }
+}
+
+/** Does this URL look like a direct feed URL? Lets the caller save it even
+ *  when a slow/throttling host blocks parsing at add-time. */
+export function looksLikeFeedURL(rawUrl: string): boolean {
+  try {
+    const path = new URL(rawUrl).pathname.toLowerCase();
+    return /\.(xml|rss|atom)$/.test(path) || /(^|\/)(feed|rss|atom)s?(\/|$)/.test(path);
+  } catch {
+    return false;
+  }
+}
+
+/** Readable placeholder title from the URL host, used when we save a feed
+ *  before we've fetched its real title. `pollRSS` upgrades it on first fetch. */
+export function provisionalTitle(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname.replace(/^www\./, '');
+  } catch {
+    return rawUrl;
+  }
 }
 
 /**
@@ -87,6 +123,7 @@ async function discoverFeedCandidates(inputUrl: string): Promise<string[]> {
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
       redirect: 'follow',
+      signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
     });
     if (resp.ok) html = await resp.text();
   } catch (err) {

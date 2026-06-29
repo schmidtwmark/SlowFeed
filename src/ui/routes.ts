@@ -10,7 +10,7 @@ import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
 import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, updateScrollPosition, updateReadProgress, getDigestPosts, stripHtml } from '../digest.js';
 import { savePost, unsavePost, getSavedPosts, getSavedPostIds } from '../saved-posts.js';
-import { listFeeds, addFeed, deleteFeed, updateFeed, parseOPML, addFeedsBulk, resolveFeed } from '../feeds.js';
+import { listFeeds, addFeed, deleteFeed, updateFeed, parseOPML, addFeedsBulk, resolveFeed, looksLikeFeedURL, provisionalTitle } from '../feeds.js';
 import type { ScheduleInput, SourceType, DigestPost } from '../types/index.js';
 import {
   hasPasskeys,
@@ -812,6 +812,16 @@ export function createApiRouter(): Router {
         resolved = await resolveFeed(url);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        // A slow or rate-limiting host (e.g. kill-the-newsletter.com) can stall
+        // the fetch. If the URL itself looks like a direct feed, save it anyway
+        // with a placeholder title — the next scheduled poll fetches it and
+        // upgrades the title — so a flaky host doesn't block subscribing.
+        if (looksLikeFeedURL(url)) {
+          logger.warn(`Resolve failed for ${url} (${msg}); saving as direct feed`);
+          const feed = await addFeed(url, userTitle || provisionalTitle(url));
+          res.json(feed);
+          return;
+        }
         logger.warn(`Failed to resolve feed for ${url}: ${msg}`);
         res.status(422).json({ error: `Couldn't find a feed at that URL: ${msg}` });
         return;
