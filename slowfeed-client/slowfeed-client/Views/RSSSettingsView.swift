@@ -78,11 +78,27 @@ struct RSSSettingsView: View {
                             feed: feed,
                             onToggle: { newValue in Task { await setEnabled(feed.id, newValue) } }
                         )
+                        // iOS: swipe-to-delete. macOS Forms don't surface
+                        // swipe actions, so the context menu (right-click) is
+                        // the only delete affordance there — provide both.
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 Task { await delete(feed.id) }
                             } label: {
                                 Label("Delete", systemImage: "trash")
+                            }
+                        }
+                        .contextMenu {
+                            Button {
+                                Task { await setEnabled(feed.id, !feed.enabled) }
+                            } label: {
+                                Label(feed.enabled ? "Disable" : "Enable",
+                                      systemImage: feed.enabled ? "pause.circle" : "play.circle")
+                            }
+                            Button(role: .destructive) {
+                                Task { await delete(feed.id) }
+                            } label: {
+                                Label("Delete Feed", systemImage: "trash")
                             }
                         }
                     }
