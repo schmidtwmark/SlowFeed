@@ -284,7 +284,13 @@ struct MediaView: View {
         VStack(alignment: .leading, spacing: 8) {
             if images.count == 1, let img = images.first, let url = URL(string: img.url) {
                 imageThumb(url: url, media: img, index: 0)
-                    .frame(maxWidth: 600)
+                    // maxHeight too: without it a very tall image (or a
+                    // degenerate intrinsic size from a failed load) can
+                    // inflate the row into a screen-sized blank block.
+                    // The image keeps its aspect ratio (.fit inside
+                    // imageThumb) — tall images just render smaller; the
+                    // gallery viewer still shows them full size.
+                    .frame(maxWidth: 600, maxHeight: 700, alignment: .topLeading)
                     .contextMenu { mediaContextMenu(for: img) }
             } else if images.count > 1 {
                 GeometryReader { geo in

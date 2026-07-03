@@ -73,12 +73,21 @@ struct CachedImage<Placeholder: View>: View {
         // cancels this .task (scrolling a long thread, body re-eval), the
         // fetch keeps going and caches, and a later re-task picks it up.
         // There's deliberately no permanent "failed" state: a nil result
-        // just leaves the placeholder, and re-requesting retries.
+        // just leaves the placeholder. While the view stays on screen we
+        // retry on a slow cadence (the loader's failure TTL gates actual
+        // network attempts); Task.sleep throws on cancellation, so the
+        // loop dies with the row.
         .task(id: url) {
             guard let url else { return }
             image = ImageCache.shared.image(for: url)
-            if image == nil {
+            var attempt = 0
+            while image == nil, !Task.isCancelled, attempt < 4 {
                 image = await ImageLoader.shared.image(for: url)
+                if image != nil { break }
+                attempt += 1
+                do {
+                    try await Task.sleep(for: .seconds(20))
+                } catch { return }
             }
         }
     }
@@ -835,7 +844,11 @@ private struct BlueskyFlatPostRow: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        // .top alignment: the default (.center) vertically centers the post
+        // inside the row, so any layout bug that inflates row height reads
+        // as a giant blank gap ABOVE the post. Top-aligned, content stays
+        // put and only trailing space can appear.
+        HStack(alignment: .top, spacing: 0) {
             if item.depth > 0 {
                 ForEach(0..<min(item.depth, 4), id: \.self) { _ in
                     Rectangle()

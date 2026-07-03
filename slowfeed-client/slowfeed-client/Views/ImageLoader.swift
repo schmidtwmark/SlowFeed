@@ -27,13 +27,24 @@ actor ImageLoader {
     private var activeCount = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var inFlight: [URL: Task<PlatformImage?, Never>] = [:]
+    /// Recent failures → don't re-request until the TTL passes. A stalling
+    /// CDN asset (cdn.bsky.app sometimes hangs on specific blobs) would
+    /// otherwise be re-fetched by every row remount, each attempt pinning
+    /// a semaphore slot for the full timeout and starving other images.
+    private var failedAt: [URL: Date] = [:]
+    private let failureTTL: TimeInterval = 60
 
     /// Returns the image for `url`, hitting the in-memory cache first, then
     /// joining an in-flight download, then starting a new one. Returns nil
     /// on a real failure (the caller just keeps showing its placeholder —
-    /// there is no permanent failed state, so a later re-request retries).
+    /// there is no permanent failed state, so a later re-request retries
+    /// once the short failure TTL passes).
     func image(for url: URL) async -> PlatformImage? {
         if let cached = await ImageCache.shared.image(for: url) { return cached }
+        if let failed = failedAt[url] {
+            if Date().timeIntervalSince(failed) < failureTTL { return nil }
+            failedAt[url] = nil
+        }
         if let existing = inFlight[url] { return await existing.value }
 
         let task = Task<PlatformImage?, Never> { [weak self] in
@@ -42,7 +53,10 @@ actor ImageLoader {
             defer { Task { await self.releaseSlot() } }
             do {
                 var request = URLRequest(url: url)
-                request.timeoutInterval = 30
+                // Inactivity timeout. Keep this short: a hung response
+                // (stalled CDN) holds one of the few concurrent slots for
+                // this entire duration, blocking every queued image.
+                request.timeoutInterval = 12
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse,
                       (200..<300).contains(http.statusCode),
@@ -58,6 +72,7 @@ actor ImageLoader {
         inFlight[url] = task
         let result = await task.value
         inFlight[url] = nil
+        if result == nil { failedAt[url] = Date() }
         return result
     }
 
