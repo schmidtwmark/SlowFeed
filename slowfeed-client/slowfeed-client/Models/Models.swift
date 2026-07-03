@@ -199,6 +199,14 @@ struct PostMetadata: Codable {
     let score: Int?
     let subreddit: String?
     let numComments: Int?
+    /// Post link-flair label (e.g. "Discussion", "OC").
+    let flair: String?
+    /// Flair background as a CSS hex color ("#ff66ac") when the subreddit
+    /// sets one; nil means render a neutral chip.
+    let flairBackgroundColor: String?
+    /// Reddit's flair text scheme: "light" (light text on dark bg) or
+    /// "dark" (dark text on light bg).
+    let flairTextColor: String?
     // YouTube
     let videoId: String?
     let channel: String?

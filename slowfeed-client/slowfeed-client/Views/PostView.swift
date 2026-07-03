@@ -26,6 +26,8 @@ struct PostView: View {
     @Environment(\.openURL) private var openURL
     @Environment(AppState.self) private var appState
     @State private var debugJSON: String?
+    /// Expansion state for long Reddit selftext (Show more / Show less).
+    @State private var isContentExpanded = false
     #if os(iOS)
     /// In-app SFSafariViewController target. Set to a non-nil URL to
     /// present the sheet; the sheet sets it back to nil on dismiss.
@@ -102,6 +104,16 @@ struct PostView: View {
                     .foregroundStyle(.primary)
             }
 
+            // Reddit link flair ("Discussion", "OC", …), colored like the
+            // subreddit's flair when the server captured colors.
+            if source == .reddit, let flair = post.metadata?.flair, !flair.isEmpty {
+                FlairChip(
+                    text: flair,
+                    backgroundHex: post.metadata?.flairBackgroundColor,
+                    textScheme: post.metadata?.flairTextColor
+                )
+            }
+
             // RSS header image (first <img> from the article HTML).
             // Sized per the user's rssImageStyle setting.
             if source == .rss,
@@ -113,6 +125,8 @@ struct PostView: View {
             // Body
             if source == .rss {
                 rssBody
+            } else if source == .reddit, let content = post.content, !content.isEmpty {
+                redditBody(content)
             } else if let content = post.content, !content.isEmpty {
                 Text(content.linkified())
                     .font(.body)
@@ -216,6 +230,43 @@ struct PostView: View {
         #else
         openURL(url)
         #endif
+    }
+
+    // MARK: - Reddit body
+
+    /// Selftext longer than this renders collapsed behind "Show more".
+    /// The server no longer truncates, so the full text is always here.
+    private static let redditCollapseThreshold: Int = 600
+
+    /// Body for Reddit selftext. Long posts collapse to 10 lines with an
+    /// in-place Show more / Show less toggle — the full content is readable
+    /// without leaving the app.
+    @ViewBuilder
+    private func redditBody(_ content: String) -> some View {
+        let isLong = content.count > Self.redditCollapseThreshold
+        VStack(alignment: .leading, spacing: 6) {
+            Text(content.linkified())
+                .font(.body)
+                .foregroundStyle(.primary.opacity(0.85))
+                .lineLimit(isLong && !isContentExpanded ? 10 : nil)
+                .tint(.accentColor)
+            if isLong {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isContentExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(isContentExpanded ? "Show less" : "Show more")
+                            .fontWeight(.medium)
+                        Image(systemName: isContentExpanded ? "chevron.up" : "chevron.down")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     // MARK: - RSS body
@@ -362,6 +413,54 @@ struct PostView: View {
         } label: {
             Label("Show Raw JSON", systemImage: "curlybraces")
         }
+    }
+}
+
+// MARK: - Flair chip
+
+/// Small capsule showing a Reddit post's link flair. Uses the subreddit's
+/// flair colors when the server captured them (`backgroundHex` +
+/// Reddit's "light"/"dark" `textScheme`), falling back to a neutral
+/// tinted chip.
+struct FlairChip: View {
+    let text: String
+    var backgroundHex: String?
+    var textScheme: String?
+
+    var body: some View {
+        Text(text)
+            .font(.caption2)
+            .fontWeight(.medium)
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(backgroundColor, in: Capsule())
+            .foregroundStyle(foregroundColor)
+    }
+
+    private var backgroundColor: Color {
+        Color(hex: backgroundHex ?? "") ?? Color.secondary.opacity(0.18)
+    }
+
+    private var foregroundColor: Color {
+        guard Color(hex: backgroundHex ?? "") != nil else { return .secondary }
+        // Reddit's flair schemes: "light" = light text on a dark bg,
+        // "dark" = dark text on a light bg.
+        return textScheme == "dark" ? .black : .white
+    }
+}
+
+extension Color {
+    /// Parse "#RRGGBB" / "RRGGBB" (Reddit's flair color format). Returns nil
+    /// for empty / malformed strings so callers can fall back.
+    init?(hex: String) {
+        let cleaned = hex.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "#", with: "")
+        guard cleaned.count == 6, let value = UInt64(cleaned, radix: 16) else { return nil }
+        self.init(
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255
+        )
     }
 }
 

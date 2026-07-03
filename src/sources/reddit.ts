@@ -26,6 +26,9 @@ interface RedditPost {
   isVideo: boolean;
   isGallery: boolean;
   previewUrl: string | null;
+  /** Link-flair label scraped from the listing's `.linkflairlabel` span.
+   *  Fallback for when the per-post `.json` fetch fails (no colors here). */
+  flair: string | null;
 }
 
 function getRedditCookies(): string {
@@ -159,6 +162,15 @@ function extractPosts(html: string): RedditPost[] {
       }
     }
 
+    // Link flair from the listing (`<span class="linkflairlabel …">Label</span>`).
+    // Colors aren't in the listing HTML — the JSON pass supplies those.
+    let flair: string | null = null;
+    const flairMatch = thingBlock.match(/<span[^>]*class="[^"]*\blinkflairlabel\b[^"]*"[^>]*>([^<]+)<\/span>/i)
+      || thingBlock.match(/<span[^>]*class="[^"]*\blinkflairlabel\b[^"]*"[^>]*\btitle="([^"]+)"/i);
+    if (flairMatch && flairMatch[1]) {
+      flair = decodeHtmlEntities(flairMatch[1].trim()) || null;
+    }
+
     // For imgur single images, convert to direct image URL
     let finalUrl = postUrl.startsWith('/') ? `https://reddit.com${postUrl}` : postUrl;
     if (finalUrl.match(/^https?:\/\/imgur\.com\/[a-zA-Z0-9]+$/)) {
@@ -183,6 +195,7 @@ function extractPosts(html: string): RedditPost[] {
       isVideo,
       isGallery,
       previewUrl,
+      flair,
     });
   }
 
@@ -205,6 +218,12 @@ interface RedditPostJson {
   numComments: number | null;
   /** Reddit's `over_18` flag — true when the subreddit or post is NSFW. */
   isNSFW: boolean;
+  /** Link-flair label ("Discussion", "OC", …), `null` when the post has none. */
+  flair: string | null;
+  /** Flair background hex color ("#ff66ac") when the subreddit sets one. */
+  flairBackgroundColor: string | null;
+  /** "light" | "dark" — which text color the flair background expects. */
+  flairTextColor: string | null;
 }
 
 async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> {
@@ -242,6 +261,9 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
             thumbnail?: string;
             num_comments?: number;
             over_18?: boolean;
+            link_flair_text?: string | null;
+            link_flair_background_color?: string | null;
+            link_flair_text_color?: string | null;
             preview?: {
               images?: Array<{
                 source?: { url?: string; width?: number; height?: number };
@@ -379,7 +401,16 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
     const numComments = typeof postData.num_comments === 'number' ? postData.num_comments : null;
     const isNSFW = postData.over_18 === true;
 
-    return { selftextHtml, galleryImageUrls, galleryCaptions, videoUrl, previewUrl, numComments, isNSFW };
+    // Link flair — the label shown next to the title on Reddit ("Discussion",
+    // "OC", …). Colors come along when the subreddit sets them.
+    const flair = postData.link_flair_text?.trim() || null;
+    const flairBackgroundColor = postData.link_flair_background_color?.trim() || null;
+    const flairTextColor = postData.link_flair_text_color?.trim() || null;
+
+    return {
+      selftextHtml, galleryImageUrls, galleryCaptions, videoUrl, previewUrl,
+      numComments, isNSFW, flair, flairBackgroundColor, flairTextColor,
+    };
   } catch (err) {
     logger.debug(`Failed to fetch post JSON from ${jsonUrl}: ${(err as Error).message}`);
     return null;
@@ -543,13 +574,11 @@ export async function pollReddit(): Promise<DigestPost[]> {
           }
         }
 
-        let plainText = stripHtmlToPlainText(decoded);
-        if (plainText.length > 2000) {
-          const truncateAt = plainText.lastIndexOf('.', 1800);
-          const cutPoint = truncateAt > 1000 ? truncateAt + 1 : 1800;
-          plainText = plainText.substring(0, cutPoint) + '...';
-        }
-        content = plainText;
+        // Full selftext — no server-side truncation. The client collapses
+        // long posts behind a "Show more" expander, so cutting the text
+        // here just made the full content unreachable without opening
+        // Reddit.
+        content = stripHtmlToPlainText(decoded);
       }
 
       // Small delay to avoid rate limiting on JSON fetch
@@ -582,6 +611,11 @@ export async function pollReddit(): Promise<DigestPost[]> {
           subreddit: post.subreddit,
           ...(typeof commentCount === 'number' ? { numComments: commentCount } : {}),
           ...(postJson?.isNSFW ? { nsfw: true } : {}),
+          // Flair: JSON is authoritative (label + colors); the listing
+          // scrape supplies the label alone when JSON was unavailable.
+          ...((postJson?.flair || post.flair) ? { flair: postJson?.flair || post.flair || undefined } : {}),
+          ...(postJson?.flairBackgroundColor ? { flairBackgroundColor: postJson.flairBackgroundColor } : {}),
+          ...(postJson?.flairTextColor ? { flairTextColor: postJson.flairTextColor } : {}),
         },
         ...(media.length > 0 ? { media } : {}),
         ...(links.length > 0 ? { links } : {}),

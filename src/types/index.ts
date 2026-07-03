@@ -95,6 +95,14 @@ export interface PostMetadata {
   score?: number;
   subreddit?: string;
   numComments?: number;
+  /** Post link-flair label (e.g. "Discussion", "OC"). */
+  flair?: string;
+  /** Flair background as a CSS hex color (e.g. "#ff66ac") when the
+   *  subreddit sets one; absent means use a neutral chip. */
+  flairBackgroundColor?: string;
+  /** Reddit's flair text scheme: "light" (light text on dark bg) or
+   *  "dark" (dark text on light bg). */
+  flairTextColor?: string;
 
   // YouTube
   videoId?: string;
