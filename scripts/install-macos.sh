@@ -8,7 +8,7 @@
 # Usage:
 #   ./scripts/install-macos.sh
 #
-# Then (first time only): launch /Applications/slowfeed-client.app, right-click
+# Then (first time only): launch /Applications/Slowfeed.app, right-click
 # its Dock icon → Options → Keep in Dock.
 
 set -euo pipefail
@@ -16,8 +16,12 @@ set -euo pipefail
 PROJECT="slowfeed-client/slowfeed-client.xcodeproj"
 SCHEME="slowfeed-client"
 CONFIG="Release"
-APP_NAME="slowfeed-client.app"
+# PRODUCT_NAME is "Slowfeed" (the target is still named slowfeed-client).
+APP_NAME="Slowfeed.app"
 DEST="/Applications/${APP_NAME}"
+# Pre-rename install location — cleaned up on install so two copies don't
+# fight over the passkey / URL-scheme registration.
+LEGACY_DEST="/Applications/slowfeed-client.app"
 
 cd "$(dirname "$0")/.."
 
@@ -48,15 +52,22 @@ if [[ ! -d "$SRC" ]]; then
 fi
 
 # Quit the app if it's running, otherwise replacing the bundle can fail or
-# leave a half-updated copy.
-if pgrep -x "$SCHEME" >/dev/null 2>&1; then
+# leave a half-updated copy. Check both the new and pre-rename executable
+# names.
+if pgrep -x "Slowfeed" >/dev/null 2>&1 || pgrep -x "$SCHEME" >/dev/null 2>&1; then
   echo "▸ Quitting running instance…"
-  osascript -e 'quit app "Slowfeed"' 2>/dev/null || pkill -x "$SCHEME" || true
+  osascript -e 'quit app "Slowfeed"' 2>/dev/null || pkill -x "Slowfeed" || pkill -x "$SCHEME" || true
   sleep 1
 fi
 
 echo "▸ Installing to ${DEST}…"
 rm -rf "$DEST"
+# Remove the pre-rename bundle if present (it would keep answering the
+# slowfeed:// scheme and clutter Spotlight).
+if [[ -d "$LEGACY_DEST" ]]; then
+  echo "▸ Removing legacy ${LEGACY_DEST}…"
+  rm -rf "$LEGACY_DEST"
+fi
 # ditto preserves code signature + bundle structure (cp -R can mangle it).
 ditto "$SRC" "$DEST"
 
