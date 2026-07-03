@@ -164,7 +164,17 @@ struct DigestView: View {
                             // and the down-arrow falls back to the stale
                             // `focusedPostId`, scrolling all the way back
                             // to the top. (MAR-71)
-                            VStack(alignment: .leading, spacing: 0) {
+                            //
+                            // LazyVStack, not VStack: a plain VStack builds
+                            // and lays out EVERY post/reply/image up front,
+                            // so on big threads each image that finishes
+                            // loading mid-scroll re-layouts the entire stack
+                            // and every scrolledPostId boundary re-diffs the
+                            // whole tree — the dominant remaining source of
+                            // scroll hitching. Lazy rows materialize near the
+                            // viewport; .scrollPosition(id:) still restores /
+                            // navigates fine via .scrollTargetLayout().
+                            LazyVStack(alignment: .leading, spacing: 0) {
                                 if digest.source == .bluesky || digest.source == .mastodon {
                                     // Threaded rendering: flattened post tree
                                     // with depth indicators. Mastodon uses the
