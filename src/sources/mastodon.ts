@@ -1,5 +1,6 @@
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
+import { mergeThreadsByRoot } from '../thread-merge.js';
 import type { DigestPost, PostMedia } from '../types/index.js';
 
 /**
@@ -240,40 +241,6 @@ function buildThreadTree(
     tree = ancestorNode;
   }
   return tree;
-}
-
-/**
- * Merge `incoming.replies` into `existing.replies` by matching postId at each
- * depth. New replies are appended; existing replies recurse.
- */
-function mergeIntoTree(existing: DigestPost, incoming: DigestPost): void {
-  if (!incoming.replies) return;
-  for (const incomingReply of incoming.replies) {
-    const existingReply = existing.replies?.find(r => r.postId === incomingReply.postId);
-    if (existingReply) {
-      mergeIntoTree(existingReply, incomingReply);
-    } else if (existing.replies) {
-      existing.replies.push(incomingReply);
-    } else {
-      existing.replies = [incomingReply];
-    }
-  }
-}
-
-/** Collapse trees sharing the same root postId into a single tree. */
-function mergeThreadsByRoot(posts: DigestPost[]): DigestPost[] {
-  const rootMap = new Map<string, DigestPost>();
-  const order: string[] = [];
-  for (const post of posts) {
-    const rootId = post.postId;
-    if (!rootMap.has(rootId)) {
-      rootMap.set(rootId, post);
-      order.push(rootId);
-    } else {
-      mergeIntoTree(rootMap.get(rootId)!, post);
-    }
-  }
-  return order.map(id => rootMap.get(id)!);
 }
 
 /**

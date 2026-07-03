@@ -1,6 +1,7 @@
 import { BskyAgent, AppBskyFeedDefs, AppBskyEmbedImages, AppBskyEmbedExternal, AppBskyEmbedRecord, AppBskyEmbedRecordWithMedia } from '@atproto/api';
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
+import { mergeThreadsByRoot } from '../thread-merge.js';
 import type { DigestPost, PostMedia, PostLink } from '../types/index.js';
 
 let agent: BskyAgent | null = null;
@@ -183,7 +184,12 @@ async function buildThreadTree(
   const leafNode = postViewToNode(post, repostedBy);
 
   try {
-    const threadResponse = await bskyAgent.getPostThread({ uri: post.uri, depth: 0, parentHeight: 20 });
+    // parentHeight is the max ancestors to walk — use the lexicon max (1000).
+    // At the old value (20), deep threads truncated at different heights for
+    // different timeline posts, yielding different pseudo-roots for the SAME
+    // conversation, which mergeThreadsByRoot couldn't unify → the digest
+    // showed overlapping copies of the thread.
+    const threadResponse = await bskyAgent.getPostThread({ uri: post.uri, depth: 0, parentHeight: 1000 });
     if (!threadResponse.success) return leafNode;
 
     // Collect ancestors from root to parent (not including the post itself)
@@ -213,54 +219,6 @@ async function buildThreadTree(
     logger.debug(`Failed to build thread tree for ${post.uri}: ${(err as Error).message}`);
     return leafNode;
   }
-}
-
-/**
- * Recursively merge an incoming thread tree into an existing one.
- * Walks both trees in parallel, matching children by postId.
- * New children are inserted; existing children are merged recursively.
- */
-function mergeIntoTree(existing: DigestPost, incoming: DigestPost): void {
-  if (!incoming.replies) return;
-
-  for (const incomingReply of incoming.replies) {
-    const existingReply = existing.replies?.find(r => r.postId === incomingReply.postId);
-
-    if (existingReply) {
-      // Same post exists at this level — recurse to merge their children
-      mergeIntoTree(existingReply, incomingReply);
-    } else {
-      // New reply at this level — add it
-      if (!existing.replies) {
-        existing.replies = [incomingReply];
-      } else {
-        existing.replies.push(incomingReply);
-      }
-    }
-  }
-}
-
-/**
- * Merge digest posts that share the same root postId.
- * Each buildThreadTree call produces a linear chain (root → ... → leaf).
- * This merges overlapping chains into a proper tree by matching nodes at each depth.
- */
-function mergeThreadsByRoot(posts: DigestPost[]): DigestPost[] {
-  const rootMap = new Map<string, DigestPost>();
-  const order: string[] = [];
-
-  for (const post of posts) {
-    const rootId = post.postId;
-
-    if (!rootMap.has(rootId)) {
-      rootMap.set(rootId, post);
-      order.push(rootId);
-    } else {
-      mergeIntoTree(rootMap.get(rootId)!, post);
-    }
-  }
-
-  return order.map(id => rootMap.get(id)!);
 }
 
 // ---- Main poll function ----
