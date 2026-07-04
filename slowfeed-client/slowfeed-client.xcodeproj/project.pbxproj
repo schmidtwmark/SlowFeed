@@ -36,7 +36,7 @@
 
 /* Begin PBXFileReference section */
 		5FA0000000000000000000A1 /* SlowfeedBlocker.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SlowfeedBlocker.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		ED40C9B22F78D29800CDB34C /* slowfeed-client.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "slowfeed-client.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		ED40C9B22F78D29800CDB34C /* Slowfeed.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Slowfeed.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -105,7 +105,7 @@
 		ED40C9B32F78D29800CDB34C /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				ED40C9B22F78D29800CDB34C /* slowfeed-client.app */,
+				ED40C9B22F78D29800CDB34C /* Slowfeed.app */,
 				5FA0000000000000000000A1 /* SlowfeedBlocker.appex */,
 			);
 			name = Products;
@@ -157,7 +157,7 @@
 			packageProductDependencies = (
 			);
 			productName = "slowfeed-client";
-			productReference = ED40C9B22F78D29800CDB34C /* slowfeed-client.app */;
+			productReference = ED40C9B22F78D29800CDB34C /* Slowfeed.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
