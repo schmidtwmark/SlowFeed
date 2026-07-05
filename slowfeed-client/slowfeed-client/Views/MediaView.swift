@@ -944,16 +944,14 @@ struct ImageViewerOverlay: View {
                     HStack {
                         if currentIndex > 0 {
                             navButton(systemName: "chevron.left.circle.fill") {
-                                showAltText = false
-                                withAnimation(.easeInOut(duration: 0.25)) { currentIndex -= 1 }
+                                stepGallery(-1)
                             }
                             .padding(.leading, 16)
                         }
                         Spacer()
                         if currentIndex < imageURLs.count - 1 {
                             navButton(systemName: "chevron.right.circle.fill") {
-                                showAltText = false
-                                withAnimation(.easeInOut(duration: 0.25)) { currentIndex += 1 }
+                                stepGallery(+1)
                             }
                             .padding(.trailing, 16)
                         }
@@ -967,14 +965,34 @@ struct ImageViewerOverlay: View {
         .focused($isFocused)
         .onAppear { isFocused = true }
         .onKeyPress(.escape) { onDismiss(); return .handled }
-        .onKeyPress(.leftArrow) {
-            if currentIndex > 0 { resetZoom(); withAnimation { currentIndex -= 1 } }
-            return .handled
+        // Arrow keys reach us on TWO paths on macOS: AppKit's responder
+        // chain usually translates them into move commands (moveLeft: /
+        // moveRight:) before SwiftUI's key-press dispatch — and an upstream
+        // moveLeft: handler (sidebar/list focus navigation) can swallow the
+        // left arrow entirely, so .onKeyPress(.leftArrow) never fires while
+        // the right arrow happens to fall through and work. Handle the
+        // move-command form first and keep onKeyPress as the fallback so
+        // both arrows work regardless of which path wins.
+        .onMoveCommand { direction in
+            switch direction {
+            case .left: stepGallery(-1)
+            case .right: stepGallery(+1)
+            default: break
+            }
         }
-        .onKeyPress(.rightArrow) {
-            if currentIndex < imageURLs.count - 1 { resetZoom(); withAnimation { currentIndex += 1 } }
-            return .handled
-        }
+        .onKeyPress(.leftArrow) { stepGallery(-1); return .handled }
+        .onKeyPress(.rightArrow) { stepGallery(+1); return .handled }
+    }
+
+    /// Step the gallery by ±1, clamped. Shared by arrow keys (both the
+    /// move-command and key-press paths) so behavior stays identical:
+    /// clears the ALT caption and zoom, then animates the page change.
+    private func stepGallery(_ delta: Int) {
+        let target = currentIndex + delta
+        guard target >= 0, target < imageURLs.count else { return }
+        showAltText = false
+        resetZoom()
+        withAnimation(.easeInOut(duration: 0.25)) { currentIndex = target }
     }
     #endif
 
