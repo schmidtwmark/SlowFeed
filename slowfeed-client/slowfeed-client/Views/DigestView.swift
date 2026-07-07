@@ -138,7 +138,9 @@ struct DigestView: View {
     private func openImageViewer(images: [PostMedia], index: Int) {
         viewerImages = images
         viewerIndex = index
-        withAnimation(.spring(duration: 0.4, bounce: 0.15)) { showViewer = true }
+        // Plain ease, no bounce — see the onDismiss note: bouncy springs
+        // wobble every co-transacted layout change, not just the overlay.
+        withAnimation(.easeOut(duration: 0.22)) { showViewer = true }
     }
 
     /// Trigger the RSS reader push for a given post. Wired into RSS
@@ -313,9 +315,19 @@ struct DigestView: View {
                     currentIndex: $viewerIndex,
                     namespace: imageNamespace,
                     onDismiss: {
-                        withAnimation(.spring(duration: 0.4, bounce: 0.15)) { showViewer = false }
+                        // No bounce here: a bouncy spring transaction animates
+                        // EVERY pending layout change in the same transaction —
+                        // including the post list re-settling behind the viewer
+                        // (lazy rows re-measuring, the skip button re-inserting)
+                        // — which read as the whole list shaking up and down
+                        // during dismissal.
+                        withAnimation(.easeOut(duration: 0.22)) { showViewer = false }
                     }
                 )
+                // Fade only — and keep the overlay on top while it leaves so
+                // the departing viewer never z-swaps under the list mid-fade.
+                .transition(.opacity)
+                .zIndex(1)
             }
         }
         .focusable()
