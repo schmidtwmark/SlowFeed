@@ -1010,31 +1010,38 @@ struct ImageViewerOverlay: View {
     /// either of them.
     private var iOSBody: some View {
         ZStack {
-            Color.black
-                .opacity(backgroundOpacity)
-                .ignoresSafeArea()
+            // Static full-bleed wrapper. The safe-area expansion MUST live
+            // here — on a child that never moves — and not on the TabView:
+            // offsetting a safe-area-ignoring child per drag frame makes the
+            // parent ZStack's resolved safe-area expansion flap as the child
+            // crosses the safe-area boundary, re-insetting every sibling —
+            // the post list behind the viewer visibly shook up and down
+            // during swipe-to-dismiss.
+            ZStack {
+                Color.black
+                    .opacity(backgroundOpacity)
 
-            TabView(selection: $currentIndex) {
-                ForEach(Array(imageURLs.enumerated()), id: \.offset) { idx, url in
-                    PagedZoomableImage(
-                        url: url,
-                        namespace: idx == safeIndex ? namespace : nil,
-                        onSingleTap: onDismiss
-                    )
-                    .tag(idx)
-                    .ignoresSafeArea()
-                    .contextMenu {
-                        if idx < images.count {
-                            MediaContextMenuItems(images[idx])
+                TabView(selection: $currentIndex) {
+                    ForEach(Array(imageURLs.enumerated()), id: \.offset) { idx, url in
+                        PagedZoomableImage(
+                            url: url,
+                            namespace: idx == safeIndex ? namespace : nil,
+                            onSingleTap: onDismiss
+                        )
+                        .tag(idx)
+                        .contextMenu {
+                            if idx < images.count {
+                                MediaContextMenuItems(images[idx])
+                            }
                         }
                     }
                 }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .offset(y: dismissDrag.height)
+                .scaleEffect(dismissScale)
+                .simultaneousGesture(dismissDragGesture())
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
-            .offset(y: dismissDrag.height)
-            .scaleEffect(dismissScale)
-            .simultaneousGesture(dismissDragGesture())
 
             chrome
                 .opacity(backgroundOpacity)
