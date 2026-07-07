@@ -138,9 +138,14 @@ struct DigestView: View {
     private func openImageViewer(images: [PostMedia], index: Int) {
         viewerImages = images
         viewerIndex = index
+        #if os(iOS)
+        // fullScreenCover animates its own presentation.
+        showViewer = true
+        #else
         // Plain ease, no bounce — see the onDismiss note: bouncy springs
         // wobble every co-transacted layout change, not just the overlay.
         withAnimation(.easeOut(duration: 0.22)) { showViewer = true }
+        #endif
     }
 
     /// Trigger the RSS reader push for a given post. Wired into RSS
@@ -309,18 +314,21 @@ struct DigestView: View {
             }
             #endif
 
+            // iOS presents the viewer via .fullScreenCover (below) instead of
+            // an in-ZStack overlay: as a ZStack sibling, the viewer SHARES
+            // layout with the post list, and its per-frame dismiss-drag kept
+            // re-insetting the list (visible shake). A cover is its own
+            // window-level presentation — the drag can't touch the list's
+            // layout at all.
+            #if os(macOS)
             if showViewer {
                 ImageViewerOverlay(
                     images: viewerImages,
                     currentIndex: $viewerIndex,
                     namespace: imageNamespace,
                     onDismiss: {
-                        // No bounce here: a bouncy spring transaction animates
-                        // EVERY pending layout change in the same transaction —
-                        // including the post list re-settling behind the viewer
-                        // (lazy rows re-measuring, the skip button re-inserting)
-                        // — which read as the whole list shaking up and down
-                        // during dismissal.
+                        // No bounce: a bouncy spring transaction animates every
+                        // co-transacted layout change, not just the overlay.
                         withAnimation(.easeOut(duration: 0.22)) { showViewer = false }
                     }
                 )
@@ -329,6 +337,7 @@ struct DigestView: View {
                 .transition(.opacity)
                 .zIndex(1)
             }
+            #endif
         }
         .focusable()
         .focused($isFocused)
@@ -358,6 +367,22 @@ struct DigestView: View {
         .sheet(item: $debugJSON) { json in
             DebugJSONView(title: "Digest JSON", json: json)
         }
+        #if os(iOS)
+        // See the note at the macOS overlay: a cover is layout-isolated from
+        // the post list, so the swipe-to-dismiss drag can't shake it. Clear
+        // presentation background keeps the fade-to-list look — the viewer's
+        // own dimmed backdrop thins as you drag, revealing the list through
+        // the (static) clear cover.
+        .fullScreenCover(isPresented: $showViewer) {
+            ImageViewerOverlay(
+                images: viewerImages,
+                currentIndex: $viewerIndex,
+                namespace: imageNamespace,
+                onDismiss: { showViewer = false }
+            )
+            .presentationBackground(.clear)
+        }
+        #endif
         // RSS reader presentation.
         //
         // iOS pushes onto the NavigationStack (back swipe + back button
