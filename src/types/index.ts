@@ -56,6 +56,11 @@ export interface PostMedia {
   mimeType?: string;
   width?: number;
   height?: number;
+  /** Direct downloadable file for media whose `url` is a streaming
+   *  manifest (Reddit videos play via HLS, which can't be saved as a
+   *  file). For Reddit this is the fallback MP4 — video-only; the
+   *  client muxes in the DASH audio track when saving. */
+  downloadUrl?: string;
 }
 
 /** An external link card */

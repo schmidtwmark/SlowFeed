@@ -213,6 +213,9 @@ interface RedditPostJson {
    * GIFs / legacy posts.
    */
   videoUrl: string | null;
+  /** Direct MP4 (fallback_url) when videoUrl is an HLS manifest; the client
+   *  uses this for save/share since HLS isn't a downloadable file. */
+  videoDownloadUrl: string | null;
   previewUrl: string | null;
   /** `null` when the JSON didn't include it; otherwise an authoritative count. */
   numComments: number | null;
@@ -377,6 +380,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
     // with audio as a separate file). Prefer HLS; only fall back to the muted
     // MP4 for GIFs, which have no audio anyway.
     let videoUrl: string | null = null;
+    let videoDownloadUrl: string | null = null;
     const redditVideo = postData.media?.reddit_video
       || postData.secure_media?.reddit_video
       || crosspost?.media?.reddit_video
@@ -384,6 +388,10 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
 
     if (redditVideo?.hls_url) {
       videoUrl = redditVideo.hls_url;
+      // HLS can't be saved as a file — carry the direct MP4 too so the
+      // client's Save to Photos / Files has downloadable bytes (video-only;
+      // the client muxes in the DASH audio track).
+      videoDownloadUrl = redditVideo.fallback_url || null;
     } else if (redditVideo?.fallback_url) {
       videoUrl = redditVideo.fallback_url;
     }
@@ -408,7 +416,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
     const flairTextColor = postData.link_flair_text_color?.trim() || null;
 
     return {
-      selftextHtml, galleryImageUrls, galleryCaptions, videoUrl, previewUrl,
+      selftextHtml, galleryImageUrls, galleryCaptions, videoUrl, videoDownloadUrl, previewUrl,
       numComments, isNSFW, flair, flairBackgroundColor, flairTextColor,
     };
   } catch (err) {
@@ -551,6 +559,9 @@ export async function pollReddit(): Promise<DigestPost[]> {
             type: 'video',
             url: videoUrl,
             thumbnailUrl: videoPreview || undefined,
+            // Present when `url` is HLS: the direct (video-only) MP4 the
+            // client downloads for Save/Share, muxing in the DASH audio.
+            ...(postJson?.videoDownloadUrl ? { downloadUrl: postJson.videoDownloadUrl } : {}),
           });
         }
       }
