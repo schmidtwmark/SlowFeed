@@ -25,9 +25,8 @@ enum MediaOperations {
     // MARK: Copy
 
     static func copy(_ media: PostMedia) async {
-        guard let data = await download(media) else { return }
-
-        if media.type == "image", let norm = normalizedImage(from: data) {
+        if media.type == "image" {
+            guard let data = await download(media), let norm = normalizedImage(from: data) else { return }
             await MainActor.run {
                 #if os(macOS)
                 let pb = NSPasteboard.general
@@ -43,7 +42,7 @@ enum MediaOperations {
         }
 
         // Non-image (video / file): copy the file URL.
-        let tempFileURL = writeTempFile(data: data, ext: fileExtension(for: media))
+        guard let tempFileURL = await shareableFileURL(for: media) else { return }
         await MainActor.run {
             #if os(macOS)
             let pb = NSPasteboard.general
@@ -58,8 +57,7 @@ enum MediaOperations {
     // MARK: Share
 
     static func share(_ media: PostMedia) async {
-        guard let data = await download(media) else { return }
-        let shareURL = writeShareableFile(media: media, data: data)
+        guard let shareURL = await shareableFileURL(for: media) else { return }
 
         await MainActor.run {
             #if os(macOS)
@@ -79,14 +77,16 @@ enum MediaOperations {
     // MARK: Save to Files
 
     static func saveToFiles(_ media: PostMedia) async {
-        guard let data = await download(media) else { return }
-        let fileURL = writeShareableFile(media: media, data: data)
+        guard let fileURL = await shareableFileURL(for: media) else { return }
 
         await MainActor.run {
             #if os(macOS)
             let panel = NSSavePanel()
             panel.nameFieldStringValue = fileURL.lastPathComponent
             if panel.runModal() == .OK, let dest = panel.url {
+                // Requires the user-selected-files entitlement to be
+                // readwrite — with the (previous) readonly grant this copy
+                // failed silently and "Save to Files" appeared to do nothing.
                 try? FileManager.default.removeItem(at: dest)
                 try? FileManager.default.copyItem(at: fileURL, to: dest)
             }
@@ -100,8 +100,6 @@ enum MediaOperations {
     // MARK: Save to Photos
 
     static func saveToPhotos(_ media: PostMedia) async {
-        guard let data = await download(media) else { return }
-
         let granted = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
                 cont.resume(returning: status == .authorized || status == .limited)
@@ -111,11 +109,12 @@ enum MediaOperations {
 
         do {
             if media.type == "video" {
-                let url = writeTempFile(data: data, ext: fileExtension(for: media))
+                guard let url = await localVideoFile(for: media) else { return }
                 try await PHPhotoLibrary.shared().performChanges {
                     PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url)
                 }
             } else {
+                guard let data = await download(media) else { return }
                 // Save normalized JPEG/PNG bytes so the camera roll asset
                 // isn't a stray HEIC/WebP/TIFF.
                 let bytes = normalizedImage(from: data)?.data ?? data
@@ -128,16 +127,113 @@ enum MediaOperations {
         }
     }
 
+    // MARK: Video files (HLS-aware)
+
+    /// True when the playable URL is a streaming manifest, not a file.
+    private static func isStreamingManifest(_ urlString: String) -> Bool {
+        urlString.lowercased().contains(".m3u8")
+    }
+
+    /// Produce a local, saveable video FILE for `media`.
+    ///
+    /// Reddit videos play from an HLS manifest — downloading that URL yields
+    /// playlist text, which is why saving videos "did nothing". For those we
+    /// download the direct fallback MP4 (`downloadUrl`, video-only) and mux
+    /// in Reddit's separate DASH audio track when one exists. Direct-file
+    /// video URLs (Discord, Tenor, GIFs) download as-is.
+    static func localVideoFile(for media: PostMedia) async -> URL? {
+        let sourceString = isStreamingManifest(media.url) ? media.downloadUrl : media.url
+        guard let sourceString, let sourceURL = URL(string: sourceString) else { return nil }
+        guard let videoData = await download(from: sourceURL) else { return nil }
+        let ext = sourceURL.pathExtension.isEmpty ? "mp4" : sourceURL.pathExtension
+        let videoFile = writeTempFile(data: videoData, ext: ext)
+
+        // Reddit hosts audio as a sibling DASH track next to the video file.
+        guard sourceURL.host?.contains("v.redd.it") == true else { return videoFile }
+        let base = sourceURL.deletingLastPathComponent()
+        for name in ["DASH_AUDIO_128.mp4", "DASH_AUDIO_64.mp4", "DASH_audio.mp4"] {
+            guard let audioData = await download(from: base.appendingPathComponent(name)),
+                  !audioData.isEmpty else { continue }
+            let audioFile = writeTempFile(data: audioData, ext: "mp4")
+            if let muxed = await muxVideoAudio(videoFile: videoFile, audioFile: audioFile) {
+                return muxed
+            }
+            break // audio existed but mux failed — fall back to silent video
+        }
+        return videoFile
+    }
+
+    /// Combine a video-only MP4 and an audio-only MP4 into one playable
+    /// file via AVMutableComposition + passthrough export (no re-encode).
+    private static func muxVideoAudio(videoFile: URL, audioFile: URL) async -> URL? {
+        let videoAsset = AVURLAsset(url: videoFile)
+        let audioAsset = AVURLAsset(url: audioFile)
+        let composition = AVMutableComposition()
+        do {
+            guard let videoTrack = try await videoAsset.loadTracks(withMediaType: .video).first,
+                  let compVideo = composition.addMutableTrack(withMediaType: .video,
+                                                              preferredTrackID: kCMPersistentTrackID_Invalid)
+            else { return nil }
+            let duration = try await videoAsset.load(.duration)
+            let range = CMTimeRange(start: .zero, duration: duration)
+            try compVideo.insertTimeRange(range, of: videoTrack, at: .zero)
+            compVideo.preferredTransform = try await videoTrack.load(.preferredTransform)
+
+            if let audioTrack = try await audioAsset.loadTracks(withMediaType: .audio).first,
+               let compAudio = composition.addMutableTrack(withMediaType: .audio,
+                                                           preferredTrackID: kCMPersistentTrackID_Invalid) {
+                // Clamp to the video duration; Reddit's audio track can run
+                // a hair longer and passthrough export rejects overhang.
+                let audioDuration = try await audioAsset.load(.duration)
+                let audioRange = CMTimeRange(start: .zero, duration: CMTimeMinimum(duration, audioDuration))
+                try compAudio.insertTimeRange(audioRange, of: audioTrack, at: .zero)
+            }
+
+            guard let export = AVAssetExportSession(asset: composition,
+                                                    presetName: AVAssetExportPresetPassthrough)
+            else { return nil }
+            let outURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("slowfeed_video_\(UUID().uuidString.prefix(8)).mp4")
+            try await export.export(to: outURL, as: .mp4)
+            return outURL
+        } catch {
+            return nil
+        }
+    }
+
     // MARK: - Helpers
 
     private static func download(_ media: PostMedia) async -> Data? {
         guard let url = URL(string: media.url) else { return nil }
+        return await download(from: url)
+    }
+
+    /// Status-checked download. The audio-track probing in
+    /// `localVideoFile` depends on this: v.redd.it answers missing files
+    /// with a 403/404 XML body that must not be mistaken for media bytes.
+    private static func download(from url: URL) async -> Data? {
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await URLSession.shared.data(from: url)
+            if let http = response as? HTTPURLResponse,
+               !(200..<300).contains(http.statusCode) { return nil }
             return data
         } catch {
             return nil
         }
+    }
+
+    /// Local temp file ready for share / save / copy-as-file:
+    /// normalized JPEG/PNG for images, a real playable file for videos
+    /// (HLS-aware — see `localVideoFile`), raw bytes otherwise.
+    private static func shareableFileURL(for media: PostMedia) async -> URL? {
+        if media.type == "video" {
+            return await localVideoFile(for: media)
+        }
+        guard let data = await download(media) else { return nil }
+        if media.type == "image", let norm = normalizedImage(from: data) {
+            return writeTempFile(data: norm.data, ext: norm.ext)
+        }
+        return writeTempFile(data: data, ext: fileExtension(for: media))
     }
 
     /// Re-encode image bytes to a portable type: PNG when the image has
@@ -187,15 +283,6 @@ enum MediaOperations {
         case "image": return "jpg"
         default: return "bin"
         }
-    }
-
-    /// Write a temp file suitable for sharing / saving: normalized
-    /// JPEG/PNG for images, the raw bytes for video / other.
-    private static func writeShareableFile(media: PostMedia, data: Data) -> URL {
-        if media.type == "image", let norm = normalizedImage(from: data) {
-            return writeTempFile(data: norm.data, ext: norm.ext)
-        }
-        return writeTempFile(data: data, ext: fileExtension(for: media))
     }
 
     private static func writeTempFile(data: Data, ext: String) -> URL {
@@ -611,7 +698,9 @@ struct FullscreenVideoView: View {
 
             VStack {
                 HStack {
-                    Spacer()
+                    // Top-LEADING: the player's own volume control lives in
+                    // the top-right corner, and the close button was sitting
+                    // right on top of it.
                     Button(action: onDismiss) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.title)
@@ -619,6 +708,7 @@ struct FullscreenVideoView: View {
                             .padding()
                     }
                     .buttonStyle(.plain)
+                    Spacer()
                 }
                 Spacer()
             }

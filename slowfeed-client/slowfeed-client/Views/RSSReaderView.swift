@@ -63,22 +63,14 @@ struct RSSReaderView: View {
                 .disabled(originalURL == nil)
             }
         }
-        // macOS presents the reader as a sheet (see DigestView) — that
-        // means no back button, so add an explicit Done overlay. iOS
-        // pushes onto the NavigationStack and uses the system back.
+        // Pushed onto the NavigationStack on both platforms — the system
+        // back button dismisses. Keep Escape as a keyboard shortcut for
+        // popping on macOS.
         #if os(macOS)
-        .overlay(alignment: .topTrailing) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title2)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .padding(12)
-            .keyboardShortcut(.escape, modifiers: [])
+        .background {
+            Button("") { dismiss() }
+                .keyboardShortcut(.escape, modifiers: [])
+                .hidden()
         }
         #endif
     }

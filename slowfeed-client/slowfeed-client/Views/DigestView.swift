@@ -383,28 +383,16 @@ struct DigestView: View {
             .presentationBackground(.clear)
         }
         #endif
-        // RSS reader presentation.
+        // RSS reader presentation: pushed onto the NavigationStack on both
+        // platforms (back button / swipe are the dismiss).
         //
-        // iOS pushes onto the NavigationStack (back swipe + back button
-        // are the dismiss).
-        //
-        // macOS presents as a window-attached sheet — pushing onto a
-        // NavigationStack inside NavigationSplitView's detail pane with
-        // an embedded WKWebView reliably trips an infinite
-        // NSHostingView Update-Constraints loop on image-heavy RSS
-        // articles (every <img> load triggers a layout reflow inside
-        // WKWebView that feeds back through SwiftUI's graph until
-        // AppKit gives up and crashes the window). The sheet hosts the
-        // reader in its own window-level NSHostingView and breaks the
-        // cycle.
-        #if os(macOS)
-        .sheet(item: $readerPostId) { postId in
-            if let post = digest.posts?.first(where: { $0.postId == postId }) {
-                RSSReaderView(post: post)
-                    .frame(minWidth: 720, minHeight: 600)
-            }
-        }
-        #else
+        // History: macOS used a sheet because pushing a WKWebView-hosting
+        // view once tripped an infinite NSHostingView Update-Constraints
+        // loop. RSSReaderView's HTMLWebView now pins the web view to the
+        // proposed size (sizeThatFits + autoresizing, no intrinsic-size
+        // feedback), which removed the loop's driver — if a constraints
+        // storm ever reappears on image-heavy articles, that's the place
+        // to look.
         .navigationDestination(item: $readerPostId) { postId in
             if let post = digest.posts?.first(where: { $0.postId == postId }) {
                 RSSReaderView(post: post)
@@ -412,7 +400,6 @@ struct DigestView: View {
                 Text("Post not found").foregroundStyle(.secondary)
             }
         }
-        #endif
         .navigationTitle(digest.source.displayName)
         #if os(macOS)
         .navigationSubtitle(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))
