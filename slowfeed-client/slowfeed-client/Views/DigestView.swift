@@ -152,7 +152,12 @@ struct DigestView: View {
     /// `PostView` instances so the navigation destination registered on
     /// `DigestView` (and not inside the ForEach) does the actual push.
     private func openRSSReader(for post: DigestPost) {
+        #if os(macOS)
+        // Overlay-page presentation — animate the slide-in.
+        withAnimation(.easeOut(duration: 0.18)) { readerPostId = post.postId }
+        #else
         readerPostId = post.postId
+        #endif
     }
 
     var body: some View {
@@ -338,6 +343,19 @@ struct DigestView: View {
                 .zIndex(1)
             }
             #endif
+
+            // macOS RSS reader page — overlay, not nav push (see the
+            // presentation comment below for why).
+            #if os(macOS)
+            if let postId = readerPostId,
+               let post = digest.posts?.first(where: { $0.postId == postId }) {
+                RSSReaderView(post: post, onBack: {
+                    withAnimation(.easeOut(duration: 0.18)) { readerPostId = nil }
+                })
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .zIndex(2)
+            }
+            #endif
         }
         .focusable()
         .focused($isFocused)
@@ -383,16 +401,21 @@ struct DigestView: View {
             .presentationBackground(.clear)
         }
         #endif
-        // RSS reader presentation: pushed onto the NavigationStack on both
-        // platforms (back button / swipe are the dismiss).
+        // RSS reader presentation.
         //
-        // History: macOS used a sheet because pushing a WKWebView-hosting
-        // view once tripped an infinite NSHostingView Update-Constraints
-        // loop. RSSReaderView's HTMLWebView now pins the web view to the
-        // proposed size (sizeThatFits + autoresizing, no intrinsic-size
-        // feedback), which removed the loop's driver — if a constraints
-        // storm ever reappears on image-heavy articles, that's the place
-        // to look.
+        // iOS: pushed onto the NavigationStack (back button / swipe).
+        //
+        // macOS: full-pane overlay INSIDE this view (see the ZStack) — NOT
+        // a navigationDestination push. Pushing a WKWebView-hosting view
+        // through the nav stack inserts extra constraint-hosting
+        // boundaries that ping-pong with the web view's internal Auto
+        // Layout until AppKit throws (confirmed crash: recursive
+        // _postWindowNeedsUpdateConstraints under
+        // NSHostingView.updateConstraints, days after shipping the push).
+        // The overlay keeps a single hosting boundary — the topology that
+        // was stable when the reader lived in a sheet — while still
+        // reading as a page with a Back button.
+        #if !os(macOS)
         .navigationDestination(item: $readerPostId) { postId in
             if let post = digest.posts?.first(where: { $0.postId == postId }) {
                 RSSReaderView(post: post)
@@ -400,6 +423,7 @@ struct DigestView: View {
                 Text("Post not found").foregroundStyle(.secondary)
             }
         }
+        #endif
         .navigationTitle(digest.source.displayName)
         #if os(macOS)
         .navigationSubtitle(digest.publishedAt.formatted(date: .abbreviated, time: .shortened))

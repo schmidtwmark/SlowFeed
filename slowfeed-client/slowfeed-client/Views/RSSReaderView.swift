@@ -12,9 +12,17 @@ import WebKit
 /// available (some feeds only ship `<description>` summaries).
 struct RSSReaderView: View {
     let post: DigestPost
+    /// macOS overlay-page mode: when set, the reader draws its own header
+    /// bar with a Back button and does NOT use navigation chrome. The
+    /// reader must stay out of the NavigationStack on macOS — pushing a
+    /// WKWebView-hosting view via .navigationDestination inserts extra
+    /// constraint-hosting boundaries that ping-pong with the web view's
+    /// internal Auto Layout until AppKit throws (observed crash:
+    /// recursive _postWindowNeedsUpdateConstraints under
+    /// NSHostingView.updateConstraints).
+    var onBack: (() -> Void)? = nil
 
     @Environment(\.openURL) private var openURL
-    @Environment(\.dismiss) private var dismiss
 
     private var html: String? {
         let s = post.metadata?.contentHTML?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -26,54 +34,84 @@ struct RSSReaderView: View {
     }
 
     var body: some View {
-        Group {
-            if let html {
-                HTMLWebView(html: wrappedHTML(html), onOpenLink: openExternally)
-                    // Explicit fill frame so SwiftUI doesn't keep
-                    // re-proposing sizes as WKWebView's content height
-                    // changes during load. The unbounded sizing was
-                    // producing an infinite Update-Constraints loop on
-                    // macOS that crashed the app when the reader was
-                    // pushed via .navigationDestination.
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    Text(fallbackText)
-                        .font(.body)
-                        .padding()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-        .navigationTitle(post.metadata?.feedTitle ?? "Article")
-        #if !os(macOS)
-        .navigationBarTitleDisplayMode(.inline)
-        #endif
-        // Stable, unconditional toolbar: keep the item present and just
-        // disable it when there's no URL. Adding / removing toolbar
-        // items dynamically on macOS reconfigures the window toolbar
-        // and is a known trigger for NSHostingView layout loops.
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    if let url = originalURL { openURL(url) }
-                } label: {
-                    Label("Open Original", systemImage: "safari")
-                }
-                .disabled(originalURL == nil)
-            }
-        }
-        // Pushed onto the NavigationStack on both platforms — the system
-        // back button dismisses. Keep Escape as a keyboard shortcut for
-        // popping on macOS.
         #if os(macOS)
+        VStack(spacing: 0) {
+            readerHeader
+            Divider()
+            readerContent
+        }
+        .background(.background)
         .background {
-            Button("") { dismiss() }
+            Button("") { onBack?() }
                 .keyboardShortcut(.escape, modifiers: [])
                 .hidden()
         }
+        #else
+        readerContent
+            .navigationTitle(post.metadata?.feedTitle ?? "Article")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        if let url = originalURL { openURL(url) }
+                    } label: {
+                        Label("Open Original", systemImage: "safari")
+                    }
+                    .disabled(originalURL == nil)
+                }
+            }
         #endif
     }
+
+    @ViewBuilder
+    private var readerContent: some View {
+        if let html {
+            HTMLWebView(html: wrappedHTML(html), onOpenLink: openExternally)
+                // Explicit fill frame so SwiftUI doesn't keep re-proposing
+                // sizes as WKWebView's content height changes during load.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                Text(fallbackText)
+                    .font(.body)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    #if os(macOS)
+    /// Custom page header for the overlay presentation: Back on the left,
+    /// feed title centered, Open Original on the right.
+    private var readerHeader: some View {
+        HStack(spacing: 12) {
+            Button {
+                onBack?()
+            } label: {
+                Label("Back", systemImage: "chevron.backward")
+            }
+            .buttonStyle(.borderless)
+
+            Spacer()
+
+            Text(post.metadata?.feedTitle ?? "Article")
+                .font(.headline)
+                .lineLimit(1)
+
+            Spacer()
+
+            Button {
+                if let url = originalURL { openURL(url) }
+            } label: {
+                Label("Open Original", systemImage: "safari")
+            }
+            .buttonStyle(.borderless)
+            .disabled(originalURL == nil)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+    #endif
 
     private var originalURL: URL? {
         guard let urlString = post.url else { return nil }
@@ -192,6 +230,30 @@ final class HTMLWebViewCoordinator: NSObject, WKNavigationDelegate {
 #if os(macOS)
 import AppKit
 
+/// Plain frame-based container for the WKWebView: the web view's frame is
+/// set directly in `layout()`, with no Auto Layout constraints from our
+/// side at all. Keeping our layer of the hierarchy constraint-free is part
+/// of avoiding the NSHostingView Update-Constraints storm that WKWebView's
+/// internal Auto Layout can trigger under SwiftUI hosting on macOS.
+final class WebViewContainerView: NSView {
+    let webView: WKWebView
+
+    init(webView: WKWebView) {
+        self.webView = webView
+        super.init(frame: .zero)
+        webView.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(webView)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("unsupported") }
+
+    override func layout() {
+        super.layout()
+        webView.frame = bounds
+    }
+}
+
 /// `NSViewRepresentable` wrapping `WKWebView` for macOS. The web view
 /// scrolls natively. JavaScript is disabled so a hostile feed can't
 /// execute code.
@@ -203,39 +265,30 @@ struct HTMLWebView: NSViewRepresentable {
         HTMLWebViewCoordinator(onOpenLink: onOpenLink)
     }
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeNSView(context: Context) -> WebViewContainerView {
         let prefs = WKWebpagePreferences()
         prefs.allowsContentJavaScript = false
         let cfg = WKWebViewConfiguration()
         cfg.defaultWebpagePreferences = prefs
         let view = WKWebView(frame: .zero, configuration: cfg)
         view.setValue(false, forKey: "drawsBackground")
-        // Autoresize with the SwiftUI host so WKWebView stops driving
-        // its own intrinsic-size updates — those interacted badly with
-        // NSHostingView's layout pass when the reader was pushed via
-        // .navigationDestination on macOS and produced an infinite
-        // Update-Constraints loop that crashed the app.
-        view.autoresizingMask = [.width, .height]
-        view.translatesAutoresizingMaskIntoConstraints = true
         view.navigationDelegate = context.coordinator
         view.loadHTMLString(html, baseURL: nil)
         context.coordinator.loadedHTML = html
-        return view
+        return WebViewContainerView(webView: view)
     }
 
-    func updateNSView(_ nsView: WKWebView, context: Context) {
+    func updateNSView(_ nsView: WebViewContainerView, context: Context) {
         guard context.coordinator.loadedHTML != html else { return }
         context.coordinator.loadedHTML = html
-        nsView.loadHTMLString(html, baseURL: nil)
+        nsView.webView.loadHTMLString(html, baseURL: nil)
     }
 
     /// Explicitly accept whatever size SwiftUI proposes, with no
     /// preference of our own. Without this, SwiftUI falls back to
-    /// querying intrinsicContentSize which a loading WKWebView keeps
-    /// changing as content streams in — that produced the infinite
-    /// Update-Constraints loop that crashed the app when the reader
-    /// was pushed via .navigationDestination on macOS.
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: WKWebView, context: Context) -> CGSize? {
+    /// querying intrinsicContentSize, which a loading WKWebView keeps
+    /// changing as content streams in.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: WebViewContainerView, context: Context) -> CGSize? {
         proposal.replacingUnspecifiedDimensions()
     }
 }
