@@ -241,7 +241,22 @@ export async function pollBluesky(): Promise<DigestPost[]> {
   logger.info('Polling Bluesky timeline...');
 
   try {
-    const timeline = await bskyAgent.getTimeline({ limit: 100 });
+    // Transient network failures ("fetch failed" out of undici — DNS blip,
+    // socket reset) were failing the whole poll and surfacing an error
+    // digest. Retry the timeline fetch a couple of times before giving up.
+    let timeline;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        timeline = await bskyAgent.getTimeline({ limit: 100 });
+        break;
+      } catch (err) {
+        lastError = err;
+        logger.warn(`Bluesky timeline fetch attempt ${attempt}/3 failed: ${(err as Error).message}`);
+        if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 2000));
+      }
+    }
+    if (!timeline) throw lastError;
 
     if (!timeline.success) {
       throw new Error('Failed to fetch Bluesky timeline');

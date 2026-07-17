@@ -16,6 +16,15 @@ const parser = new RSSParser<unknown, {
   contentEncoded?: string;
   creator?: string;
 }>({
+  // Bound each fetch. kill-the-newsletter.com in particular sometimes
+  // stalls a response indefinitely; without a timeout that hung the whole
+  // RSS poll pass.
+  timeout: 20000,
+  maxRedirects: 5,
+  headers: {
+    'User-Agent':
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+  },
   customFields: {
     item: [
       ['content:encoded', 'contentEncoded'],
@@ -138,6 +147,9 @@ function stripHtml(html: string): string {
     .replace(/<li[^>]*>/gi, '• ')
     .replace(/<\/h[1-6]>/gi, '\n\n')
     .replace(/<\/(blockquote|figure|figcaption|table|tr)>/gi, '\n')
+    // Adjacent table cells / inline spans otherwise concatenate with no
+    // separator ("July 16, 2026View Online" in email-derived feeds).
+    .replace(/<\/(td|th)>/gi, ' ')
     .replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, '$1')
     .replace(/<[^>]+>/g, '');
 
@@ -281,7 +293,24 @@ export async function pollRSS(): Promise<DigestPost[]> {
 
   for (const feed of feeds) {
     try {
-      const parsed = await parser.parseURL(feed.feedUrl);
+      // Retry flaky hosts. Kill the Newsletter intermittently stalls or
+      // drops requests — a single-shot fetch meant the newsletter simply
+      // missed that digest ("I rarely get my Morning Brew").
+      let parsed: Awaited<ReturnType<typeof parser.parseURL>> | undefined;
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          parsed = await parser.parseURL(feed.feedUrl);
+          break;
+        } catch (err) {
+          lastError = err;
+          if (attempt < 3) {
+            logger.debug(`RSS ${feed.feedUrl} attempt ${attempt}/3 failed: ${(err as Error).message}`);
+            await new Promise(r => setTimeout(r, attempt * 3000));
+          }
+        }
+      }
+      if (!parsed) throw lastError;
 
       // If this feed was saved with a placeholder title (host name) because the
       // host was too slow to parse at add-time, upgrade it now. The host-equality
