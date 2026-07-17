@@ -3,70 +3,44 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
 
+    #if os(macOS)
+    @State private var selectedSection: MacSettingsSection? = .general
+    #endif
+
     var body: some View {
         #if os(macOS)
-        TabView {
-            GeneralSettingsView()
-                .tabItem {
-                    Label("General", systemImage: "gear")
+        // Sidebar, not tabs: 12 tab items overflow the toolbar of a
+        // settings-sized window into a ">>" spillover menu whose entries
+        // don't reliably activate — several sections were effectively
+        // unreachable. A sidebar list scales to any number of sections.
+        NavigationSplitView {
+            List(selection: $selectedSection) {
+                Section {
+                    ForEach([MacSettingsSection.general], id: \.self) { section in
+                        Label(section.title, systemImage: section.icon).tag(section)
+                    }
                 }
-
-            SourceSettingsView(source: .reddit)
-                .tabItem {
-                    Label("Reddit", systemImage: "bubble.left.and.bubble.right")
+                Section("Sources") {
+                    ForEach(MacSettingsSection.sources, id: \.self) { section in
+                        Label(section.title, systemImage: section.icon).tag(section)
+                    }
                 }
-
-            SourceSettingsView(source: .bluesky)
-                .tabItem {
-                    Label("Bluesky", systemImage: "cloud")
+                Section("Server") {
+                    ForEach(MacSettingsSection.server, id: \.self) { section in
+                        Label(section.title, systemImage: section.icon).tag(section)
+                    }
                 }
-
-            SourceSettingsView(source: .youtube)
-                .tabItem {
-                    Label("YouTube", systemImage: "play.rectangle")
+                Section("Client") {
+                    ForEach(MacSettingsSection.client, id: \.self) { section in
+                        Label(section.title, systemImage: section.icon).tag(section)
+                    }
                 }
-
-            SourceSettingsView(source: .discord)
-                .tabItem {
-                    Label("Discord", systemImage: "message")
-                }
-
-            SourceSettingsView(source: .mastodon)
-                .tabItem {
-                    Label("Mastodon", systemImage: "at")
-                }
-
-            RSSSettingsView()
-                .tabItem {
-                    Label("RSS", systemImage: "dot.radiowaves.left.and.right")
-                }
-
-            ScheduleSettingsView()
-                .tabItem {
-                    Label("Schedules", systemImage: "calendar.badge.clock")
-                }
-
-            ServerLogsView()
-                .tabItem {
-                    Label("Logs", systemImage: "doc.text")
-                }
-
-            PasskeySettingsView()
-                .tabItem {
-                    Label("Passkeys", systemImage: "key")
-                }
-
-            AccountSettingsView()
-                .tabItem {
-                    Label("Account", systemImage: "person")
-                }
-
-            AppSettingsView()
-                .tabItem {
-                    Label("App", systemImage: "wrench")
-                }
+            }
+            .navigationSplitViewColumnWidth(min: 170, ideal: 185)
+        } detail: {
+            (selectedSection ?? .general).destination
         }
-        .frame(width: 550, height: 450)
+        .frame(minWidth: 720, minHeight: 520)
         .task {
             await appState.loadConfig()
         }
@@ -163,6 +137,73 @@ struct SettingsView: View {
         #endif
     }
 }
+
+#if os(macOS)
+/// Sections of the macOS settings sidebar. Grouped: sources, server-side
+/// management, client-side app settings.
+enum MacSettingsSection: String, CaseIterable, Identifiable, Hashable {
+    case general, reddit, bluesky, youtube, discord, mastodon, rss
+    case schedules, logs, passkeys, account, app
+
+    var id: String { rawValue }
+
+    static let sources: [MacSettingsSection] = [.reddit, .bluesky, .youtube, .discord, .mastodon, .rss]
+    static let server: [MacSettingsSection] = [.schedules, .logs, .passkeys, .account]
+    static let client: [MacSettingsSection] = [.app]
+
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .reddit: return "Reddit"
+        case .bluesky: return "Bluesky"
+        case .youtube: return "YouTube"
+        case .discord: return "Discord"
+        case .mastodon: return "Mastodon"
+        case .rss: return "RSS"
+        case .schedules: return "Schedules"
+        case .logs: return "Logs"
+        case .passkeys: return "Passkeys"
+        case .account: return "Account"
+        case .app: return "App"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .general: return "gear"
+        case .reddit: return "bubble.left.and.bubble.right"
+        case .bluesky: return "cloud"
+        case .youtube: return "play.rectangle"
+        case .discord: return "message"
+        case .mastodon: return "at"
+        case .rss: return "dot.radiowaves.left.and.right"
+        case .schedules: return "calendar.badge.clock"
+        case .logs: return "doc.text"
+        case .passkeys: return "key"
+        case .account: return "person"
+        case .app: return "wrench"
+        }
+    }
+
+    @ViewBuilder
+    var destination: some View {
+        switch self {
+        case .general: GeneralSettingsView()
+        case .reddit: SourceSettingsView(source: .reddit)
+        case .bluesky: SourceSettingsView(source: .bluesky)
+        case .youtube: SourceSettingsView(source: .youtube)
+        case .discord: SourceSettingsView(source: .discord)
+        case .mastodon: SourceSettingsView(source: .mastodon)
+        case .rss: RSSSettingsView()
+        case .schedules: ScheduleSettingsView()
+        case .logs: ServerLogsView()
+        case .passkeys: PasskeySettingsView()
+        case .account: AccountSettingsView()
+        case .app: AppSettingsView()
+        }
+    }
+}
+#endif
 
 // MARK: - General Settings
 
