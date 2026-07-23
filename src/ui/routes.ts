@@ -8,7 +8,7 @@ import { testDiscordConnection, fetchGuilds, fetchChannels, pollDiscord } from '
 import { pollReddit } from '../sources/reddit.js';
 import { pollYouTube } from '../sources/youtube.js';
 import { logger, getLogs, clearLogs } from '../logger.js';
-import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, updateScrollPosition, updateReadProgress, getDigestPosts, stripHtml } from '../digest.js';
+import { getDigestItems, getDigestById, markDigestAsRead, markDigestAsUnread, updateScrollPosition, updateReadProgress, getDigestPosts, stripHtml, capThreadDepth } from '../digest.js';
 import { savePost, unsavePost, getSavedPosts, getSavedPostIds } from '../saved-posts.js';
 import { listFeeds, addFeed, deleteFeed, updateFeed, parseOPML, addFeedsBulk, resolveFeed, looksLikeFeedURL, provisionalTitle } from '../feeds.js';
 import type { ScheduleInput, SourceType, DigestPost } from '../types/index.js';
@@ -443,6 +443,11 @@ export function createApiRouter(): Router {
         ...p,
         content: p.content ? stripHtml(p.content) : p.content,
       }));
+
+      // Bound reply-tree nesting on the way out too: digests stored
+      // before capThreadDepth existed can exceed Foundation's 512-level
+      // JSON nesting limit and fail to decode in the client.
+      capThreadDepth(posts);
 
       res.json({
         ...digestWithoutHtml,

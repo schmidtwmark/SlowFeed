@@ -99,6 +99,39 @@ async function enrichWithLinkThumbnails(posts: DigestPost[]): Promise<void> {
   }
 }
 
+/** Flatten a post tree into DFS order, stripping nesting. */
+function flattenSubtree(post: DigestPost): DigestPost[] {
+  const out: DigestPost[] = [];
+  const walk = (p: DigestPost) => {
+    const { replies, ...rest } = p;
+    out.push(rest as DigestPost);
+    for (const r of replies ?? []) walk(r);
+  };
+  walk(post);
+  return out;
+}
+
+/**
+ * Bound reply-tree nesting. Foundation's JSON decoder on Apple platforms
+ * refuses documents nested deeper than 512 levels ("Too many nested arrays
+ * or dictionaries") — a Bluesky mega-thread chain a few hundred replies
+ * deep made the whole digest undecodable in the client. Past `maxDepth`,
+ * the remaining subtree is flattened into a linear replies list (DFS
+ * order) — every post is kept, and the client caps visual indentation at
+ * 4 bars anyway.
+ */
+export function capThreadDepth(posts: DigestPost[], maxDepth = 50): void {
+  const walk = (p: DigestPost, depth: number) => {
+    if (!p.replies || p.replies.length === 0) return;
+    if (depth >= maxDepth) {
+      p.replies = p.replies.flatMap(flattenSubtree);
+      return;
+    }
+    for (const r of p.replies) walk(r, depth + 1);
+  };
+  for (const p of posts) walk(p, 0);
+}
+
 export async function createDigest(
   source: SourceType,
   posts: DigestPost[],
@@ -109,6 +142,10 @@ export async function createDigest(
     logger.debug(`No posts to create digest for ${source}`);
     return null;
   }
+
+  // Bound nesting BEFORE storing (see capThreadDepth) so the client's
+  // JSON decoder can always read the digest back.
+  capThreadDepth(posts);
 
   // Best-effort link-preview enrichment for Tenor / Instagram URLs in
   // post bodies. Adds a PostLink with the og:image so the client
