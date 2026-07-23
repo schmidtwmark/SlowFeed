@@ -267,13 +267,18 @@ struct DigestView: View {
                     // Search-result deep-link wins over the saved scroll
                     // position when both are set — the user just tapped
                     // a specific post and that's where they want to land.
-                    if let target = appState.pendingScrollPostId, allPostIds.contains(target) {
-                        scrolledPostId = target
-                        appState.focusedPostId = target
-                        appState.pendingScrollPostId = nil
-                    } else if let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
+                    if !consumePendingScrollTarget(),
+                       let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
                         scrolledPostId = savedPostId
                     }
+                }
+                // Posts load asynchronously after navigation — when arriving
+                // from a search tap, onAppear/onChange(digest.id) run while
+                // digest.posts is still nil, so allPostIds is empty and the
+                // pending target silently never matched (tapping a search
+                // result appeared to do nothing). Re-check when posts land.
+                .onChange(of: digest.posts?.count ?? 0) { _, _ in
+                    _ = consumePendingScrollTarget()
                 }
             }
             .allowsHitTesting(!showViewer)
@@ -371,10 +376,10 @@ struct DigestView: View {
             appState.focusedPostId = nil
             // Search-result deep-link wins over the saved scroll
             // position; otherwise fall back to the last-read post.
-            if let target = appState.pendingScrollPostId, allPostIds.contains(target) {
-                appState.focusedPostId = target
-                appState.pendingScrollPostId = nil
-            } else if let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
+            // (consumePendingScrollTarget re-runs when posts finish
+            // loading, since they're usually still nil here.)
+            if !consumePendingScrollTarget(),
+               let savedPostId = digest.lastReadPostId, allPostIds.contains(savedPostId) {
                 appState.focusedPostId = savedPostId
             }
         }
@@ -635,6 +640,21 @@ struct DigestView: View {
         }) {
             appState.focusedPostId = prev
         }
+    }
+
+    /// Consume `appState.pendingScrollPostId` (a search-result deep-link)
+    /// if it targets a post in THIS digest. Returns true when consumed.
+    /// Callable from multiple triggers (appear, digest switch, posts
+    /// finished loading) because the target can only match once the
+    /// async post load has landed.
+    private func consumePendingScrollTarget() -> Bool {
+        guard let target = appState.pendingScrollPostId, allPostIds.contains(target) else {
+            return false
+        }
+        scrolledPostId = target
+        appState.focusedPostId = target
+        appState.pendingScrollPostId = nil
+        return true
     }
 
     /// Persist the topmost visible post for cross-launch scroll restore.
