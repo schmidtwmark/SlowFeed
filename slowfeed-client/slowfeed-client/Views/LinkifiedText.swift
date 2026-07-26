@@ -58,7 +58,51 @@ extension String {
         }
     }
 
+    /// Matches server-emitted Markdown link spans `[text](https://url)`.
+    /// The Bluesky poller rewrites truncated display links this way so the
+    /// pretty short text stays visible while the full URL is the target.
+    /// Parsed manually (not AttributedString(markdown:)) so no other
+    /// Markdown-ish syntax in user text gets accidentally interpreted.
+    private nonisolated static let markdownLinkRegex =
+        try? NSRegularExpression(pattern: #"\[([^\[\]]+)\]\((https?://[^\s)]+)\)"#)
+
     private nonisolated static func computeLinkified(_ string: String) -> AttributedString {
+        guard !string.isEmpty else { return AttributedString(string) }
+
+        // Markdown link spans first; the detector handles surrounding text.
+        if string.contains("]("), let regex = markdownLinkRegex {
+            let ns = string as NSString
+            let matches = regex.matches(in: string, range: NSRange(location: 0, length: ns.length))
+            if !matches.isEmpty {
+                var result = AttributedString()
+                var cursor = 0
+                for match in matches {
+                    if match.range.location > cursor {
+                        let plain = ns.substring(with: NSRange(location: cursor,
+                                                               length: match.range.location - cursor))
+                        result += detectorLinkified(plain)
+                    }
+                    let text = ns.substring(with: match.range(at: 1))
+                    let urlString = ns.substring(with: match.range(at: 2))
+                    var span = AttributedString(text)
+                    if let url = URL(string: urlString) {
+                        span.link = url
+                    }
+                    result += span
+                    cursor = match.range.location + match.range.length
+                }
+                if cursor < ns.length {
+                    result += detectorLinkified(ns.substring(from: cursor))
+                }
+                return result
+            }
+        }
+
+        return detectorLinkified(string)
+    }
+
+    /// Plain-text pass: mark bare URLs found by the shared data detector.
+    private nonisolated static func detectorLinkified(_ string: String) -> AttributedString {
         var attributed = AttributedString(string)
         guard !string.isEmpty, let detector = linkDetector else { return attributed }
         // A link needs a "." (domain) or ":" (scheme) somewhere — skip the

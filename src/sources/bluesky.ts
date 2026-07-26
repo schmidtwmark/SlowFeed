@@ -147,14 +147,17 @@ interface RecordFacet {
 }
 
 /**
- * Replace truncated display links in post text with their full target URLs.
+ * Rewrite truncated display links in post text as Markdown `[text](url)`.
  *
  * Bluesky post TEXT carries only the shortened display form of a link
  * ("www.example.com/2025/05/22/t..."); the real URL lives in the record's
- * link facets. We store plain text and the client linkifies it with a data
- * detector, so the truncated string became a broken link. Facet offsets are
- * UTF-8 BYTE offsets, hence the Buffer arithmetic. Replacements run
- * back-to-front so earlier offsets stay valid.
+ * link facets. Rewriting the facet range as a Markdown span keeps the
+ * pretty truncated text while giving the client the full target — its
+ * linkifier renders `[text](url)` as a tappable link. Bare links whose
+ * visible text IS the full URL are left alone (the client's data detector
+ * already handles those). Facet offsets are UTF-8 BYTE offsets, hence the
+ * Buffer arithmetic; replacements run back-to-front so earlier offsets
+ * stay valid.
  */
 function expandLinkFacets(text: string, facets: RecordFacet[] | undefined): string {
   if (!facets?.length) return text;
@@ -174,11 +177,14 @@ function expandLinkFacets(text: string, facets: RecordFacet[] | undefined): stri
 
   let out = bytes;
   for (const range of linkRanges) {
-    const visible = out.slice(range.start, range.end).toString('utf8');
-    if (visible === range.uri) continue; // already the full URL
+    // Strip brackets/parens from the visible text so it can't break the
+    // Markdown span syntax it's about to be embedded in.
+    const visible = out.slice(range.start, range.end).toString('utf8').replace(/[\[\]()]/g, '');
+    if (visible === range.uri) continue; // bare full URL — detector handles it
+    const markdown = `[${visible}](${range.uri})`;
     out = Buffer.concat([
       out.slice(0, range.start),
-      Buffer.from(range.uri, 'utf8'),
+      Buffer.from(markdown, 'utf8'),
       out.slice(range.end),
     ]);
   }
@@ -201,7 +207,9 @@ function postViewToNode(post: AppBskyFeedDefs.PostView, repostedBy?: string): Di
 
   return {
     postId,
-    title: `@${post.author.handle}: ${text.substring(0, 100) || 'Post'}`,
+    // Title uses the RAW text (truncated display links, no Markdown) —
+    // it's shown in list rows / notifications where markup would leak.
+    title: `@${post.author.handle}: ${record.text?.substring(0, 100) || 'Post'}`,
     content: text,
     url,
     author: `@${post.author.handle}`,
