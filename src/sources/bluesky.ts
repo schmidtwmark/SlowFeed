@@ -140,11 +140,57 @@ function isNSFWPost(post: AppBskyFeedDefs.PostView): boolean {
   return false;
 }
 
+/** Shape of the richtext link annotations on a Bluesky post record. */
+interface RecordFacet {
+  index?: { byteStart?: number; byteEnd?: number };
+  features?: Array<{ $type?: string; uri?: string }>;
+}
+
+/**
+ * Replace truncated display links in post text with their full target URLs.
+ *
+ * Bluesky post TEXT carries only the shortened display form of a link
+ * ("www.example.com/2025/05/22/t..."); the real URL lives in the record's
+ * link facets. We store plain text and the client linkifies it with a data
+ * detector, so the truncated string became a broken link. Facet offsets are
+ * UTF-8 BYTE offsets, hence the Buffer arithmetic. Replacements run
+ * back-to-front so earlier offsets stay valid.
+ */
+function expandLinkFacets(text: string, facets: RecordFacet[] | undefined): string {
+  if (!facets?.length) return text;
+  const bytes = Buffer.from(text, 'utf8');
+
+  const linkRanges = facets
+    .map(f => ({
+      start: f.index?.byteStart,
+      end: f.index?.byteEnd,
+      uri: f.features?.find(feat => feat.$type === 'app.bsky.richtext.facet#link')?.uri,
+    }))
+    .filter((r): r is { start: number; end: number; uri: string } =>
+      typeof r.start === 'number' && typeof r.end === 'number' &&
+      r.start >= 0 && r.end <= bytes.length && r.start < r.end &&
+      typeof r.uri === 'string' && /^https?:\/\//i.test(r.uri))
+    .sort((a, b) => b.start - a.start);
+
+  let out = bytes;
+  for (const range of linkRanges) {
+    const visible = out.slice(range.start, range.end).toString('utf8');
+    if (visible === range.uri) continue; // already the full URL
+    out = Buffer.concat([
+      out.slice(0, range.start),
+      Buffer.from(range.uri, 'utf8'),
+      out.slice(range.end),
+    ]);
+  }
+  return out.toString('utf8');
+}
+
 function postViewToNode(post: AppBskyFeedDefs.PostView, repostedBy?: string): DigestPost {
-  const record = post.record as { text?: string };
+  const record = post.record as { text?: string; facets?: RecordFacet[] };
   const url = getPostUrl(post);
   const postId = post.uri.split('/').pop() || post.cid;
   const { media, links } = extractMediaAndLinks(post);
+  const text = expandLinkFacets(record.text || '', record.facets);
 
   // Recursively convert quoted post
   const quotedView = extractQuotedPostView(post.embed);
@@ -155,8 +201,8 @@ function postViewToNode(post: AppBskyFeedDefs.PostView, repostedBy?: string): Di
 
   return {
     postId,
-    title: `@${post.author.handle}: ${record.text?.substring(0, 100) || 'Post'}`,
-    content: record.text || '',
+    title: `@${post.author.handle}: ${text.substring(0, 100) || 'Post'}`,
+    content: text,
     url,
     author: `@${post.author.handle}`,
     publishedAt: new Date(post.indexedAt),
