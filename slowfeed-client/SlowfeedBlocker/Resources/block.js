@@ -85,8 +85,39 @@
   // chasing YouTube's element renames. The bottom-nav "Shorts" tab uses
   // href="/shorts" (no id) and isn't matched, so navigation isn't broken —
   // tapping it just hits the path block instead.
+  // Element-hiding is done with inline styles, tagged by REASON, so it can be
+  // undone: turning the extension off (or navigating to a page where a rule
+  // no longer applies) must restore the page without a reload. YouTube's
+  // Polymer also recycles renderer nodes across SPA navigations, so a node
+  // hidden on one page can reappear on another — untagged inline styles would
+  // leak a permanent blank gap there.
+  var HIDDEN_ATTR = "data-slowfeed-hidden";
+
+  function hideEl(el, reason) {
+    el.style.setProperty("display", "none", "important");
+    el.setAttribute(HIDDEN_ATTR, reason);
+  }
+
+  function unhide(reason) {
+    var sel = reason
+      ? '[' + HIDDEN_ATTR + '="' + reason + '"]'
+      : "[" + HIDDEN_ATTR + "]";
+    var els = document.querySelectorAll(sel);
+    for (var i = 0; i < els.length; i++) {
+      els[i].style.removeProperty("display");
+      els[i].removeAttribute(HIDDEN_ATTR);
+    }
+  }
+
   function hideShortsShelves() {
     if (!isYouTube) return;
+    // The MutationObserver calls this directly, so it needs its own enabled
+    // check — without it, switching the extension off left Shorts shelves
+    // hidden for the rest of the session.
+    if (!enabled) {
+      unhide("shorts");
+      return;
+    }
     var links = document.querySelectorAll(
       'a[href^="/shorts/"], a[href*="youtube.com/shorts/"]'
     );
@@ -95,7 +126,48 @@
       for (var depth = 0; depth < 10 && el && el !== document.body; depth++) {
         var tag = (el.tagName || "").toLowerCase();
         if (/(shelf|reel|rich-section|item-section|rich-grid-row)/.test(tag)) {
-          el.style.setProperty("display", "none", "important");
+          hideEl(el, "shorts");
+          break;
+        }
+        el = el.parentElement;
+      }
+    }
+  }
+
+  // Subscriptions is the one feed we deliberately KEEP — but YouTube tops it
+  // with a "Most relevant" shelf of algorithmically re-ranked picks, which is
+  // the recommendation engine sneaking back into the chronological surface.
+  // Hide that shelf; "Latest" survives. Matched by header TEXT rather than
+  // element names (same rename-proofing rationale as hideShortsShelves): a
+  // heading-like node reading exactly "Most relevant", walked up to its
+  // nearest shelf/section ancestor. The walk bails if it crosses a video item
+  // first, so a video literally titled "Most relevant" can never hide the row
+  // it sits in. English-only match — add translations if the UI language ever
+  // changes.
+  function hideMostRelevantShelf() {
+    if (!isYouTube) return;
+    // Reveal again when switched off, or when we've navigated off
+    // Subscriptions onto a page where this rule doesn't apply (Polymer can
+    // recycle the very node we hid).
+    if (!enabled || !decision().hideMostRelevant) {
+      unhide("relevant");
+      return;
+    }
+    // `#title` (any element) covers YouTube's shelf heading whether it ships
+    // as a <span>, a <yt-formatted-string>, or whatever replaces them next.
+    // Video titles also use #title, but the walk below bails out on video
+    // containers before it can hide one.
+    var heads = document.querySelectorAll(
+      'h2, h3, [role="heading"], #title, .rich-shelf-title'
+    );
+    for (var i = 0; i < heads.length; i++) {
+      if ((heads[i].textContent || "").trim().toLowerCase() !== "most relevant") continue;
+      var el = heads[i];
+      for (var depth = 0; depth < 12 && el && el !== document.body; depth++) {
+        var tag = (el.tagName || "").toLowerCase();
+        if (/(rich-item|video-renderer|lockup|reel-item)/.test(tag)) break;
+        if (/(shelf|rich-section|item-section)/.test(tag)) {
+          hideEl(el, "relevant");
           break;
         }
         el = el.parentElement;
@@ -107,6 +179,9 @@
     if (!enabled) {
       hideOverlay();
       document.documentElement.classList.remove("slowfeed-hide-recs");
+      // Restore everything we hid, so the popup's off switch fully reverts
+      // the page instead of leaving blank gaps until a reload.
+      unhide();
       return;
     }
     var d = decision();
@@ -114,6 +189,7 @@
     else hideOverlay();
     document.documentElement.classList.toggle("slowfeed-hide-recs", !!d.hideRecs);
     hideShortsShelves();
+    hideMostRelevantShelf();
   }
 
   // Re-evaluate when the URL changes (covers SPA navigation reliably).
@@ -154,8 +230,8 @@
   document.addEventListener("yt-navigate-start", onMaybeNavigated, true);
   setInterval(onMaybeNavigated, 300);
 
-  // The feed streams in lazily, so re-run the Shorts-shelf hider as the DOM
-  // grows (debounced to once per frame).
+  // The feed streams in lazily, so re-run the shelf hiders as the DOM grows
+  // (debounced to once per frame).
   if (isYouTube) {
     var scheduled = false;
     var observer = new MutationObserver(function () {
@@ -164,6 +240,7 @@
       requestAnimationFrame(function () {
         scheduled = false;
         hideShortsShelves();
+        hideMostRelevantShelf();
       });
     });
     var startObserving = function () {

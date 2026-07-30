@@ -10,7 +10,7 @@ Slowfeed app — installing the app installs the extension.
 |------|-------------------------------|-------------|
 | **Reddit** | home `/`, `/r/all`, `/r/popular`, any subreddit listing | individual posts (`/r/<sub>/comments/…`), so Slowfeed links open |
 | **Bluesky** | home feed (`bsky.app/`) | profiles + individual posts |
-| **YouTube** | home `/`, Shorts, Explore/Trending; recommendation rail + end screens hidden on `/watch`; Shorts shelves hidden everywhere | Subscriptions, watching a video, search, channel pages |
+| **YouTube** | home `/`, Shorts, Explore/Trending; recommendation rail + end screens hidden on `/watch`; Shorts shelves hidden everywhere; the algorithmic **"Most relevant"** shelf hidden on Subscriptions | Subscriptions (the chronological "Latest" list), watching a video, search, channel pages |
 
 Mastodon is intentionally not covered.
 

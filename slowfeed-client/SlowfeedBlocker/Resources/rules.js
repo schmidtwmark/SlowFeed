@@ -27,12 +27,15 @@ var SlowfeedRules = (function () {
   // search, channel pages, playlists, and watching a video — but hide the
   // recommendation rail + end screens on /watch (handled via a class toggle
   // that block.css keys off of). Shorts *shelves* are hidden everywhere by
-  // block.css regardless.
+  // block.css regardless. On Subscriptions, the "Most relevant" shelf — the
+  // recommendation engine re-ranking your own subs — is hidden so the feed
+  // stays chronological ("Latest" survives).
   function youtube(path) {
     if (path === "/") return { block: true };
     if (path.startsWith("/shorts/")) return { block: true };
     if (path === "/feed/trending" || path === "/feed/explore") return { block: true };
     if (path === "/watch") return { block: false, hideRecs: true };
+    if (path === "/feed/subscriptions") return { block: false, hideMostRelevant: true };
     return { block: false };
   }
 
