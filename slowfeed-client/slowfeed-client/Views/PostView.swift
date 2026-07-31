@@ -22,6 +22,10 @@ struct PostView: View {
     /// NavigationStack root rather than per-post inside a ForEach
     /// (which produced a dead "Read more" / dead long-card tap).
     var onOpenReader: ((DigestPost) -> Void)?
+    /// Overrides the default card tap (open the post's URL / RSS reader).
+    /// Search results use this to jump to the post inside its digest
+    /// instead of leaving the app.
+    var onCardTap: (() -> Void)?
 
     @Environment(\.openURL) private var openURL
     @Environment(AppState.self) private var appState
@@ -206,6 +210,11 @@ struct PostView: View {
         appState.focusedPostId = post.postId
         appState.keyboardFocusPane = .posts
 
+        if let onCardTap {
+            onCardTap()
+            return
+        }
+
         if source == .rss, let content = post.content,
            content.count > Self.rssShortPostThreshold {
             onOpenReader?(post)
@@ -283,15 +292,19 @@ struct PostView: View {
         if let content = post.content, !content.isEmpty {
             let isShort = content.count <= Self.rssShortPostThreshold
             if isShort {
-                Text(content)
+                // linkified() here too: RSS bodies are HTML-stripped to plain
+                // text server-side, so any URLs in them were previously inert.
+                Text(content.linkified())
                     .font(.body)
                     .foregroundStyle(.primary.opacity(0.9))
+                    .tint(.accentColor)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(content)
+                    Text(content.linkified())
                         .font(.body)
                         .foregroundStyle(.primary.opacity(0.85))
+                        .tint(.accentColor)
                         .lineLimit(8)
                     Button {
                         onOpenReader?(post)

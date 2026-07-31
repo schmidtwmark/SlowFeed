@@ -324,6 +324,11 @@ struct PostSearchResult: Codable, Identifiable {
     let snippet: String
     let author: String?
     let url: String?
+    /// The full stored post, so a search hit renders with the same card as
+    /// the digest list (media, links, avatar, flair, thread replies).
+    /// Optional because a server older than this field — or a digest row
+    /// with no posts_json — still returns the flat fields below.
+    let post: DigestPost?
 
     /// SwiftUI identity. `postId` is only unique within a single
     /// digest, so the composite digestId+postId disambiguates the

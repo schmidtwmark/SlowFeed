@@ -71,18 +71,27 @@ struct SearchView: View {
             } else {
                 Section {
                     ForEach(results) { result in
-                        Button {
-                            // Set the pending scroll target *before*
-                            // navigating so DigestView picks it up on
-                            // appear / digest.id change.
-                            appState.pendingScrollPostId = result.postId
-                            Task {
-                                await appState.navigateToDigest(id: result.digestId)
+                        Group {
+                            if let post = result.post {
+                                // Render the real post card, exactly as the
+                                // digest list does, with the card tap
+                                // overridden to jump to it in context.
+                                PostView(
+                                    post: post,
+                                    source: result.source,
+                                    digestId: result.digestId,
+                                    onCardTap: { openResult(result) }
+                                )
+                            } else {
+                                // Server predating the `post` field.
+                                Button { openResult(result) } label: {
+                                    SearchResultRow(result: result)
+                                }
+                                .buttonStyle(.plain)
                             }
-                        } label: {
-                            SearchResultRow(result: result)
                         }
-                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets())
+                        Divider()
                     }
                 } footer: {
                     if results.count >= 100 {
@@ -101,6 +110,15 @@ struct SearchView: View {
         #endif
         .onChange(of: query) { _, _ in scheduleSearch() }
         .onChange(of: sourceFilter) { _, _ in runSearch(immediate: true) }
+        .task(id: results.map(\.id)) {
+            // Warm the link-detection cache for the rendered cards off the
+            // main actor, same as digests do on load.
+            let bodies = results.compactMap { $0.post?.content }
+            guard !bodies.isEmpty else { return }
+            await Task.detached(priority: .utility) {
+                String.warmLinkifyCache(bodies)
+            }.value
+        }
         .navigationTitle("Search")
         #if !os(macOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -108,6 +126,18 @@ struct SearchView: View {
     }
 
     /// Debounce 250ms so we don't fire a query per keystroke.
+    /// Open a hit in context: mark the post as the pending scroll target,
+    /// switch to the Digests tab, then load its digest. The tab switch is
+    /// what was missing — without it the digest loaded off-screen behind
+    /// the still-visible search list and the tap looked like a no-op.
+    private func openResult(_ result: PostSearchResult) {
+        appState.pendingScrollPostId = result.postId
+        appState.selectedTab = .digests
+        Task {
+            await appState.navigateToDigest(id: result.digestId)
+        }
+    }
+
     private func scheduleSearch() {
         searchTask?.cancel()
         let snapshot = query

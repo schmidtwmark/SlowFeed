@@ -371,7 +371,8 @@ export function createApiRouter(): Router {
           p->>'title' AS title,
           p->>'content' AS content,
           p->>'author' AS author,
-          p->>'url' AS url
+          p->>'url' AS url,
+          p AS post
         FROM digest_items d,
              jsonb_array_elements(COALESCE(d.posts_json, '[]'::jsonb)) p
         WHERE (
@@ -392,18 +393,35 @@ export function createApiRouter(): Router {
         content: string | null;
         author: string | null;
         url: string | null;
+        post: DigestPost;
       }>(sql, params);
-      const results = rows.map(r => ({
-        digestId: r.digest_id,
-        source: r.source,
-        publishedAt: r.published_at,
-        pollRunId: r.poll_run_id,
-        postId: r.post_id,
-        title: r.title,
-        snippet: (r.content ?? '').slice(0, 280),
-        author: r.author,
-        url: r.url,
-      }));
+      const results = rows.map(r => {
+        // Ship the whole stored post so the client can render a search hit
+        // with the same card as the digest list (media, links, avatar,
+        // flair, thread replies). The flat title/snippet/author/url fields
+        // are kept for older clients.
+        let post = r.post ?? null;
+        if (post) {
+          // Same treatment the digest-detail route gives posts, so a hit
+          // renders identically there and here: strip residual HTML from
+          // pre-posts_json digests, and bound reply nesting (Foundation's
+          // JSON decoder rejects documents nested past 512 levels).
+          post = { ...post, content: post.content ? stripHtml(post.content) : post.content };
+          capThreadDepth([post]);
+        }
+        return {
+          digestId: r.digest_id,
+          source: r.source,
+          publishedAt: r.published_at,
+          pollRunId: r.poll_run_id,
+          postId: r.post_id,
+          title: r.title,
+          snippet: (r.content ?? '').slice(0, 280),
+          author: r.author,
+          url: r.url,
+          post,
+        };
+      });
       res.json({ results });
     } catch (err) {
       logger.error('Error searching posts:', err);

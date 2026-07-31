@@ -2,16 +2,18 @@ import SwiftUI
 
 struct MainView: View {
     @Environment(AppState.self) private var appState
-    @State private var selectedTab: AppTab = .digests
 
     @State private var httpLogger = HTTPLogger.shared
 
-    enum AppTab: String {
-        case digests, search, saved, network, settings
-    }
+    typealias AppTab = SlowfeedTab
 
     var body: some View {
-        TabView(selection: $selectedTab) {
+        // Tab selection lives on AppState, not local @State: tapping a search
+        // result has to be able to pull the user back to the Digests tab. As
+        // local state nothing outside this view could write it, so the
+        // navigation happened in an off-screen tab and the tap looked dead.
+        @Bindable var appState = appState
+        return TabView(selection: $appState.selectedTab) {
             SwiftUI.Tab("Digests", systemImage: "doc.text.fill", value: AppTab.digests) {
                 NavigationSplitView {
                     DigestSidebar()

@@ -15,6 +15,12 @@ enum KeyboardFocusPane {
     case posts
 }
 
+/// Top-level tabs. Declared here (rather than nested in MainView) so any
+/// screen can steer tab selection through AppState.
+enum SlowfeedTab: String {
+    case digests, search, saved, network, settings
+}
+
 @Observable
 final class AppState {
     // Services
@@ -29,6 +35,11 @@ final class AppState {
 
     // Navigation state
     var currentScreen: AppScreen = .serverSetup
+
+    /// Which top-level tab is showing. Owned here rather than by MainView so
+    /// other screens can steer navigation — tapping a search result has to
+    /// bring the user back to the Digests tab to see where it landed.
+    var selectedTab: SlowfeedTab = .digests
 
     // Server configuration
     var serverURL: String = "" {
