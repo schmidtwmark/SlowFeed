@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { getConfig, loadConfig } from './config.js';
 import { query } from './db.js';
 import { pruneOldItems } from './dedup.js';
+import { pruneOldOCR } from './ocr.js';
 import { logger } from './logger.js';
 import { pollReddit } from './sources/reddit.js';
 import { pollBluesky } from './sources/bluesky.js';
@@ -207,6 +208,9 @@ async function runPrune(): Promise<void> {
   const config = getConfig();
   await pruneOldItems(config.feed_ttl_days);
   await pruneOldDigests(config.feed_ttl_days);
+  // Drop stale OCR cache rows. Kept longer than the digests themselves so a
+  // re-poll of a still-live image doesn't have to redo the recognition.
+  await pruneOldOCR(config.feed_ttl_days * 2);
 }
 
 export async function startScheduler(): Promise<void> {

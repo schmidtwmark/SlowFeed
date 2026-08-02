@@ -387,6 +387,8 @@ struct AppConfig: Codable, Equatable {
     var mastodonTopN: Int
 
     var rssEnabled: Bool
+    /// Run OCR over post images at poll time so their text is searchable.
+    var ocrEnabled: Bool
 
     var feedTtlDays: Int
 
@@ -411,6 +413,7 @@ struct AppConfig: Codable, Equatable {
         case mastodonAccessToken = "mastodon_access_token"
         case mastodonTopN = "mastodon_top_n"
         case rssEnabled = "rss_enabled"
+        case ocrEnabled = "ocr_enabled"
         case feedTtlDays = "feed_ttl_days"
     }
 
@@ -443,6 +446,7 @@ struct AppConfig: Codable, Equatable {
         mastodonTopN = (try? container.decode(Int.self, forKey: .mastodonTopN)) ?? 20
 
         rssEnabled = (try? container.decode(Bool.self, forKey: .rssEnabled)) ?? false
+        ocrEnabled = (try? container.decode(Bool.self, forKey: .ocrEnabled)) ?? true
 
         feedTtlDays = (try? container.decode(Int.self, forKey: .feedTtlDays)) ?? 14
     }

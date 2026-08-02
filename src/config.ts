@@ -26,6 +26,8 @@ export interface Config {
   /** Whether RSS polling is on. Per-feed enable/disable lives in the
    *  `rss_feeds` table, not here. */
   rss_enabled: boolean;
+  /** Run OCR over post images at poll time so their text is searchable. */
+  ocr_enabled: boolean;
   feed_title: string;
   feed_ttl_days: number;
   feed_token: string;
@@ -57,6 +59,7 @@ const DEFAULT_CONFIG: Config = {
   mastodon_access_token: '',
   mastodon_top_n: 20,
   rss_enabled: false,
+  ocr_enabled: true,
   feed_title: 'Slowfeed',
   feed_ttl_days: 14,
   feed_token: generateFeedToken(),

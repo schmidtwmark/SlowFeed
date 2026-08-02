@@ -140,6 +140,11 @@ export interface PostMetadata {
    *  client as a hero preview above the post body in the digest. */
   headerImageURL?: string;
 
+  /** Text extracted from this post's images by OCR at poll time. Never
+   *  rendered — it exists so `/api/posts/search` can match words that only
+   *  appear inside a picture (meme captions, screenshots, video posters). */
+  ocrText?: string;
+
   /** Set on synthetic posts that wrap a poll-failure message. Lets the
    *  client style the post as an error (red accent, warning icon)
    *  instead of as a normal article. */

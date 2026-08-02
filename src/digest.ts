@@ -3,6 +3,8 @@ import { query } from './db.js';
 import { logger } from './logger.js';
 import { generateId, isDuplicate } from './dedup.js';
 import { findLinkThumbnails } from './link-preview.js';
+import { getConfig } from './config.js';
+import { ocrImages } from './ocr.js';
 import type { DigestPost, DigestItem, SourceType, DigestItemRow, PostLink } from './types/index.js';
 
 /**
@@ -99,6 +101,68 @@ async function enrichWithLinkThumbnails(posts: DigestPost[]): Promise<void> {
   }
 }
 
+/** Walk a post tree (replies + quoted posts) applying `visit` to every node. */
+function walkPosts(posts: DigestPost[], visit: (p: DigestPost) => void): void {
+  const seen = new Set<DigestPost>();
+  const recurse = (p: DigestPost) => {
+    if (seen.has(p)) return; // guard against any accidental shared reference
+    seen.add(p);
+    visit(p);
+    for (const reply of p.replies ?? []) recurse(reply);
+    if (p.quotedPost) recurse(p.quotedPost);
+  };
+  for (const p of posts) recurse(p);
+}
+
+/**
+ * Read the text out of each post's images and stash it on the post, so search
+ * can match words that only exist inside a picture — meme captions,
+ * screenshots, the title card on a video's poster frame.
+ *
+ * Stored as `metadata.ocrText` and never rendered: it's an index, not content,
+ * and OCR output is too noisy to show to a reader. `/api/posts/search` matches
+ * against it alongside title/content/author.
+ */
+async function enrichWithImageOCR(posts: DigestPost[]): Promise<void> {
+  const config = getConfig();
+  if (!config.ocr_enabled) return;
+
+  // Video poster frames count: the user's motivating case was a video whose
+  // thumbnail carried the joke's setup text.
+  const urls: string[] = [];
+  walkPosts(posts, p => {
+    for (const m of p.media ?? []) {
+      if (m.type === 'image') urls.push(m.url);
+      if (m.thumbnailUrl) urls.push(m.thumbnailUrl);
+    }
+  });
+  if (urls.length === 0) return;
+
+  let textByURL: Map<string, string>;
+  try {
+    textByURL = await ocrImages(urls);
+  } catch (err) {
+    logger.warn(`OCR enrichment skipped: ${(err as Error).message}`);
+    return;
+  }
+
+  walkPosts(posts, p => {
+    const parts: string[] = [];
+    for (const m of p.media ?? []) {
+      for (const candidate of [m.url, m.thumbnailUrl]) {
+        if (!candidate) continue;
+        const text = textByURL.get(candidate);
+        if (text) parts.push(text);
+      }
+    }
+    if (parts.length === 0) return;
+    const combined = Array.from(new Set(parts)).join('\n').trim();
+    if (combined) {
+      p.metadata = { ...(p.metadata ?? {}), ocrText: combined };
+    }
+  });
+}
+
 /** Flatten a post tree into DFS order, stripping nesting. */
 function flattenSubtree(post: DigestPost): DigestPost[] {
   const out: DigestPost[] = [];
@@ -152,6 +216,10 @@ export async function createDigest(
   // renders a tappable thumbnail card instead of a bare URL. Failures
   // (network, no og tag, scraper-blocked) are silently skipped.
   await enrichWithLinkThumbnails(posts);
+
+  // Index text inside images so search can find it (best-effort; never fails
+  // the digest).
+  await enrichWithImageOCR(posts);
 
   const timestamp = Date.now();
   const digestId = generateDigestId(source, timestamp);

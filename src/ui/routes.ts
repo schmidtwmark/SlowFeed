@@ -379,6 +379,7 @@ export function createApiRouter(): Router {
           COALESCE(p->>'title','') ILIKE $1 ESCAPE '\\'
           OR COALESCE(p->>'content','') ILIKE $1 ESCAPE '\\'
           OR COALESCE(p->>'author','') ILIKE $1 ESCAPE '\\'
+          OR COALESCE(p->'metadata'->>'ocrText','') ILIKE $1 ESCAPE '\\'
         )${sourceClause}
         ORDER BY d.published_at DESC
         LIMIT 100
@@ -609,6 +610,7 @@ export function createApiRouter(): Router {
         'mastodon_access_token',
         'mastodon_top_n',
         'rss_enabled',
+        'ocr_enabled',
         'feed_ttl_days',
         // ui_password removed - using passkeys for authentication now
       ];

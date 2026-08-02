@@ -211,6 +211,7 @@ struct GeneralSettingsView: View {
     @Environment(AppState.self) private var appState
 
     @State private var digestRetentionDays = 14
+    @State private var ocrEnabled = true
     @State private var isSaving = false
     @State private var message: String?
     @State private var hasLoaded = false
@@ -228,6 +229,14 @@ struct GeneralSettingsView: View {
                     Text("Digest Retention")
                 } footer: {
                     Text("Digests older than this are automatically deleted.")
+                }
+
+                Section {
+                    Toggle("Search text inside images", isOn: $ocrEnabled)
+                } header: {
+                    Text("Image Text (OCR)")
+                } footer: {
+                    Text("Reads text out of post images during a poll — meme captions, screenshots, video title cards — so search can find it. Adds a little time to each poll. Only affects newly polled posts.")
                 }
 
                 Section {
@@ -273,6 +282,7 @@ struct GeneralSettingsView: View {
     private func loadConfig() {
         guard let config = appState.config else { return }
         digestRetentionDays = config.feedTtlDays
+        ocrEnabled = config.ocrEnabled
     }
 
     private func save() {
@@ -282,7 +292,8 @@ struct GeneralSettingsView: View {
         Task {
             do {
                 try await appState.saveConfig([
-                    "feed_ttl_days": digestRetentionDays
+                    "feed_ttl_days": digestRetentionDays,
+                    "ocr_enabled": ocrEnabled
                 ])
                 await MainActor.run {
                     message = "Saved!"

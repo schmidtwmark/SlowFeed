@@ -1,4 +1,4 @@
-import { BskyAgent, AppBskyFeedDefs, AppBskyEmbedImages, AppBskyEmbedExternal, AppBskyEmbedRecord, AppBskyEmbedRecordWithMedia } from '@atproto/api';
+import { BskyAgent, AppBskyFeedDefs, AppBskyEmbedImages, AppBskyEmbedExternal, AppBskyEmbedRecord, AppBskyEmbedRecordWithMedia, AppBskyEmbedVideo } from '@atproto/api';
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
 import { mergeThreadsByRoot } from '../thread-merge.js';
@@ -56,6 +56,20 @@ function extractImagesFromEmbed(imageView: AppBskyEmbedImages.View): PostMedia[]
   }));
 }
 
+/**
+ * Bluesky videos come as an HLS playlist plus a poster frame. AVPlayer plays
+ * the .m3u8 natively, so no `downloadUrl` is set — as with Reddit HLS, Save
+ * to Photos/Files needs a real file and there is no direct MP4 exposed here.
+ */
+function extractVideo(videoView: AppBskyEmbedVideo.View): PostMedia {
+  return {
+    type: 'video' as const,
+    url: videoView.playlist,
+    thumbnailUrl: videoView.thumbnail || undefined,
+    alt: videoView.alt || undefined,
+  };
+}
+
 function extractExternalLink(externalView: AppBskyEmbedExternal.View): PostLink {
   const ext = externalView.external;
   return {
@@ -102,15 +116,22 @@ function extractMediaAndLinks(post: AppBskyFeedDefs.PostView): { media: PostMedi
     media.push(...extractImagesFromEmbed(embed));
   }
 
+  if (AppBskyEmbedVideo.isView(embed)) {
+    media.push(extractVideo(embed));
+  }
+
   if (AppBskyEmbedExternal.isView(embed)) {
     links.push(extractExternalLink(embed));
   }
 
-  // Record with media: extract the media part (images/links), quote part handled separately
+  // Record with media: extract the media part (images/video/links), quote part handled separately
   if (AppBskyEmbedRecordWithMedia.isView(embed)) {
     const mediaEmbed = embed.media;
     if (AppBskyEmbedImages.isView(mediaEmbed)) {
       media.push(...extractImagesFromEmbed(mediaEmbed));
+    }
+    if (AppBskyEmbedVideo.isView(mediaEmbed)) {
+      media.push(extractVideo(mediaEmbed));
     }
     if (AppBskyEmbedExternal.isView(mediaEmbed)) {
       links.push(extractExternalLink(mediaEmbed));
