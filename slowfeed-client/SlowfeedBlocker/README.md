@@ -10,9 +10,29 @@ Slowfeed app — installing the app installs the extension.
 |------|-------------------------------|-------------|
 | **Reddit** | home `/`, `/r/all`, `/r/popular`, any subreddit listing | individual posts (`/r/<sub>/comments/…`), so Slowfeed links open |
 | **Bluesky** | home feed (`bsky.app/`) | profiles + individual posts |
-| **YouTube** | home `/`, Shorts, Explore/Trending; recommendation rail + end screens hidden on `/watch`; Shorts shelves hidden everywhere; the algorithmic **"Most relevant"** shelf hidden on Subscriptions | Subscriptions (the chronological "Latest" list), watching a video, search, channel pages |
+| **YouTube** | home `/`, the Shorts feed, Explore/Trending; recommendation rail + end screens hidden on `/watch`; Shorts shelves hidden everywhere; the algorithmic **"Most relevant"** shelf hidden on Subscriptions | Subscriptions (the chronological "Latest" list), watching a video, **a single linked Short**, search, channel pages |
 
 Mastodon is intentionally not covered.
+
+### Single Shorts
+
+A Short someone links you plays; the Shorts *feed* does not. The first
+`/shorts/<id>` a page load sees is allowed — that's the one the link opened —
+and every other short is blocked, so swiping to the next one hits the overlay
+instead. The next/previous controls are hidden while a permitted short is
+playing. Opening a different link is a fresh page load, so it gets its own
+allowance; scrolling never does.
+
+## Chrome
+
+The same code ships as a Chrome extension — see [`chrome-extension/`](../../chrome-extension/)
+at the repo root. `Resources/` here is the source of truth; the scripts bind
+`browser` or `chrome` at runtime, so the same files run in both. After editing
+anything here, re-sync with:
+
+```bash
+./scripts/build-chrome-extension.sh
+```
 
 ## Enabling it
 
