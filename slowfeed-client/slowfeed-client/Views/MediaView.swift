@@ -134,6 +134,41 @@ enum MediaOperations {
         urlString.lowercased().contains(".m3u8")
     }
 
+    /// File extensions we're willing to hand to AVFoundation / Photos.
+    /// AVURLAsset infers a file's type from its EXTENSION, so a temp file
+    /// saved under the wrong one decodes as zero tracks and the save
+    /// silently does nothing.
+    private static let videoFileExtensions: Set<String> = ["mp4", "mov", "m4v", "webm", "mkv"]
+
+    /// Bluesky plays video from an HLS playlist and its posts carry no
+    /// `downloadUrl`, so saving had nothing to download and failed silently.
+    /// The original uploaded file is still retrievable: the playlist URL
+    /// embeds the author's DID and the video's CID —
+    /// `/watch/<did>/<cid>/playlist.m3u8` — which is exactly what
+    /// `com.atproto.sync.getBlob` takes. That returns the source MP4, audio
+    /// included. Requested from bsky.social, which proxies for accounts
+    /// hosted on other PDSs (verified against a puffball.us-east account).
+    ///
+    /// Derived on the client rather than stored by the server so it also
+    /// rescues videos in digests polled before this existed.
+    static func blueskyBlobURL(forPlaylist urlString: String) -> URL? {
+        guard let url = URL(string: urlString),
+              url.host?.hasSuffix("video.bsky.app") == true else { return nil }
+        // pathComponents drops the leading "/" and percent-decodes, so the
+        // encoded `did%3Aplc%3A…` arrives as a plain `did:plc:…`.
+        let parts = url.pathComponents.filter { $0 != "/" }
+        guard parts.count >= 3, parts[0] == "watch" else { return nil }
+        let did = parts[1].removingPercentEncoding ?? parts[1]
+        let cid = parts[2]
+        guard did.hasPrefix("did:"), !cid.isEmpty else { return nil }
+        var comps = URLComponents(string: "https://bsky.social/xrpc/com.atproto.sync.getBlob")
+        comps?.queryItems = [
+            URLQueryItem(name: "did", value: did),
+            URLQueryItem(name: "cid", value: cid),
+        ]
+        return comps?.url
+    }
+
     /// Produce a local, saveable video FILE for `media`.
     ///
     /// Reddit videos play from an HLS manifest — downloading that URL yields
@@ -142,10 +177,25 @@ enum MediaOperations {
     /// in Reddit's separate DASH audio track when one exists. Direct-file
     /// video URLs (Discord, Tenor, GIFs) download as-is.
     static func localVideoFile(for media: PostMedia) async -> URL? {
-        let sourceString = isStreamingManifest(media.url) ? media.downloadUrl : media.url
-        guard let sourceString, let sourceURL = URL(string: sourceString) else { return nil }
+        var sourceURL: URL?
+        if isStreamingManifest(media.url) {
+            // Prefer an explicit direct file (Reddit sends one); otherwise try
+            // to recover Bluesky's original upload from its blob endpoint.
+            if let downloadUrl = media.downloadUrl, let url = URL(string: downloadUrl) {
+                sourceURL = url
+            } else {
+                sourceURL = blueskyBlobURL(forPlaylist: media.url)
+            }
+        } else {
+            sourceURL = URL(string: media.url)
+        }
+        guard let sourceURL else { return nil }
         guard let videoData = await download(from: sourceURL) else { return nil }
-        let ext = sourceURL.pathExtension.isEmpty ? "mp4" : sourceURL.pathExtension
+        // Never take the extension from the URL blindly: the blob endpoint's
+        // path ends in `com.atproto.sync.getBlob`, whose "extension" would be
+        // `getBlob` — enough to make AVFoundation read zero tracks.
+        let urlExt = sourceURL.pathExtension.lowercased()
+        let ext = videoFileExtensions.contains(urlExt) ? urlExt : "mp4"
         let videoFile = writeTempFile(data: videoData, ext: ext)
 
         // Reddit hosts audio as a sibling DASH track next to the video file.
