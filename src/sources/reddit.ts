@@ -67,6 +67,16 @@ async function fetchPage(url: string): Promise<string> {
 
   const response = await fetch(url, { headers });
 
+  // An expired/invalid session doesn't 403 anymore — old.reddit.com 302s to
+  // its login page (200, zero posts). fetch follows the redirect, so check
+  // where we actually landed.
+  if (/\/login\b/i.test(new URL(response.url).pathname)) {
+    const hint = cookies
+      ? 'Reddit cookies have expired — re-export them from your browser in Settings → Reddit.'
+      : 'Reddit requires a session for this page — supply browser cookies in Settings → Reddit.';
+    throw new Error(`Reddit redirected ${url} to its login page. ${hint}`);
+  }
+
   if (!response.ok) {
     if (response.status === 403) {
       // Distinguish stale-cookies vs bot-block so the user knows what to do.
@@ -79,6 +89,37 @@ async function fetchPage(url: string): Promise<string> {
   }
 
   return response.text();
+}
+
+/**
+ * What old.reddit.com's header says about our session.
+ *
+ * A stale `reddit_session` cookie doesn't 403 and doesn't always redirect —
+ * Reddit can serve the LOGGED-OUT front page (r/popular) with a 200, and the
+ * poller would digest it as if it were the user's subscriptions. That is
+ * exactly what "my Reddit digest isn't from my subreddits" looks like.
+ *
+ * Logged in, the header carries the account's /user/<name> link (and a logout
+ * form); logged out, it carries the "Want to join? Log in or sign up" prompt.
+ * `loggedIn` requires POSITIVE evidence of a session so a slightly-off marker
+ * can't false-flag every poll as expired.
+ */
+export function detectRedditSession(html: string): {
+  loggedIn: boolean;
+  loggedOut: boolean;
+  username: string | null;
+} {
+  const userMatch = html.match(
+    /<span class="user">\s*<a[^>]*href="https?:\/\/(?:old\.|www\.)?reddit\.com\/user\/([^"\/]+)\/?"/i
+  );
+  const hasLogoutForm = /<form[^>]*class="[^"]*\blogout\b/i.test(html);
+  const loggedIn = !!userMatch || hasLogoutForm;
+  const loggedOut = /Log in or sign up|Want to join\?/i.test(html);
+  return {
+    loggedIn,
+    loggedOut,
+    username: userMatch ? decodeHtmlEntities(userMatch[1]) : null,
+  };
 }
 
 function extractPosts(html: string): RedditPost[] {
@@ -502,6 +543,41 @@ export async function pollReddit(): Promise<DigestPost[]> {
     const html = await fetchPage('https://old.reddit.com/');
 
     const posts = extractPosts(html);
+    const session = detectRedditSession(html);
+
+    // Say what we actually got. This one line would have made "the digest
+    // isn't from my subreddits" diagnosable from the logs alone.
+    const subCounts = new Map<string, number>();
+    for (const p of posts) subCounts.set(p.subreddit, (subCounts.get(p.subreddit) ?? 0) + 1);
+    const topSubs = Array.from(subCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([sub, n]) => `r/${sub}×${n}`)
+      .join(', ');
+    logger.info(
+      `Reddit session: ${session.username ? `logged in as u/${session.username}` : 'no account detected'}; ` +
+      `${posts.length} posts` + (topSubs ? ` (${topSubs})` : '')
+    );
+
+    if (isLoggedIn && posts.length === 0) {
+      // With cookies configured, an empty front page is a broken session
+      // (or a markup change) — surface it, don't quietly emit nothing.
+      throw new Error(
+        'Reddit returned no posts. Cookies may have expired — re-export them from your browser in Settings → Reddit. ' +
+        '(If they are fresh, old.reddit.com\'s markup may have changed.)'
+      );
+    }
+
+    if (isLoggedIn && !session.loggedIn && session.loggedOut) {
+      // Cookies are configured but Reddit served the logged-out front page.
+      // Digesting r/popular as if it were the user's subscriptions is worse
+      // than no digest: it hides the problem AND burns those posts in
+      // seen_posts. Fail loudly instead.
+      throw new Error(
+        'Reddit cookies were not accepted: old.reddit.com served the logged-out front page instead of your subscriptions. ' +
+        'Re-export cookies from your browser in Settings → Reddit.'
+      );
+    }
 
     if (posts.length === 0) {
       logger.warn('No posts found - check if cookies are valid or if old.reddit.com structure changed');
