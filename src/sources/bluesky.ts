@@ -248,6 +248,23 @@ function postViewToNode(post: AppBskyFeedDefs.PostView, repostedBy?: string): Di
 }
 
 /**
+ * Error text that includes the SDK's validation detail.
+ *
+ * When Bluesky returns a response shape the bundled lexicons don't know, the
+ * SDK throws XRPCInvalidResponseError with the generic message "The server
+ * gave an invalid response and may be out of date" — and puts the actual
+ * reason (which field, what was expected) in `cause`. Two polls failed with
+ * only the generic text in the logs, which said nothing about WHAT changed.
+ * Surface the cause so the next schema drift names itself.
+ */
+function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = (err as { cause?: unknown }).cause;
+  const detail = cause instanceof Error ? cause.message : cause ? String(cause) : '';
+  return detail ? `${err.message} [${detail}]` : err.message;
+}
+
+/**
  * Fetch ancestors for a post and build a nested tree from root → ... → this post.
  * Returns the root DigestPost with the timeline post as the deepest leaf in replies[].
  */
@@ -327,7 +344,7 @@ export async function pollBluesky(): Promise<DigestPost[]> {
         break;
       } catch (err) {
         lastError = err;
-        logger.warn(`Bluesky timeline fetch attempt ${attempt}/3 failed: ${(err as Error).message}`);
+        logger.warn(`Bluesky timeline fetch attempt ${attempt}/3 failed: ${describeError(err)}`);
         if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 2000));
       }
     }
@@ -404,13 +421,21 @@ export async function testBlueskyConnection(): Promise<{ success: boolean; error
     }
 
     const profile = await bskyAgent.getProfile({ actor: getConfig().bluesky_handle });
-
-    if (profile.success) {
-      return { success: true };
+    if (!profile.success) {
+      return { success: false, error: 'Failed to fetch profile' };
     }
 
-    return { success: false, error: 'Failed to fetch profile' };
+    // Exercise the call polling actually makes. getProfile can succeed while
+    // getTimeline fails lexicon validation (that is exactly what happened
+    // when the SDK fell behind Bluesky's schema), and a "Test" that passes
+    // in that state is worse than no test.
+    const timeline = await bskyAgent.getTimeline({ limit: 1 });
+    if (!timeline.success) {
+      return { success: false, error: 'Failed to fetch timeline' };
+    }
+
+    return { success: true };
   } catch (err) {
-    return { success: false, error: (err as Error).message };
+    return { success: false, error: describeError(err) };
   }
 }
