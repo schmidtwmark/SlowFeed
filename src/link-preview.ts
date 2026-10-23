@@ -51,14 +51,29 @@ function extractOgImage(html: string): string | undefined {
 }
 
 /** Minimal entity decoder for og:image URL values (Tenor and others
- *  often serve `&amp;` for query separators). */
+ *  often serve `&amp;` for query separators). `&amp;` goes last so
+ *  `&amp;quot;` decodes to `&quot;`, not `"`. */
 function decodeHTMLEntities(s: string): string {
   return s
-    .replace(/&amp;/g, '&')
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
     .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>');
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+/** First value of each `<meta property|name="…" content="…">` tag, keyed
+ *  by lowercased property/name. */
+function extractMetaTags(html: string): Map<string, string> {
+  const tags = new Map<string, string>();
+  for (const [tag] of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const key = tag.match(/\b(?:property|name)\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase();
+    const content = tag.match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+    if (!key || !content || tags.has(key)) continue;
+    tags.set(key, decodeHTMLEntities(content[1] ?? content[2]));
+  }
+  return tags;
 }
 
 async function fetchOgImage(url: string): Promise<string | undefined> {
@@ -124,4 +139,90 @@ export async function findLinkThumbnails(text: string): Promise<ResolvedLinkThum
 
   const results = await Promise.all(work);
   return results.filter((r): r is ResolvedLinkThumbnail => r !== null);
+}
+
+/** Instagram (and its embed mirrors) serve Open Graph tags to bots but
+ *  only a login shell to browser user-agents. */
+const PREVIEW_BOT_USER_AGENT = 'Mozilla/5.0 (compatible; Slowfeed/1.0)';
+
+export interface InstagramPreview {
+  /** "Name (@handle)" */
+  author?: string;
+  caption?: string;
+  imageUrl?: string;
+  /** MP4 (or a redirect to one) for reels and video posts. */
+  videoUrl?: string;
+  /** Canonical instagram.com URL, when the page reports one. */
+  url?: string;
+  /** ISO 8601 */
+  publishedAt?: string;
+}
+
+const instagramCache = new Map<string, InstagramPreview | null>();
+
+/** Pull the caption out of og:description. instagram.com wraps it as
+ *  `20K likes, 148 comments - user on October 21, 2026: "caption". `;
+ *  embed mirrors prefix a stats line like `❤️ 439  💬 11`. */
+function instagramCaption(description: string, siteName?: string): string | undefined {
+  const quoted = siteName === 'Instagram' ? description.match(/: "([\s\S]*)"\.?\s*$/) : null;
+  const caption = quoted
+    ? quoted[1]
+    : description.replace(/^(?=[^\n]*\d)[^\p{L}\n]*\n+/u, '');
+  return caption.trim() || undefined;
+}
+
+function parseInstagramPreview(tags: Map<string, string>): InstagramPreview | null {
+  // twitter:title is "Name (@handle)" (instagram.com appends " • Instagram
+  // reel"); instagram.com's og:title is "Name on Instagram: <caption>".
+  const title = tags.get('twitter:title') ?? tags.get('og:title');
+  const description = tags.get('og:description');
+  const published = new Date(tags.get('article:published_time') ?? tags.get('og:pubdate') ?? '');
+  const preview: InstagramPreview = {
+    author: title?.replace(/\s*•\s*Instagram\b.*$/, '') || undefined,
+    caption: (description && instagramCaption(description, tags.get('og:site_name')))
+      || tags.get('og:image:alt'),
+    imageUrl: tags.get('og:image') ?? tags.get('twitter:image'),
+    videoUrl: tags.get('og:video:secure_url') ?? tags.get('og:video'),
+    url: tags.get('og:url'),
+    // The client rejects the whole digest on an unparseable date.
+    publishedAt: isNaN(published.getTime()) ? undefined : published.toISOString(),
+  };
+  return preview.caption || preview.imageUrl || preview.videoUrl ? preview : null;
+}
+
+/**
+ * Author, caption, image and video for an Instagram post, read from the
+ * Open Graph tags of `url` — an instagram.com link or an embed mirror
+ * (oginstagram, ddinstagram, …). Cached per URL for the process.
+ */
+export async function fetchInstagramPreview(url: string): Promise<InstagramPreview | undefined> {
+  if (instagramCache.has(url)) {
+    return instagramCache.get(url) ?? undefined;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let preview: InstagramPreview | null = null;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': PREVIEW_BOT_USER_AGENT,
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+      signal: controller.signal,
+    });
+    // Some mirrors (kkinstagram) answer bots with a redirect straight to
+    // the MP4 — don't download it.
+    if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
+      preview = parseInstagramPreview(extractMetaTags(await res.text()));
+    } else {
+      await res.body?.cancel();
+    }
+  } catch (err) {
+    logger.debug(`Instagram preview fetch failed for ${url}: ${(err as Error).message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+  instagramCache.set(url, preview);
+  return preview ?? undefined;
 }

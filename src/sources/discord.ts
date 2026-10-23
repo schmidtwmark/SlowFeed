@@ -1,5 +1,6 @@
 import { getConfig } from '../config.js';
 import { logger } from '../logger.js';
+import { fetchInstagramPreview } from '../link-preview.js';
 import type { DigestPost, PostMedia, PostEmbed } from '../types/index.js';
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
@@ -229,6 +230,50 @@ function discordVideoThumbnailURL(videoUrl: string): string | undefined {
   }
 }
 
+/**
+ * Instagram embeds render as quote cards. Mirrors like oginstagram send
+ * Discord a "component embed", which the messages API returns as a bare
+ * URL with no title, description or image — so when the embed is empty,
+ * read the page's Open Graph tags ourselves. A reel's video goes into
+ * `media` so it plays like an attachment.
+ *
+ * Returns `undefined` when there's nothing to show beyond the link.
+ */
+async function buildInstagramEmbed(
+  embed: DiscordMessage['embeds'][0],
+  media: PostMedia[],
+): Promise<PostEmbed | undefined> {
+  const isEmpty = !embed.title && !embed.description && !embed.image && !embed.thumbnail && !embed.video;
+  const preview = isEmpty && embed.url ? await fetchInstagramPreview(embed.url) : undefined;
+
+  const author = embed.author?.name ?? preview?.author;
+  const text = embed.description ?? preview?.caption;
+  const imageUrl = embed.image?.url ?? embed.thumbnail?.url ?? preview?.imageUrl;
+  // Mirrors put an MP4 in `video`; an instagram.com one would be an HTML
+  // embed page AVPlayer can't play.
+  const discordVideo = embed.video?.url && !/^https?:\/\/(?:www\.)?instagram\.com\//i.test(embed.video.url)
+    ? embed.video.url
+    : undefined;
+  const videoUrl = discordVideo ?? preview?.videoUrl;
+  if (!author && !text && !embed.title && !imageUrl && !videoUrl) return undefined;
+
+  if (videoUrl) {
+    media.push({ type: 'video', url: videoUrl, thumbnailUrl: imageUrl });
+  }
+  return {
+    type: 'quote',
+    author,
+    authorAvatarUrl: embed.author?.icon_url,
+    text,
+    title: embed.title,
+    url: preview?.url ?? embed.url,
+    // A video's thumbnail already shows the image.
+    imageUrl: videoUrl ? undefined : imageUrl,
+    provider: 'Instagram',
+    publishedAt: preview?.publishedAt,
+  };
+}
+
 export async function pollDiscord(): Promise<DigestPost[]> {
   const config = getConfig();
 
@@ -329,7 +374,10 @@ export async function pollDiscord(): Promise<DigestPost[]> {
               imageUrl: embed.thumbnail?.url,
               provider: 'YouTube',
             });
-          } else if (provider === 'Twitter' || provider === 'Bluesky' || provider === 'Instagram') {
+          } else if (provider === 'Instagram') {
+            const instagram = await buildInstagramEmbed(embed, media);
+            if (instagram) embeds.push(instagram);
+          } else if (provider === 'Twitter' || provider === 'Bluesky') {
             // Social posts: render as quote embeds to show content inline
             embeds.push({
               type: 'quote',
