@@ -39,25 +39,25 @@ struct SavedPostsView: View {
                         .padding(.top, 40)
                     } else {
                         VStack(alignment: .leading, spacing: 0) {
-                            ForEach(appState.savedPostGroups) { group in
+                            ForEach(chronologicalPosts) { saved in
                                 HStack {
-                                    SourceBadge(source: group.source)
-                                    Text("\(group.posts.count) post\(group.posts.count == 1 ? "" : "s")")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    SourceBadge(source: saved.source)
                                     Spacer()
+                                    if let savedAt = saved.post.savedAt {
+                                        Text("Saved \(savedAt.formatted(.relative(presentation: .named)))")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                                 .padding(.horizontal)
-                                .padding(.vertical, 8)
-                                .background(.quaternary.opacity(0.3))
+                                .padding(.top, 8)
 
-                                if group.source == .bluesky {
-                                    BlueskyThreadedView(posts: group.posts, source: group.source, digestId: nil, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
+                                if saved.source == .bluesky {
+                                    // Includes its own trailing Divider
+                                    BlueskyThreadedView(posts: [saved.post], source: saved.source, digestId: nil, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
                                 } else {
-                                    ForEach(group.posts) { post in
-                                        PostView(post: post, source: group.source, digestId: nil, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
-                                        Divider()
-                                    }
+                                    PostView(post: saved.post, source: saved.source, digestId: nil, imageNamespace: imageNamespace, onSelectImage: openImageViewer)
+                                    Divider()
                                 }
                             }
                         }
@@ -80,6 +80,20 @@ struct SavedPostsView: View {
         .task {
             await appState.loadSavedPosts()
         }
+    }
+
+    private struct SavedPost: Identifiable {
+        let source: SourceType
+        let post: DigestPost
+        var id: String { post.postId }
+    }
+
+    /// All saved posts across sources, most recently saved first. The server
+    /// groups by source (each group already newest-first), so merge and re-sort.
+    private var chronologicalPosts: [SavedPost] {
+        appState.savedPostGroups
+            .flatMap { group in group.posts.map { SavedPost(source: group.source, post: $0) } }
+            .sorted { ($0.post.savedAt ?? .distantPast) > ($1.post.savedAt ?? .distantPast) }
     }
 
     private var totalCount: Int {

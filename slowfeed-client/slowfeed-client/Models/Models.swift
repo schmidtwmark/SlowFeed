@@ -154,6 +154,7 @@ final class DigestPost: Codable, Identifiable {
     let embeds: [PostEmbed]?
     let replies: [DigestPost]?      // Child posts in thread (Bluesky)
     let quotedPost: DigestPost?     // Inline quoted post (Bluesky)
+    let savedAt: Date?              // Only set on posts from /api/saved-posts
 
     var id: String { postId }
 }
