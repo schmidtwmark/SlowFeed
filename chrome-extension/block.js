@@ -258,18 +258,21 @@
   document.addEventListener("yt-navigate-start", onMaybeNavigated, true);
   setInterval(onMaybeNavigated, 300);
 
-  // The feed streams in lazily, so re-run the shelf hiders as the DOM grows
-  // (debounced to once per frame).
+  // The feed streams in lazily, so re-run the shelf hiders as the DOM grows.
+  // Uses setTimeout (not requestAnimationFrame) because rAF on mobile Safari
+  // can fire before the browser paints — hiding elements before they're
+  // visible, which breaks pages like YouTube search where content appears
+  // briefly then gets stripped. A 50ms debounce is reliable across platforms
+  // and still fast enough that users never notice the shelf being hidden.
   if (isYouTube) {
-    var scheduled = false;
+    var scheduled = null;
     var observer = new MutationObserver(function () {
       if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(function () {
-        scheduled = false;
+      scheduled = setTimeout(function () {
+        scheduled = null;
         hideShortsShelves();
         hideMostRelevantShelf();
-      });
+      }, 50);
     });
     var startObserving = function () {
       if (document.body) {
