@@ -174,8 +174,8 @@ enum MediaOperations {
     /// Reddit videos play from an HLS manifest — downloading that URL yields
     /// playlist text, which is why saving videos "did nothing". For those we
     /// download the direct fallback MP4 (`downloadUrl`, video-only) and mux
-    /// in Reddit's separate DASH audio track when one exists. Direct-file
-    /// video URLs (Discord, Tenor, GIFs) download as-is.
+    /// in Reddit's separate audio track when one exists. Direct-file video
+    /// URLs (Discord, Tenor, GIFs) download as-is.
     static func localVideoFile(for media: PostMedia) async -> URL? {
         var sourceURL: URL?
         if isStreamingManifest(media.url) {
@@ -198,10 +198,10 @@ enum MediaOperations {
         let ext = videoFileExtensions.contains(urlExt) ? urlExt : "mp4"
         let videoFile = writeTempFile(data: videoData, ext: ext)
 
-        // Reddit hosts audio as a sibling DASH track next to the video file.
+        // Reddit hosts audio as a sibling file next to the video file.
         guard sourceURL.host?.contains("v.redd.it") == true else { return videoFile }
         let base = sourceURL.deletingLastPathComponent()
-        for name in ["DASH_AUDIO_128.mp4", "DASH_AUDIO_64.mp4", "DASH_audio.mp4"] {
+        for name in await redditAudioFileNames(base: base) {
             guard let audioData = await download(from: base.appendingPathComponent(name)),
                   !audioData.isEmpty else { continue }
             let audioFile = writeTempFile(data: audioData, ext: "mp4")
@@ -211,6 +211,25 @@ enum MediaOperations {
             break // audio existed but mux failed — fall back to silent video
         }
         return videoFile
+    }
+
+    /// Audio files for the Reddit video at `base`, best quality first. Reddit
+    /// has renamed these before (`DASH_audio` → `DASH_AUDIO_128` → `CMAF_AUDIO_128`),
+    /// and a wrong guess just saves a silent video, so go by what the video's
+    /// DASH manifest lists. A video with no sound lists none. The fixed names
+    /// are only for when the manifest can't be read.
+    private static func redditAudioFileNames(base: URL) async -> [String] {
+        if let data = await download(from: base.appendingPathComponent("DASHPlaylist.mpd")),
+           let manifest = String(data: data, encoding: .utf8) {
+            let files = manifest.matches(of: #/<BaseURL>([^<]+)</BaseURL>/#).map { String($0.1) }
+            if !files.isEmpty {
+                return files
+                    .filter { $0.localizedCaseInsensitiveContains("audio") }
+                    .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+            }
+        }
+        return ["CMAF_AUDIO_128.mp4", "CMAF_AUDIO_64.mp4",
+                "DASH_AUDIO_128.mp4", "DASH_AUDIO_64.mp4", "DASH_audio.mp4"]
     }
 
     /// Combine a video-only MP4 and an audio-only MP4 into one playable

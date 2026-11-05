@@ -431,7 +431,7 @@ async function fetchPostJson(permalink: string): Promise<RedditPostJson | null> 
       videoUrl = redditVideo.hls_url;
       // HLS can't be saved as a file — carry the direct MP4 too so the
       // client's Save to Photos / Files has downloadable bytes (video-only;
-      // the client muxes in the DASH audio track).
+      // the client muxes in the audio track).
       videoDownloadUrl = redditVideo.fallback_url || null;
     } else if (redditVideo?.fallback_url) {
       videoUrl = redditVideo.fallback_url;
@@ -636,7 +636,7 @@ export async function pollReddit(): Promise<DigestPost[]> {
             url: videoUrl,
             thumbnailUrl: videoPreview || undefined,
             // Present when `url` is HLS: the direct (video-only) MP4 the
-            // client downloads for Save/Share, muxing in the DASH audio.
+            // client downloads for Save/Share, muxing in the audio.
             ...(postJson?.videoDownloadUrl ? { downloadUrl: postJson.videoDownloadUrl } : {}),
           });
         }

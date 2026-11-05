@@ -168,7 +168,7 @@ struct PostMedia: Codable {
     let mimeType: String?
     /// Direct downloadable file when `url` is a streaming manifest (Reddit
     /// videos play via HLS, which can't be saved as a file). Video-only MP4
-    /// for Reddit — `MediaOperations` muxes in the DASH audio when saving.
+    /// for Reddit — `MediaOperations` muxes in the audio when saving.
     let downloadUrl: String?
 }
 
