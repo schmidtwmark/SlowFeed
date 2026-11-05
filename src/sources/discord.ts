@@ -21,9 +21,36 @@ interface DiscordChannel {
   nsfw?: boolean;
 }
 
+interface DiscordUnfurledMedia {
+  url: string;
+  proxy_url?: string;
+  content_type?: string;
+  /** Present when the media was uploaded with the message, in which case it's
+   *  also listed in `attachments`. */
+  attachment_id?: string;
+}
+
+/** A Components V2 node, with only the fields we read. */
+interface DiscordComponent {
+  type: number;
+  components?: DiscordComponent[];  // Action Row, Section, Container
+  accessory?: DiscordComponent;     // Section
+  content?: string;                 // Text Display
+  media?: DiscordUnfurledMedia;     // Thumbnail
+  description?: string;             // Thumbnail
+  items?: Array<{ media: DiscordUnfurledMedia; description?: string }>;  // Media Gallery
+  file?: DiscordUnfurledMedia;      // File
+  name?: string;                    // File
+  label?: string;                   // Button
+  url?: string;                     // Button (link style)
+}
+
 interface DiscordMessage {
   id: string;
   channel_id: string;
+  /** 0 = default, 19 = reply; most others are system messages (joins, pins…). */
+  type?: number;
+  flags?: number;
   author: {
     id: string;
     username: string;
@@ -53,12 +80,28 @@ interface DiscordMessage {
     footer?: { text?: string; icon_url?: string };
     fields?: Array<{ name: string; value: string; inline?: boolean }>;
   }>;
+  /** With the IS_COMPONENTS_V2 flag, `content` and `embeds` are empty and the
+   *  whole message lives here. Embed-fixing bots post their cards this way. */
+  components?: DiscordComponent[];
   message_reference?: {
     message_id?: string;
     channel_id?: string;
     guild_id?: string;
   };
+  /** A forward's own fields are empty; what was forwarded is in here. */
+  message_snapshots?: Array<{
+    message: Partial<Pick<DiscordMessage, 'content' | 'attachments' | 'embeds' | 'components'>>;
+  }>;
 }
+
+const COMPONENT_BUTTON = 2;
+const COMPONENT_TEXT_DISPLAY = 10;
+const COMPONENT_THUMBNAIL = 11;
+const COMPONENT_MEDIA_GALLERY = 12;
+const COMPONENT_FILE = 13;
+
+/** Message types that hold user or bot content, as opposed to system notices. */
+const CONTENT_MESSAGE_TYPES = new Set([0, 19, 20, 23]);
 
 interface SelectedChannel {
   guildId: string;
@@ -161,18 +204,125 @@ export async function testDiscordConnection(): Promise<{ success: boolean; error
   }
 }
 
-function getMessagePreview(message: DiscordMessage): string {
-  if (message.content) {
-    const preview = message.content.substring(0, 100);
-    return preview + (message.content.length > 100 ? '...' : '');
+function getMessagePreview(content: string, mediaCount: number, embedCount: number): string {
+  if (content) {
+    const preview = content.substring(0, 100);
+    return preview + (content.length > 100 ? '...' : '');
   }
-  if (message.attachments.length > 0) {
-    return `[${message.attachments.length} attachment(s)]`;
+  if (mediaCount > 0) {
+    return `[${mediaCount} attachment(s)]`;
   }
-  if (message.embeds.length > 0) {
-    return `[${message.embeds.length} embed(s)]`;
-  }
-  return '(empty message)';
+  return `[${embedCount} embed(s)]`;
+}
+
+/** An embed's body text. Bot-built embeds often carry it all in `fields`. */
+function embedText(embed: DiscordMessage['embeds'][0]): string | undefined {
+  const fields = (embed.fields ?? []).map(field => `${field.name}: ${field.value}`);
+  return [embed.description, ...fields].filter(Boolean).join('\n') || undefined;
+}
+
+/**
+ * Reduce a card's Discord markdown to plain text. The client shows markdown
+ * literally, apart from `[text](url)` links, which are left in place.
+ */
+function plainCardText(markdown: string): string {
+  return markdown
+    .replace(/^(?:#{1,3}\s+|-#\s+|>{1,3}\s?)/gm, '')  // headings, subtext, quotes
+    .replace(/\*\*(.+?)\*\*/gs, '$1')
+    .replace(/(^|\s)__(.+?)__(?=\s|$)/gm, '$1$2')
+    .replace(/<a?:\w+:\d+>\s?/g, '')  // custom emoji
+    .replace(/<t:(\d+)(?::\w)?>/g, (_, seconds) => new Date(Number(seconds) * 1000).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+    }))
+    .replace(/<(https?:[^>\s]+)>/g, '$1')  // also turns `[text](<url>)` into `[text](url)`
+    .trim();
+}
+
+/** A gallery item or thumbnail as post media. Items uploaded with the message
+ *  are skipped: they're already in `attachments`. */
+function componentMedia(
+  item: DiscordUnfurledMedia,
+  attachmentIds: Set<string>,
+  alt?: string,
+): PostMedia | undefined {
+  if (item.attachment_id && attachmentIds.has(item.attachment_id)) return undefined;
+  // `attachment://` only means something inside Discord.
+  const url = item.url?.startsWith('http') ? item.url : item.proxy_url;
+  if (!url) return undefined;
+
+  const isVideo = item.content_type?.startsWith('video/') || /\.(?:mp4|mov|webm|m4v)(?:[?#]|$)/i.test(url);
+  // Only Discord's own proxy can produce a still frame.
+  const proxied = item.proxy_url ?? (url.startsWith('https://cdn.discordapp.com/') ? url : undefined);
+  return {
+    type: isVideo ? 'video' : 'image',
+    url,
+    mimeType: item.content_type,
+    ...(alt ? { alt } : {}),
+    ...(isVideo && proxied ? { thumbnailUrl: discordVideoThumbnailURL(proxied) } : {}),
+  };
+}
+
+/**
+ * Flatten a Components V2 tree into text and media. Link buttons become
+ * `[label](url)` spans at the end of the text. A thumbnail is usually just the
+ * author's avatar beside the text, so it's only used when the card has nothing
+ * else to show.
+ */
+function readComponents(
+  components: DiscordComponent[],
+  attachmentIds: Set<string>,
+): { text: string; media: PostMedia[] } {
+  const paragraphs: string[] = [];
+  const links: string[] = [];
+  const media: PostMedia[] = [];
+  const thumbnails: PostMedia[] = [];
+
+  const visit = (component: DiscordComponent): void => {
+    const add = (list: PostMedia[], item: PostMedia | undefined) => {
+      if (item) list.push(item);
+    };
+    if (component.type === COMPONENT_TEXT_DISPLAY && component.content) {
+      const text = plainCardText(component.content);
+      if (text) paragraphs.push(text);
+    } else if (component.type === COMPONENT_MEDIA_GALLERY) {
+      for (const item of component.items ?? []) {
+        add(media, componentMedia(item.media, attachmentIds, item.description));
+      }
+    } else if (component.type === COMPONENT_THUMBNAIL && component.media) {
+      add(thumbnails, componentMedia(component.media, attachmentIds, component.description));
+    } else if (component.type === COMPONENT_FILE && component.file) {
+      const url = component.file.url?.startsWith('http') ? component.file.url : component.file.proxy_url;
+      const uploaded = component.file.attachment_id && attachmentIds.has(component.file.attachment_id);
+      if (url && !uploaded) {
+        media.push({ type: 'file', url, filename: component.name, mimeType: component.file.content_type });
+      }
+    } else if (component.type === COMPONENT_BUTTON && component.url && component.label) {
+      links.push(`[${component.label.replace(/[[\]]/g, '')}](${component.url})`);
+    }
+    component.components?.forEach(visit);
+    if (component.accessory) visit(component.accessory);
+  };
+  components.forEach(visit);
+
+  if (links.length > 0) paragraphs.push(links.join(' · '));
+  return {
+    text: paragraphs.join('\n\n'),
+    media: media.length > 0 || paragraphs.length > 0 ? media : thumbnails,
+  };
+}
+
+/** The shape of a message we couldn't render, for the logs. No message text. */
+function describeMessageShape(message: DiscordMessage): string {
+  const componentTypes = (components: DiscordComponent[] = []): number[] =>
+    components.flatMap(component => [component.type, ...componentTypes(component.components)]);
+  return JSON.stringify({
+    type: message.type,
+    flags: message.flags,
+    components: componentTypes(message.components),
+    embedKeys: message.embeds?.map(embed => Object.keys(embed)),
+    attachments: message.attachments?.length,
+    snapshots: message.message_snapshots?.length,
+  });
 }
 
 /**
@@ -315,8 +465,9 @@ export async function pollDiscord(): Promise<DigestPost[]> {
 
       for (const message of messages) {
         const authorName = message.author.global_name || message.author.username;
-        const preview = getMessagePreview(message);
         const messageUrl = `https://discord.com/channels/${channel.guildId}/${channel.channelId}/${message.id}`;
+        const body = message.message_snapshots?.[0]?.message ?? message;
+        const attachments = body.attachments ?? [];
 
         // Build Discord CDN avatar URL
         const avatarUrl = message.author.avatar
@@ -324,7 +475,7 @@ export async function pollDiscord(): Promise<DigestPost[]> {
           : undefined;
 
         // Build media array from attachments
-        const media: PostMedia[] = message.attachments.map(attachment => {
+        const media: PostMedia[] = attachments.map(attachment => {
           let type: PostMedia['type'] = 'file';
           if (attachment.content_type?.startsWith('image/')) {
             type = 'image';
@@ -348,10 +499,27 @@ export async function pollDiscord(): Promise<DigestPost[]> {
           };
         });
 
+        const card = readComponents(body.components ?? [], new Set(attachments.map(a => a.id)));
+        media.push(...card.media);
+        const content = [body.content, card.text].filter(Boolean).join('\n\n');
+
         // Build embeds array from Discord embeds with smart source detection
         const embeds: PostEmbed[] = [];
-        for (const embed of message.embeds) {
-          if (!embed.title && !embed.description && !embed.url) continue;
+        for (const embed of body.embeds ?? []) {
+          const title = embed.title ?? embed.author?.name;
+          const description = embedText(embed);
+
+          if (!title && !description && !embed.url) {
+            // Nothing to make a card from, but bots do post embeds that are
+            // just an image or video.
+            const imageUrl = embed.image?.url ?? embed.thumbnail?.url;
+            if (embed.video?.url) {
+              media.push({ type: 'video', url: embed.video.url, thumbnailUrl: imageUrl });
+            } else if (imageUrl) {
+              media.push({ type: 'image', url: imageUrl });
+            }
+            continue;
+          }
 
           const provider = detectProvider(embed);
 
@@ -393,8 +561,8 @@ export async function pollDiscord(): Promise<DigestPost[]> {
             // Generic link card
             embeds.push({
               type: 'link_card',
-              title: embed.title,
-              description: embed.description,
+              title,
+              description,
               url: embed.url,
               imageUrl: embed.image?.url || embed.thumbnail?.url,
               provider: provider || undefined,
@@ -402,10 +570,24 @@ export async function pollDiscord(): Promise<DigestPost[]> {
           }
         }
 
+        if (!content && media.length === 0 && embeds.length === 0) {
+          // A blank row helps nobody. System notices (joins, pins, boosts) are
+          // expected here; anything else is a payload we don't read yet.
+          const shape = describeMessageShape(message);
+          if (message.type === undefined || CONTENT_MESSAGE_TYPES.has(message.type)) {
+            logger.warn(`Discord: skipping message ${message.id} in #${channel.channelName} with nothing to show: ${shape}`);
+          } else {
+            logger.debug(`Discord: skipping system message ${message.id}: ${shape}`);
+          }
+          continue;
+        }
+
+        const preview = getMessagePreview(content, media.length, embeds.length);
+
         digestPosts.push({
           postId: message.id,
           title: `#${channel.channelName} - @${authorName}: ${preview}`,
-          content: message.content || '',
+          content,
           url: messageUrl,
           author: `@${authorName}`,
           publishedAt: new Date(message.timestamp),
